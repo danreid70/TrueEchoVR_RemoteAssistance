@@ -4,9 +4,9 @@
   <Project Path="Meta.Voice.NLayer.csproj" />
   <Project Path="Meta.XR.MultiplayerBlocks.Shared.csproj" />
   <Project Path="Unity.AppUI.csproj" />
-  <Project Path="Unity.Services.Authentication.PlayerAccounts.csproj" />
-  <Project Path="Unity.Services.Core.Internal.csproj" />
   <Project Path="Flexalon.Editor.csproj" />
+  <Project Path="Unity.Services.Core.Internal.csproj" />
+  <Project Path="Unity.Services.Authentication.PlayerAccounts.csproj" />
   <Project Path="Unity.AI.Toolkit.Asset.csproj" />
   <Project Path="Unity.ShaderGraph.Editor.csproj" />
   <Project Path="Meta.XR.BuildingBlocks.csproj" />
@@ -123,17 +123,16 @@
   <Project Path="Unity.Services.Multiplayer.Editor.Matchmaker.Authoring.csproj" />
   <Project Path="Unity.AI.Generators.Redux.csproj" />
   <Project Path="PasserVR.HumanoidControl.Editor.csproj" />
-  <Project Path="Unity.XR.Hands.Analytics.Editor.csproj" />
   <Project Path="Flexalon.Samples.Editor.csproj" />
+  <Project Path="Unity.XR.Hands.Analytics.Editor.csproj" />
   <Project Path="Unity.AI.Toolkit.Accounts.csproj" />
   <Project Path="Unity.AI.Generators.UI.csproj" />
   <Project Path="Meta.XR.MultiplayerBlocks.NGO.csproj" />
   <Project Path="Unity.Networking.Editor.csproj" />
   <Project Path="Meta.WitAi.TTS.csproj" />
-  <Project Path="Unity.XR.Interaction.Toolkit.Samples.StarterAssets.csproj" />
   <Project Path="PasserVR.HumanoidControl.EditorTests.csproj" />
   <Project Path="Meta.XR.ImmersiveDebugger.Editor.csproj" />
-  <Project Path="Unity.XR.Interaction.Toolkit.Samples.ARStarterAssets.csproj" />
+  <Project Path="Unity.XR.Interaction.Toolkit.Samples.StarterAssets.csproj" />
   <Project Path="Unity.AI.Navigation.Editor.csproj" />
   <Project Path="Unity.XR.CoreUtils.Editor.csproj" />
   <Project Path="Unity.Services.Core.Editor.csproj" />
@@ -191,6 +190,7 @@
   <Project Path="Meta.XR.Editor.Id.csproj" />
   <Project Path="Unity.Services.Core.Telemetry.csproj" />
   <Project Path="Unity.AI.Generators.UI.AIDropdownIntegrations.csproj" />
+  <Project Path="Unity.XR.Interaction.Toolkit.Samples.Hands.csproj" />
   <Project Path="Unity.XR.MetaOpenXR.Editor.csproj" />
   <Project Path="Meta.XR.Audio.csproj" />
   <Project Path="Unity.Settings.Editor.csproj" />
@@ -215,7 +215,6 @@
   <Project Path="Meta.XR.RuntimeOptimizer.Editor.csproj" />
   <Project Path="Unity.InferenceEngine.Editor.Visualizer.csproj" />
   <Project Path="Unity.SurfaceCache.Runtime.csproj" />
-  <Project Path="Unity.XR.Interaction.Toolkit.Samples.Hands.csproj" />
   <Project Path="Unity.Netcode.Editor.csproj" />
   <Project Path="Unity.InternalAPIEngineBridge.RenderPipelines.Core.Runtime.Shared.csproj" />
   <Project Path="Unity.AI.Navigation.csproj" />
@@ -238,7 +237,6 @@
   <Project Path="Unity.TestTools.CodeCoverage.Editor.OpenCover.Model.csproj" />
   <Project Path="ParrelSync.csproj" />
   <Project Path="Meta.XR.Editor.Callbacks.csproj" />
-  <Project Path="Unity.XR.Interaction.Toolkit.Samples.ARStarterAssets.Editor.csproj" />
   <Project Path="AssistantVoiceCommandCommon.csproj" />
   <Project Path="Unity.XR.OpenXR.Features.RuntimeDebugger.csproj" />
   <Project Path="UnityEngine.SpatialTracking.csproj" />
@@ -266,15 +264,18 @@
   <Project Path="VoiceSDK.Telemetry.csproj" />
   <Project Path="Unity.InputSystem.DocCodeSamples.csproj" />
   <Project Path="Meta.WitAi.TTS.Editor.csproj" />
+  <Project Path="Unity.XR.Interaction.Toolkit.Samples.InteractionSimulator.csproj" />
   <Project Path="Flexalon.Samples.csproj" />
   <Project Path="Assembly-CSharp-Editor.csproj" />
   <Project Path="Unity.AI.Tracing.csproj" />
   <Project Path="Unity.AI.Toolkit.GenerationContextMenu.csproj" />
+  <Project Path="Unity.XR.Interaction.Toolkit.Samples.ARStarterAssets.csproj" />
   <Project Path="Unity.InternalAPIEditorBridge.ShaderGraph.Editor.csproj" />
   <Project Path="Unity.XR.ARAnalytics.Editor.csproj" />
   <Project Path="Unity.AppUI.InternalAPIBridge.csproj" />
   <Project Path="Meta.VoiceSDK.Mic.Common.csproj" />
   <Project Path="Meta.XR.Editor.EditorCoroutine.csproj" />
+  <Project Path="Unity.XR.Interaction.Toolkit.Samples.InteractionSimulator.Editor.csproj" />
   <Project Path="Unity.VisualScripting.SettingsProvider.Editor.csproj" />
   <Project Path="Unity.Services.Core.Scheduler.csproj" />
   <Project Path="Unity.XR.ARFoundation.InternalUtils.Editor.csproj" />
@@ -306,6 +307,7 @@
   <Project Path="Unity.Services.Core.Environments.csproj" />
   <Project Path="Unity.XR.OpenXR.Features.OculusQuestSupport.csproj" />
   <Project Path="Unity.AI.Toolkit.Compliance.csproj" />
+  <Project Path="Unity.XR.Interaction.Toolkit.Samples.Hands.Editor.csproj" />
   <Project Path="Meta.Voice.VSDKHub.Editor.csproj" />
   <Project Path="Meta.XR.BuildingBlocks.DepthAPI.Editor.csproj" />
   <Project Path="Unity.XR.OpenXR.Features.MetaQuestSupport.Editor.csproj" />
@@ -318,7 +320,6 @@
   <Project Path="Unity.AI.MCP.Runtime.csproj" />
   <Project Path="Unity.ShaderGraph.Utilities.csproj" />
   <Project Path="Meta.XR.BuildingBlocks.DepthAPI.csproj" />
-  <Project Path="Unity.XR.Interaction.Toolkit.Samples.Hands.Editor.csproj" />
   <Project Path="Meta.VoiceSDK.Mic.Other.csproj" />
   <Project Path="Unity.XR.OpenXR.Features.MetaQuestSupport.csproj" />
   <Project Path="Unity.RenderPipeline.Universal.ShaderLibrary.csproj" />
@@ -330,12 +331,13 @@
   <Project Path="Unity.Netcode.PackageChecker.Editor.csproj" />
   <Project Path="Unity.RenderPipelines.Universal.Shaders.csproj" />
   <Project Path="Unity.InferenceEngine.MacBLAS.csproj" />
-  <Project Path="Unity.XR.Interaction.Toolkit.Samples.StarterAssets.Editor.csproj" />
   <Project Path="Unity.InferenceEngine.ONNX.Editor.csproj" />
+  <Project Path="Unity.XR.Interaction.Toolkit.Samples.StarterAssets.Editor.csproj" />
   <Project Path="Unity.XR.OpenXR.TestTooling.csproj" />
   <Project Path="Unity.XR.Hands.Analytics.Hooks.Editor.csproj" />
   <Project Path="Unity.InferenceEngine.iOSBLAS.csproj" />
   <Project Path="Oculus.Interaction.InterfaceSupport.csproj" />
+  <Project Path="Unity.XR.Interaction.Toolkit.Samples.ARStarterAssets.Editor.csproj" />
   <Project Path="UnityEditor.SpatialTracking.csproj" />
   <Project Path="Unity.RenderPipelines.Universal.Config.Runtime.csproj" />
 </Solution>
