@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: 831fec186885e9447be6fd0a53735967
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 322411
+  packageName: Speech Bubble
+  packageVersion: 1.0
+  assetPath: Assets/Speech Bubble/Prefabs/Legacy/speechBubble (Legacy).prefab
+  uploadId: 761686

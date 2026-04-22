@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: e39a1cf817baa844faed370f5c20b1c9
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 11400000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 322411
+  packageName: Speech Bubble
+  packageVersion: 1.0
+  assetPath: Assets/Speech Bubble/Example/CustomizationExample/Styles/stressBubble.asset
+  uploadId: 761686

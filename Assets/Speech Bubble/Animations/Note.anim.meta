@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: 39f3a05f020a21e4f80ca4331fc7372d
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 7400000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 322411
+  packageName: Speech Bubble
+  packageVersion: 1.0
+  assetPath: Assets/Speech Bubble/Animations/Note.anim
+  uploadId: 761686

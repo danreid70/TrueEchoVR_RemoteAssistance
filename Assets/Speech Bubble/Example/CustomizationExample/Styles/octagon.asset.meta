@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: adac5284f56fad941a55568549af374a
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 11400000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 322411
+  packageName: Speech Bubble
+  packageVersion: 1.0
+  assetPath: Assets/Speech Bubble/Example/CustomizationExample/Styles/octagon.asset
+  uploadId: 761686

@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: b78d24901989fae48b3c6bbff7f2fe38
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 11400000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 322411
+  packageName: Speech Bubble
+  packageVersion: 1.0
+  assetPath: Assets/Speech Bubble/Styles/Default.asset
+  uploadId: 761686

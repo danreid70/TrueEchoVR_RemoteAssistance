@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: dc68b32eb6b624441b17e874d90d4551
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 7400000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 322411
+  packageName: Speech Bubble
+  packageVersion: 1.0
+  assetPath: Assets/Speech Bubble/Animations/Think.anim
+  uploadId: 761686
