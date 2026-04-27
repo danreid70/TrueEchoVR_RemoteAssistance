@@ -29,6 +29,20 @@ TagManager:
   - QDSUITextInputField
   - SamplesInfoPanel
   - QDSUIToggleCheckboxRadio
+  - Part_Box355_2126
+  - Part_Cylinder093_7175
+  - Part_Cylinder094_8970
+  - Part_Object412_8151
+  - Part_Object400_1354
+  - Part_Box356_1527
+  - Part_Cylinder095_3592
+  - Part_Cylinder097_7479
+  - Part_Box357_2289
+  - Part_Cylinder098_5603
+  - Part_Object388_8714
+  - Part_Object394_7105
+  - Part_Box361_172
+  - Part_Object415_5226
   layers:
   - Default
   - TransparentFX

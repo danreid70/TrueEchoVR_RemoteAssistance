@@ -1,9 +1,0 @@
-fileFormatVersion: 2
-guid: e3741715fcc894c499c71fccfe183c40
-AssetOrigin:
-  serializedVersion: 1
-  productId: 360520
-  packageName: VR Assembly Factory
-  packageVersion: 1.0
-  assetPath: Assets/VRAssemblyFactory/Scripts/SocketManager.cs
-  uploadId: 899962

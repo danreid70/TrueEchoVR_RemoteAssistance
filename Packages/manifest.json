@@ -12,7 +12,7 @@
     "com.unity.learn.iet-framework": "5.0.3",
     "com.unity.mobile.android-logcat": "1.4.7",
     "com.unity.multiplayer.center": "1.0.1",
-    "com.unity.netcode.gameobjects": "2.11.0",
+    "com.unity.netcode.gameobjects": "2.11.1",
     "com.unity.nuget.newtonsoft-json": "3.2.2",
     "com.unity.render-pipelines.universal": "17.4.0",
     "com.unity.services.multiplayer": "2.1.3",
