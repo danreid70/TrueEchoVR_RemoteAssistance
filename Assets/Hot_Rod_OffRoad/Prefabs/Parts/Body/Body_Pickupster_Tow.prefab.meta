@@ -1,0 +1,19 @@
+fileFormatVersion: 2
+guid: 65d63b71f4a463649863bd572c837154
+labels:
+- Car
+- Interior
+- Part
+- Vehicle
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 346948
+  packageName: 'Hot Rod Constructor: Modular Off-Road Cars'
+  packageVersion: 1.0
+  assetPath: Assets/Hot_Rod_OffRoad/Prefabs/Parts/Body/Body_Pickupster_Tow.prefab
+  uploadId: 825232

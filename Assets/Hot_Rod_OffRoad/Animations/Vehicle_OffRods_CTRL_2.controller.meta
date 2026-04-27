@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: ccd175aff8d7d8a4388abfc62ae42d03
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 9100000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 346948
+  packageName: 'Hot Rod Constructor: Modular Off-Road Cars'
+  packageVersion: 1.0
+  assetPath: Assets/Hot_Rod_OffRoad/Animations/Vehicle_OffRods_CTRL_2.controller
+  uploadId: 825232

@@ -1,0 +1,19 @@
+fileFormatVersion: 2
+guid: 4e58b5b934642e243a46998ff3b42b81
+labels:
+- Bumper
+- Car
+- Part
+- Vehicle
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 346948
+  packageName: 'Hot Rod Constructor: Modular Off-Road Cars'
+  packageVersion: 1.0
+  assetPath: Assets/Hot_Rod_OffRoad/Prefabs/Parts/Bumper/Bumper_Geep_Front_Winch.prefab
+  uploadId: 825232

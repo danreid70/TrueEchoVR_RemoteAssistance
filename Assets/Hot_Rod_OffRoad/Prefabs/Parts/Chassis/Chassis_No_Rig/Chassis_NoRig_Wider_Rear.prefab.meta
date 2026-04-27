@@ -1,0 +1,20 @@
+fileFormatVersion: 2
+guid: 77096d1ee46f44243831cf3b95a78fde
+labels:
+- Axle
+- Car
+- Chassis
+- Part
+- Vehicle
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 346948
+  packageName: 'Hot Rod Constructor: Modular Off-Road Cars'
+  packageVersion: 1.0
+  assetPath: Assets/Hot_Rod_OffRoad/Prefabs/Parts/Chassis/Chassis_No_Rig/Chassis_NoRig_Wider_Rear.prefab
+  uploadId: 825232

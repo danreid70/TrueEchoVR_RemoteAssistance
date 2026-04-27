@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: 1b279a98da81ee34ab9da5ba89d43b40
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 2100000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 346948
+  packageName: 'Hot Rod Constructor: Modular Off-Road Cars'
+  packageVersion: 1.0
+  assetPath: Assets/Hot_Rod_OffRoad/Materials/A_HotRods_Glass_Material.mat
+  uploadId: 825232

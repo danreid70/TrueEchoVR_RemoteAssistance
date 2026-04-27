@@ -1,0 +1,19 @@
+fileFormatVersion: 2
+guid: 58e5a8eeac37c5f499c8490c98e8d5fd
+labels:
+- Bumper
+- Car
+- Part
+- Vehicle
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 346948
+  packageName: 'Hot Rod Constructor: Modular Off-Road Cars'
+  packageVersion: 1.0
+  assetPath: Assets/Hot_Rod_OffRoad/Prefabs/Parts/Bumper/Bumper_Bugster_Front.prefab
+  uploadId: 825232

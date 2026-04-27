@@ -6,11 +6,8 @@ EditorBuildSettings:
   serializedVersion: 2
   m_Scenes:
   - enabled: 1
-    path: Assets/_TrueEchoVR/_SCENES/_ARCHIVE/_TrueEchoVR_StartScene_Meta-Rig.unity
-    guid: cb20b4cf6b13eda43b6824915fb8ea9b
-  - enabled: 0
-    path: Assets/_TrueEchoVR/QRCodeDetection/QRCodeDetection.unity
-    guid: 8b94352aa29d6894d8e73966f3ee47d0
+    path: Assets/_TrueEchoVR/_SCENES/_TrueEchoVR_StartScene_Unity-XRIT-Rig.unity
+    guid: 9e077683b92226e4f88f96ecdc66ff39
   m_configObjects:
     Unity.XR.Oculus.Settings: {fileID: 11400000, guid: bfa1182bd221b4ca89619141f66f1260, type: 2}
     Unity.XR.WindowsMR.Settings: {fileID: 11400000, guid: dc5a169419fa04987b057f65238cf3ba, type: 2}

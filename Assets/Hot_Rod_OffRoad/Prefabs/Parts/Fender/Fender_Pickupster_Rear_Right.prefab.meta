@@ -1,0 +1,19 @@
+fileFormatVersion: 2
+guid: fd5624f005593944b9fb7e355af3ea97
+labels:
+- Car
+- Fender
+- Part
+- Vehicle
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 346948
+  packageName: 'Hot Rod Constructor: Modular Off-Road Cars'
+  packageVersion: 1.0
+  assetPath: Assets/Hot_Rod_OffRoad/Prefabs/Parts/Fender/Fender_Pickupster_Rear_Right.prefab
+  uploadId: 825232

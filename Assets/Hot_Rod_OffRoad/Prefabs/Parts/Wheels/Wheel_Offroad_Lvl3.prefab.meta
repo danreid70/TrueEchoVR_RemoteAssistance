@@ -1,0 +1,19 @@
+fileFormatVersion: 2
+guid: a1473d43c9bb928458425484b396af1a
+labels:
+- Car
+- Part
+- Vehicle
+- Wheel
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 346948
+  packageName: 'Hot Rod Constructor: Modular Off-Road Cars'
+  packageVersion: 1.0
+  assetPath: Assets/Hot_Rod_OffRoad/Prefabs/Parts/Wheels/Wheel_Offroad_Lvl3.prefab
+  uploadId: 825232

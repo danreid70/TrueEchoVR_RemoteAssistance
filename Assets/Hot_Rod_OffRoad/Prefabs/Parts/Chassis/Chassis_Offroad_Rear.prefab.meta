@@ -1,0 +1,21 @@
+fileFormatVersion: 2
+guid: 93afeade063d0ca4a9f2851b67425dc9
+labels:
+- Axle
+- Car
+- Chassis
+- Offroad
+- Part
+- Vehicle
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 346948
+  packageName: 'Hot Rod Constructor: Modular Off-Road Cars'
+  packageVersion: 1.0
+  assetPath: Assets/Hot_Rod_OffRoad/Prefabs/Parts/Chassis/Chassis_Offroad_Rear.prefab
+  uploadId: 825232

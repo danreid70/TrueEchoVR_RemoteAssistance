@@ -1,0 +1,19 @@
+fileFormatVersion: 2
+guid: a3f462fb87872af45ba39263058fcff5
+labels:
+- Bonnet
+- Car
+- Part
+- Vehicle
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 346948
+  packageName: 'Hot Rod Constructor: Modular Off-Road Cars'
+  packageVersion: 1.0
+  assetPath: Assets/Hot_Rod_OffRoad/Prefabs/Parts/Bonnet/Bonnet_Geep_Grill.prefab
+  uploadId: 825232

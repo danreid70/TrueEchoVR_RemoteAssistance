@@ -1,0 +1,19 @@
+fileFormatVersion: 2
+guid: 6cecadd2501d5e845aa48d3d84d3e0cd
+labels:
+- Car
+- Fender
+- Part
+- Vehicle
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 346948
+  packageName: 'Hot Rod Constructor: Modular Off-Road Cars'
+  packageVersion: 1.0
+  assetPath: Assets/Hot_Rod_OffRoad/Prefabs/Parts/Fender/Fender_Geep_Rear_Left.prefab
+  uploadId: 825232

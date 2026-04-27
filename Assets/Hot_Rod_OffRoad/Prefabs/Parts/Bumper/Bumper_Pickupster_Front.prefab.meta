@@ -1,0 +1,19 @@
+fileFormatVersion: 2
+guid: f6787316c1f5ed94599819e11764bd15
+labels:
+- Bumper
+- Car
+- Part
+- Vehicle
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 346948
+  packageName: 'Hot Rod Constructor: Modular Off-Road Cars'
+  packageVersion: 1.0
+  assetPath: Assets/Hot_Rod_OffRoad/Prefabs/Parts/Bumper/Bumper_Pickupster_Front.prefab
+  uploadId: 825232

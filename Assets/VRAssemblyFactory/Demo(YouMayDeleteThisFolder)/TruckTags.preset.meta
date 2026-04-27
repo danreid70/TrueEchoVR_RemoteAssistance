@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: 6bf8d30b9bdfca74b840607ee74a87c4
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 2655988077585873504
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 360520
+  packageName: VR Assembly Factory
+  packageVersion: 1.0
+  assetPath: Assets/VRAssemblyFactory/Demo(YouMayDeleteThisFolder)/TruckTags.preset
+  uploadId: 899962

@@ -1,0 +1,19 @@
+fileFormatVersion: 2
+guid: 2bc76209032af49448aa007d4e4e1815
+labels:
+- Car
+- Part
+- Vehicle
+- Weapon
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 346948
+  packageName: 'Hot Rod Constructor: Modular Off-Road Cars'
+  packageVersion: 1.0
+  assetPath: Assets/Hot_Rod_OffRoad/Prefabs/Parts/Attachment/Weapon_Machinegun.prefab
+  uploadId: 825232

@@ -1,0 +1,19 @@
+fileFormatVersion: 2
+guid: d22ccfe5d4a8cee43a944b30d8d72fdf
+labels:
+- Car
+- Fender
+- Part
+- Vehicle
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 346948
+  packageName: 'Hot Rod Constructor: Modular Off-Road Cars'
+  packageVersion: 1.0
+  assetPath: Assets/Hot_Rod_OffRoad/Prefabs/Parts/Fender/Fender_Pickup_Front_Left.prefab
+  uploadId: 825232

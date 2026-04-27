@@ -1,0 +1,19 @@
+fileFormatVersion: 2
+guid: 70d5fe3016651d94c90143184804abeb
+labels:
+- Bonnet
+- Car
+- Part
+- Vehicle
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 346948
+  packageName: 'Hot Rod Constructor: Modular Off-Road Cars'
+  packageVersion: 1.0
+  assetPath: Assets/Hot_Rod_OffRoad/Prefabs/Parts/Bonnet/Bonnet_Armorcar.prefab
+  uploadId: 825232

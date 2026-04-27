@@ -1,0 +1,19 @@
+fileFormatVersion: 2
+guid: 2c69c703736f0b34a8ababe0305490c5
+labels:
+- Bumper
+- Car
+- Part
+- Vehicle
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 346948
+  packageName: 'Hot Rod Constructor: Modular Off-Road Cars'
+  packageVersion: 1.0
+  assetPath: Assets/Hot_Rod_OffRoad/Prefabs/Parts/Bumper/Bumper_Pickupster_Rail_Rear.prefab
+  uploadId: 825232

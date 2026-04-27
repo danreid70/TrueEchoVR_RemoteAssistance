@@ -1,0 +1,19 @@
+fileFormatVersion: 2
+guid: e4d0e5178f622a14db96b57723b1272b
+labels:
+- Car
+- Fender
+- Part
+- Vehicle
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 346948
+  packageName: 'Hot Rod Constructor: Modular Off-Road Cars'
+  packageVersion: 1.0
+  assetPath: Assets/Hot_Rod_OffRoad/Prefabs/Parts/Fender/Fender_Pickupster_Step_Tube_Right.prefab
+  uploadId: 825232

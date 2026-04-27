@@ -1,0 +1,18 @@
+fileFormatVersion: 2
+guid: 9737a756495ddf64789c36986c6bf141
+labels:
+- Car
+- Part
+- Vehicle
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 346948
+  packageName: 'Hot Rod Constructor: Modular Off-Road Cars'
+  packageVersion: 1.0
+  assetPath: Assets/Hot_Rod_OffRoad/Prefabs/Parts/Attachment/Attachment_Flatbed_Winch.prefab
+  uploadId: 825232

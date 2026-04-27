@@ -1,0 +1,19 @@
+fileFormatVersion: 2
+guid: 1220514db264db6458f3599afea278dc
+labels:
+- Car
+- Part
+- Vehicle
+- Wheel
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 346948
+  packageName: 'Hot Rod Constructor: Modular Off-Road Cars'
+  packageVersion: 1.0
+  assetPath: Assets/Hot_Rod_OffRoad/Prefabs/Parts/Wheels/Wheel_Bug_Front_Lvl3.prefab
+  uploadId: 825232

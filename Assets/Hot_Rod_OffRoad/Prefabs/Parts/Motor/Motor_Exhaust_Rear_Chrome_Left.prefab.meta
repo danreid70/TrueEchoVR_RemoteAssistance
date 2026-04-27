@@ -1,0 +1,19 @@
+fileFormatVersion: 2
+guid: 0507b3f68172c0e45b60b7867470cbf1
+labels:
+- Car
+- Motor
+- Part
+- Vehicle
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 346948
+  packageName: 'Hot Rod Constructor: Modular Off-Road Cars'
+  packageVersion: 1.0
+  assetPath: Assets/Hot_Rod_OffRoad/Prefabs/Parts/Motor/Motor_Exhaust_Rear_Chrome_Left.prefab
+  uploadId: 825232

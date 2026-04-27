@@ -1,0 +1,16 @@
+fileFormatVersion: 2
+guid: 43c09058468c0eb41b223000da37c7b1
+labels:
+- Character
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 346948
+  packageName: 'Hot Rod Constructor: Modular Off-Road Cars'
+  packageVersion: 1.0
+  assetPath: Assets/Hot_Rod_OffRoad/Prefabs/Characters/Character_Mechanic.prefab
+  uploadId: 825232

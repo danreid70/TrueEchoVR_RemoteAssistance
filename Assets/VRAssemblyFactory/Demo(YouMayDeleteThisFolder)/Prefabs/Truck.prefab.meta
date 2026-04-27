@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: 102705de74c0cfb4e8898c5ca8d56dba
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 360520
+  packageName: VR Assembly Factory
+  packageVersion: 1.0
+  assetPath: Assets/VRAssemblyFactory/Demo(YouMayDeleteThisFolder)/Prefabs/Truck.prefab
+  uploadId: 899962

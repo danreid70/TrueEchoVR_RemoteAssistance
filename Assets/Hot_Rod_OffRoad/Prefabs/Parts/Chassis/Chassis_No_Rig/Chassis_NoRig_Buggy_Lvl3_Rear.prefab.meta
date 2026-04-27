@@ -1,0 +1,21 @@
+fileFormatVersion: 2
+guid: 8cbdf3249ef42d646918e509ea1e7a0f
+labels:
+- Axle
+- Car
+- Chassis
+- Offroad
+- Part
+- Vehicle
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 346948
+  packageName: 'Hot Rod Constructor: Modular Off-Road Cars'
+  packageVersion: 1.0
+  assetPath: Assets/Hot_Rod_OffRoad/Prefabs/Parts/Chassis/Chassis_No_Rig/Chassis_NoRig_Buggy_Lvl3_Rear.prefab
+  uploadId: 825232

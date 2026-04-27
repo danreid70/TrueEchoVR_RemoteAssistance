@@ -1,0 +1,21 @@
+fileFormatVersion: 2
+guid: 2fc2cc679ed141d4da20b2f40be63c57
+labels:
+- Axle
+- Car
+- Chassis
+- Offroad
+- Part
+- Vehicle
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 346948
+  packageName: 'Hot Rod Constructor: Modular Off-Road Cars'
+  packageVersion: 1.0
+  assetPath: Assets/Hot_Rod_OffRoad/Prefabs/Parts/Chassis/Chassis_No_Rig/Chassis_NoRig_Buggy_Lvl3_Front.prefab
+  uploadId: 825232

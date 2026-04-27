@@ -1,0 +1,19 @@
+fileFormatVersion: 2
+guid: 9a1dd985834dd774f8b17b197a394f2f
+labels:
+- Bonnet
+- Car
+- Part
+- Vehicle
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 346948
+  packageName: 'Hot Rod Constructor: Modular Off-Road Cars'
+  packageVersion: 1.0
+  assetPath: Assets/Hot_Rod_OffRoad/Prefabs/Parts/Bonnet/Bonnet_Pickupster_Bun.prefab
+  uploadId: 825232

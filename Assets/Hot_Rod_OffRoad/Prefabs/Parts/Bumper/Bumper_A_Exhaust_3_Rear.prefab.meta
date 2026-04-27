@@ -1,0 +1,20 @@
+fileFormatVersion: 2
+guid: 022d9bdec0ad34a4880cead22ded81ef
+labels:
+- Bumper
+- Car
+- Motor
+- Part
+- Vehicle
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 346948
+  packageName: 'Hot Rod Constructor: Modular Off-Road Cars'
+  packageVersion: 1.0
+  assetPath: Assets/Hot_Rod_OffRoad/Prefabs/Parts/Bumper/Bumper_A_Exhaust_3_Rear.prefab
+  uploadId: 825232

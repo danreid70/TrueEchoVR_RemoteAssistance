@@ -1,0 +1,18 @@
+fileFormatVersion: 2
+guid: abe7f765561a7ea47a37d77aaa10f5ee
+labels:
+- Car
+- Part
+- Vehicle
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 346948
+  packageName: 'Hot Rod Constructor: Modular Off-Road Cars'
+  packageVersion: 1.0
+  assetPath: Assets/Hot_Rod_OffRoad/Prefabs/Parts/Body/Body_No_Interior/Body_NoInterior_Goblin.prefab
+  uploadId: 825232

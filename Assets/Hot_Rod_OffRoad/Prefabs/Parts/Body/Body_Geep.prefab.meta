@@ -1,0 +1,19 @@
+fileFormatVersion: 2
+guid: 137a97c177606b647881a4b54a4656fa
+labels:
+- Car
+- Interior
+- Part
+- Vehicle
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 346948
+  packageName: 'Hot Rod Constructor: Modular Off-Road Cars'
+  packageVersion: 1.0
+  assetPath: Assets/Hot_Rod_OffRoad/Prefabs/Parts/Body/Body_Geep.prefab
+  uploadId: 825232

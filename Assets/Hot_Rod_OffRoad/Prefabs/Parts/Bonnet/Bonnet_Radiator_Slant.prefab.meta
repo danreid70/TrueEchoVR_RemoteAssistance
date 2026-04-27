@@ -1,0 +1,19 @@
+fileFormatVersion: 2
+guid: 7ecaf690ef39ee245816df600c21eb84
+labels:
+- Bonnet
+- Car
+- Part
+- Vehicle
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 346948
+  packageName: 'Hot Rod Constructor: Modular Off-Road Cars'
+  packageVersion: 1.0
+  assetPath: Assets/Hot_Rod_OffRoad/Prefabs/Parts/Bonnet/Bonnet_Radiator_Slant.prefab
+  uploadId: 825232

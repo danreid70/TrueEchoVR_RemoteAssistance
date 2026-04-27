@@ -1,0 +1,19 @@
+fileFormatVersion: 2
+guid: d2435538cc5c430479f624a01cb95329
+labels:
+- Car
+- Motor
+- Part
+- Vehicle
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 346948
+  packageName: 'Hot Rod Constructor: Modular Off-Road Cars'
+  packageVersion: 1.0
+  assetPath: Assets/Hot_Rod_OffRoad/Prefabs/Parts/Motor/Motor_Carb_Dish.prefab
+  uploadId: 825232

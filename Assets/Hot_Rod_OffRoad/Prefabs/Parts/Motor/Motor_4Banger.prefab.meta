@@ -1,0 +1,19 @@
+fileFormatVersion: 2
+guid: 2c6c9d39b13f0ef47a25a99e5ba5547a
+labels:
+- Car
+- Motor
+- Part
+- Vehicle
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 346948
+  packageName: 'Hot Rod Constructor: Modular Off-Road Cars'
+  packageVersion: 1.0
+  assetPath: Assets/Hot_Rod_OffRoad/Prefabs/Parts/Motor/Motor_4Banger.prefab
+  uploadId: 825232

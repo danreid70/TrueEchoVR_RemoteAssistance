@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: b65f6d7494ef09047a196bec799819bb
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 2100000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 346948
+  packageName: 'Hot Rod Constructor: Modular Off-Road Cars'
+  packageVersion: 1.0
+  assetPath: Assets/Hot_Rod_OffRoad/Materials/A_HotRods_Main_Material.mat
+  uploadId: 825232
