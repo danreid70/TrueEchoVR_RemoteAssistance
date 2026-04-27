@@ -181,6 +181,7 @@
   <Project Path="Oculus.Interaction.OVR.Samples.csproj" />
   <Project Path="Meta.Voice.Hub.Editor.csproj" />
   <Project Path="Unity.Services.Core.Configuration.csproj" />
+  <Project Path="Unity.XR.Interaction.Toolkit.Samples.DeviceSimulator.csproj" />
   <Project Path="Unity.Services.Authentication.PlayerAccounts.Editor.csproj" />
   <Project Path="Unity.AI.Assistant.Annotations.Editor.csproj" />
   <Project Path="Meta.Wit.Composer.Editor.csproj" />

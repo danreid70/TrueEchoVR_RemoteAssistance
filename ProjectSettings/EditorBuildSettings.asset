@@ -6,7 +6,7 @@ EditorBuildSettings:
   serializedVersion: 2
   m_Scenes:
   - enabled: 1
-    path: Assets/_TrueEchoVR/_SCENES/_TrueEchoVR_StartScene.unity
+    path: Assets/_TrueEchoVR/_SCENES/_ARCHIVE/_TrueEchoVR_StartScene_Meta-Rig.unity
     guid: cb20b4cf6b13eda43b6824915fb8ea9b
   - enabled: 0
     path: Assets/_TrueEchoVR/QRCodeDetection/QRCodeDetection.unity
