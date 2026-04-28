@@ -7,7 +7,7 @@ using TMPro;
 
 namespace TrueEchoVR
 {
-    public class QRAnchor : MonoBehaviour
+    public class QRCodeManager : MonoBehaviour
     {
         [System.Serializable]
         public class QRPayloadAction

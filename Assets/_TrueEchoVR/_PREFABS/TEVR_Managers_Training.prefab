@@ -1,0 +1,130 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!1 &7759746591027909438
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 4866577709688908801}
+  - component: {fileID: 7155918759152094406}
+  - component: {fileID: 3396781567084203095}
+  - component: {fileID: 652281627516294644}
+  - component: {fileID: 2043332319689981059}
+  - component: {fileID: 5956542862040378232}
+  m_Layer: 0
+  m_Name: TEVR_Managers_Training
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &4866577709688908801
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7759746591027909438}
+  serializedVersion: 2
+  m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &7155918759152094406
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7759746591027909438}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 45f82e264a4b08745ab1c4c5659e98bc, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::VRHUDManager
+  followDistance: 1.5
+  verticalOffset: 0.3
+  positionSmoothTime: 0.15
+  rotationSmoothSpeed: 2.5
+  visibleAngle: 35
+  outOfViewDelay: 2
+  customUSS: "\r\n        .container {\r\n            background-color: rgba(0,0,0,0.75);\r\n           
+    border-radius: 16px;\r\n            padding: 24px;\r\n            min-width:
+    400px;\r\n            align-items: center;\r\n            border-width: 1px;\r\n           
+    border-color: rgba(255,255,255,0.2);\r\n        }\r\n        .status {\r\n           
+    font-size: 22px;\r\n            color: #FFFFFF;\r\n            -unity-font-style:
+    bold;\r\n            margin-bottom: 12px;\r\n        }\r\n        .hint {\r\n           
+    font-size: 16px;\r\n            color: #CCCCCC;\r\n        }\r\n        .completion
+    {\r\n            font-size: 20px;\r\n            color: #00FF88;\r\n           
+    -unity-font-style: bold;\r\n        }\r\n    "
+--- !u!114 &3396781567084203095
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7759746591027909438}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 76c6dcf72253ad94fa8332233fadf66d, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::TaskStatusUI
+--- !u!114 &652281627516294644
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7759746591027909438}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: f9a6f59469afe074b90469594080f21c, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::TaskManager
+  taskSteps:
+  - {fileID: 11400000, guid: fd7133a62de8edc49bd238e611cb3f45, type: 2}
+  - {fileID: 11400000, guid: b0771790453348d45bbc06de95c8d3bf, type: 2}
+  autoProgress: 1
+  stepCompletionDelay: 1
+  statusUI: {fileID: 3396781567084203095}
+  onTaskStarted:
+    m_PersistentCalls:
+      m_Calls: []
+  onTaskCompleted:
+    m_PersistentCalls:
+      m_Calls: []
+  onStepCompleted:
+    m_PersistentCalls:
+      m_Calls: []
+--- !u!114 &2043332319689981059
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7759746591027909438}
+  m_Enabled: 0
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: b8369da1fb1ad754f9473ec3f54a2e51, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::XApiTracker
+  lrsEndpoint: https://lrs.example.com/data/xAPI
+  authToken: 
+--- !u!114 &5956542862040378232
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7759746591027909438}
+  m_Enabled: 0
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: c727f71a7789ee549bbede29103ccae5, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::ScormTracker
