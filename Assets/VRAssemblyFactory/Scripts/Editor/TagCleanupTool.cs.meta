@@ -1,9 +1,0 @@
-fileFormatVersion: 2
-guid: d118322c92f2c93458f7b8fadcf4c202
-AssetOrigin:
-  serializedVersion: 1
-  productId: 360520
-  packageName: VR Assembly Factory
-  packageVersion: 1.0
-  assetPath: Assets/VRAssemblyFactory/Scripts/Editor/TagCleanupTool.cs
-  uploadId: 899962

@@ -1,9 +1,0 @@
-fileFormatVersion: 2
-guid: cb58fe5058b7056408a23a96a5de6813
-AssetOrigin:
-  serializedVersion: 1
-  productId: 360520
-  packageName: VR Assembly Factory
-  packageVersion: 1.0
-  assetPath: Assets/VRAssemblyFactory/Scripts/AssemblableObject.cs
-  uploadId: 899962

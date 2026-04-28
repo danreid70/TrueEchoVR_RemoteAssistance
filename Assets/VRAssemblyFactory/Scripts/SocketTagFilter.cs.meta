@@ -1,9 +1,0 @@
-fileFormatVersion: 2
-guid: b715c0e7ed17c4a469628f1c7207de6a
-AssetOrigin:
-  serializedVersion: 1
-  productId: 360520
-  packageName: VR Assembly Factory
-  packageVersion: 1.0
-  assetPath: Assets/VRAssemblyFactory/Scripts/SocketTagFilter.cs
-  uploadId: 899962
