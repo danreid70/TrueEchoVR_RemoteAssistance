@@ -2,97 +2,103 @@ using System.Collections;
 using UnityEngine;
 using UnityEngine.UIElements;
 
-/// <summary>
-/// Spawns a world-space UI panel that stays in front of the player,
-/// above eye level, and rotates to face the player after a delay
-/// when out of view. Provides public methods to set status text.
-/// </summary>
+[ExecuteAlways]
 public class VRHUDManager : MonoBehaviour
 {
     public static VRHUDManager Instance { get; private set; }
 
-    [Header("Follow Settings")]
-    [Tooltip("Distance from the camera (meters).")]
+    [Header("World Scale")]
+    [SerializeField] private float worldScaleMultiplier = 1.0f;
+
+    [Header("Position & Follow")]
     [SerializeField] private float followDistance = 1.5f;
-    [Tooltip("Vertical offset above the camera (meters).")]
     [SerializeField] private float verticalOffset = 0.3f;
-    [Tooltip("Smooth time for position follow.")]
     [SerializeField] private float positionSmoothTime = 0.15f;
-    [Tooltip("Speed at which the HUD rotates to face the player.")]
-    [SerializeField] private float rotationSmoothSpeed = 2.5f;
+    [SerializeField] private float rotationSmoothSpeed = 3.0f;
 
-    [Header("Out-of-View Behavior")]
-    [Tooltip("Angle (degrees) within which the HUD is considered 'seen'.")]
-    [SerializeField] private float visibleAngle = 35f;
-    [Tooltip("Time (seconds) the HUD must be out of view before it snaps back.")]
-    [SerializeField] private float outOfViewDelay = 2.0f;
+    [Header("Panel Size (UI Pixels)")]
+    [SerializeField] private float panelWidth = 450f;
+    [SerializeField] private float panelHeight = 300f;
+    [SerializeField] private float panelPadding = 24f;
 
-    [Header("UI Look (USS)")]
-    [SerializeField, TextArea(3, 10)] private string customUSS = @"
-        .container {
-            background-color: rgba(0,0,0,0.75);
-            border-radius: 16px;
-            padding: 24px;
-            min-width: 400px;
-            align-items: center;
-            border-width: 1px;
-            border-color: rgba(255,255,255,0.2);
-        }
-        .status {
-            font-size: 22px;
-            color: #FFFFFF;
-            -unity-font-style: bold;
-            margin-bottom: 12px;
-        }
-        .hint {
-            font-size: 16px;
-            color: #CCCCCC;
-        }
-        .completion {
-            font-size: 20px;
-            color: #00FF88;
-            -unity-font-style: bold;
-        }
-    ";
+    [Header("Background & Border")]
+    [SerializeField] private Color backgroundColor = new Color(0, 0, 0, 0.75f);
+    [SerializeField] private float borderRadius = 16f;
+    [SerializeField] private float borderWidth = 1f;
+    [SerializeField] private Color borderColor = new Color(1, 1, 1, 0.2f);
+
+    [Header("Status Text")]
+    [SerializeField] private float statusFontSize = 20f;
+    [SerializeField] private Color statusColor = Color.white;
+    [SerializeField] private float statusBottomMargin = 10f;
+
+    [Header("Hint Text")]
+    [SerializeField] private float hintFontSize = 14f;
+    [SerializeField] private Color hintColor = new Color(0.8f, 0.8f, 0.8f);
+
+    [Header("Completion Text")]
+    [SerializeField] private float completionFontSize = 18f;
+    [SerializeField] private Color completionColor = new Color(0, 1, 0.53f);
+
+    [Header("Auto‑Fade")]
+    [SerializeField] private float fadeDelay = 0f;
+    [SerializeField] private float fadeDuration = 0.5f;
+
+    [Header("Pointer")]
+    [SerializeField] private GameObject pointerPrefab;
+    [SerializeField] private Vector3 pointerOffset = new Vector3(0, 0, -0.1f);
 
     private GameObject hudObject;
     private UIDocument uiDocument;
-    private VisualElement rootContainer;
     private Label statusLabel;
     private Label hintLabel;
     private Label completionLabel;
 
+    private string lastStatusText = "";
+    private string lastHintText = "";
+    private bool isCompletionShowing = false;
+    private string lastCompletionMessage = "";
+
     private Transform cameraTransform;
     private Vector3 velocity = Vector3.zero;
-    private float outOfViewTimer = 0f;
-    private bool isSnappedToView = false;
+    private Quaternion targetRotation;
+
+    private Coroutine fadeCoroutine;
+    private float targetOpacity = 1f;
+
+    private GameObject currentPointer;
+    private Transform currentTarget;
 
     private void Awake()
     {
-        if (Instance != null && Instance != this)
+        if (Application.isPlaying)
         {
-            Destroy(gameObject);
-            return;
+            if (Instance != null && Instance != this)
+            {
+                Destroy(gameObject);
+                return;
+            }
+            Instance = this;
+            DontDestroyOnLoad(gameObject);
+
+            CreateHUD();
         }
-        Instance = this;
-        DontDestroyOnLoad(gameObject);
 
         cameraTransform = Camera.main?.transform;
-        if (cameraTransform == null)
-            Debug.LogError("VRHUDManager: No main camera found. Make sure your XR Rig is in the scene.");
-
-        CreateHUD();
-        StartCoroutine(InitializeHUDDelayed());
+        if (cameraTransform == null && Application.isPlaying)
+            Debug.LogError("[VRHUDManager] No main camera found.");
     }
 
-    private IEnumerator InitializeHUDDelayed()
+    private IEnumerator Start()
     {
-        // Wait one frame so camera is ready (especially in XR)
         yield return null;
+        if (cameraTransform == null)
+            cameraTransform = Camera.main?.transform;
+
         if (cameraTransform != null)
         {
             transform.position = ComputeTargetPosition();
-            transform.rotation = Quaternion.LookRotation(cameraTransform.forward, Vector3.up);
+            transform.rotation = CameraFaceRotation();
         }
     }
 
@@ -100,32 +106,20 @@ public class VRHUDManager : MonoBehaviour
     {
         if (cameraTransform == null) return;
 
-        // Smooth position follow
         Vector3 targetPos = ComputeTargetPosition();
         transform.position = Vector3.SmoothDamp(transform.position, targetPos, ref velocity, positionSmoothTime);
 
-        // Determine if the HUD is "seen" by the player
-        bool isVisible = IsHUDInView();
+        targetRotation = CameraFaceRotation();
+        transform.rotation = Quaternion.Slerp(transform.rotation, targetRotation, rotationSmoothSpeed * Time.deltaTime);
 
-        if (isVisible)
+        // Pointer update – now uses the pointer's own world position
+        if (currentPointer != null && currentTarget != null)
         {
-            outOfViewTimer = 0f;
-            isSnappedToView = false;
-            // Keep current rotation (do not force face-camera)
-        }
-        else
-        {
-            outOfViewTimer += Time.deltaTime;
-            if (outOfViewTimer >= outOfViewDelay)
-                isSnappedToView = true;
-        }
-
-        // Smoothly rotate to face the camera when snapped, otherwise keep stable
-        if (isSnappedToView)
-        {
-            Vector3 lookDir = (cameraTransform.position - transform.position).normalized;
-            Quaternion targetRot = Quaternion.LookRotation(lookDir, Vector3.up);
-            transform.rotation = Quaternion.Slerp(transform.rotation, targetRot, rotationSmoothSpeed * Time.deltaTime);
+            Vector3 toTarget = currentTarget.position - currentPointer.transform.position;
+            if (toTarget != Vector3.zero)
+            {
+                currentPointer.transform.rotation = Quaternion.LookRotation(toTarget, Vector3.up);
+            }
         }
     }
 
@@ -136,116 +130,271 @@ public class VRHUDManager : MonoBehaviour
                + Vector3.up * verticalOffset;
     }
 
-    private bool IsHUDInView()
+    private Quaternion CameraFaceRotation()
     {
-        Vector3 toHUD = (transform.position - cameraTransform.position).normalized;
-        float angle = Vector3.Angle(cameraTransform.forward, toHUD);
-        return angle < visibleAngle;
+        Vector3 toCamera = cameraTransform.position - transform.position;
+        return Quaternion.LookRotation(-toCamera, Vector3.up);
     }
 
     private void CreateHUD()
     {
-        // Create a dedicated GameObject for the UI Document in world space
+        if (hudObject != null)
+        {
+            if (Application.isPlaying) Destroy(hudObject);
+            else DestroyImmediate(hudObject);
+        }
+
         hudObject = new GameObject("VR_HUD_Panel");
         hudObject.transform.SetParent(transform);
         hudObject.transform.localPosition = Vector3.zero;
         hudObject.transform.localRotation = Quaternion.identity;
+        hudObject.transform.localScale = Vector3.one * worldScaleMultiplier;
 
         uiDocument = hudObject.AddComponent<UIDocument>();
-
-        // Load PanelSettings from Resources (see setup instructions below)
         var panelSettings = Resources.Load<PanelSettings>("VRHUDPanelSettings");
         if (panelSettings == null)
         {
-            Debug.LogError("VRHUDManager: Missing PanelSettings. Create a PanelSettings asset named 'VRHUDPanelSettings' in Resources folder.");
+            Debug.LogError("[VRHUDManager] Missing 'VRHUDPanelSettings' in Resources. Ensure Render Mode is World Space.");
             return;
         }
         uiDocument.panelSettings = panelSettings;
 
-        // Build UI structure entirely in code
-        rootContainer = new VisualElement();
-        rootContainer.AddToClassList("container");
+        var root = uiDocument.rootVisualElement;
+        root.Clear();
+        ApplyPanelStyles(root);
 
-        statusLabel = new Label("Status");
-        statusLabel.AddToClassList("status");
-        rootContainer.Add(statusLabel);
-
-        hintLabel = new Label("Hint");
-        hintLabel.AddToClassList("hint");
-        rootContainer.Add(hintLabel);
-
-        completionLabel = new Label("Complete!");
-        completionLabel.AddToClassList("completion");
+        statusLabel = new Label(" ") { name = "StatusLabel" };
+        hintLabel = new Label("") { name = "HintLabel" };
+        completionLabel = new Label("Complete!") { name = "CompletionLabel" };
         completionLabel.style.display = DisplayStyle.None;
-        rootContainer.Add(completionLabel);
 
-        uiDocument.rootVisualElement.Clear();
-        uiDocument.rootVisualElement.Add(rootContainer);
-
-        // Apply custom USS
-        var styleSheet = ScriptableObject.CreateInstance<StyleSheet>();
-        // We use a simple trick: apply USS directly via extension method
-        rootContainer.styleSheets.Add(CreateStyleSheet(customUSS));
-    }
-
-    /// <summary>
-    /// Helper to create a StyleSheet from string content at runtime.
-    /// </summary>
-    private StyleSheet CreateStyleSheet(string uss)
-    {
-        var styleSheet = ScriptableObject.CreateInstance<StyleSheet>();
-        // Unity's StyleSheet can't be populated from string easily in runtime.
-        // Instead we'll use inline styles for simplicity, or you can load a .uss from Resources.
-        // For a fully runtime solution, we directly set style properties below.
-        ApplyFallbackStyles();
-        return styleSheet;
-    }
-
-    private void ApplyFallbackStyles()
-    {
-        // Fallback inline styles – this guarantees visibility even without USS parsing at runtime.
-        rootContainer.style.backgroundColor = new Color(0, 0, 0, 0.75f);
-        rootContainer.style.borderTopLeftRadius = rootContainer.style.borderTopRightRadius = 16;
-        rootContainer.style.borderBottomLeftRadius = rootContainer.style.borderBottomRightRadius = 16;
-        rootContainer.style.paddingTop = rootContainer.style.paddingBottom = 24;
-        rootContainer.style.paddingLeft = rootContainer.style.paddingRight = 24;
-        rootContainer.style.minWidth = 400;
-        rootContainer.style.alignItems = Align.Center;
-        rootContainer.style.borderLeftWidth = rootContainer.style.borderRightWidth = rootContainer.style.borderTopWidth = rootContainer.style.borderBottomWidth = 1;
-        rootContainer.style.borderLeftColor = rootContainer.style.borderRightColor = rootContainer.style.borderTopColor = rootContainer.style.borderBottomColor = new Color(1, 1, 1, 0.2f);
-        statusLabel.style.fontSize = 22;
-        statusLabel.style.color = Color.white;
-        statusLabel.style.unityFontStyleAndWeight = FontStyle.Bold;
-        statusLabel.style.marginBottom = 12;
-        hintLabel.style.fontSize = 16;
-        hintLabel.style.color = new Color(0.8f, 0.8f, 0.8f);
-        completionLabel.style.fontSize = 20;
-        completionLabel.style.color = new Color(0, 1, 0.53f);
-        completionLabel.style.unityFontStyleAndWeight = FontStyle.Bold;
+        ApplyLabelStyles(statusLabel, statusFontSize, statusColor, FontStyle.Bold, statusBottomMargin);
+        ApplyLabelStyles(hintLabel, hintFontSize, hintColor, FontStyle.Normal, 0);
+        ApplyLabelStyles(completionLabel, completionFontSize, completionColor, FontStyle.Bold, 0);
         completionLabel.style.display = DisplayStyle.None;
+
+        root.Add(statusLabel);
+        root.Add(hintLabel);
+        root.Add(completionLabel);
+        root.style.opacity = targetOpacity;
+
+        // Recreate pointer if we had a target before refresh
+        if (currentTarget != null)
+            CreatePointer(currentTarget);
     }
 
-    // --- Public API for TaskStatusUI ---
+    private void ApplyPanelStyles(VisualElement panel)
+    {
+        panel.style.width = panelWidth;
+        panel.style.height = panelHeight;
+        panel.style.paddingTop = panelPadding;
+        panel.style.paddingBottom = panelPadding;
+        panel.style.paddingLeft = panelPadding;
+        panel.style.paddingRight = panelPadding;
+        panel.style.backgroundColor = backgroundColor;
+        panel.style.borderTopLeftRadius = borderRadius;
+        panel.style.borderTopRightRadius = borderRadius;
+        panel.style.borderBottomLeftRadius = borderRadius;
+        panel.style.borderBottomRightRadius = borderRadius;
+        panel.style.borderLeftWidth = borderWidth;
+        panel.style.borderRightWidth = borderWidth;
+        panel.style.borderTopWidth = borderWidth;
+        panel.style.borderBottomWidth = borderWidth;
+        panel.style.borderLeftColor = borderColor;
+        panel.style.borderRightColor = borderColor;
+        panel.style.borderTopColor = borderColor;
+        panel.style.borderBottomColor = borderColor;
+        panel.style.alignItems = Align.Center;
+        panel.style.justifyContent = Justify.Center;
+        panel.style.flexDirection = FlexDirection.Column;
+        panel.style.overflow = Overflow.Hidden;
+    }
+
+    private void ApplyLabelStyles(Label label, float fontSize, Color color, FontStyle weight, float bottomMargin)
+    {
+        label.style.fontSize = fontSize;
+        label.style.color = color;
+        label.style.unityFontStyleAndWeight = weight;
+        label.style.marginBottom = bottomMargin;
+        label.style.unityTextAlign = TextAnchor.MiddleCenter;
+        label.style.whiteSpace = WhiteSpace.Normal;
+        label.style.overflow = Overflow.Hidden;
+        label.style.textOverflow = TextOverflow.Ellipsis;
+        label.style.width = panelWidth - panelPadding * 2;
+    }
+
+    // --- Public API ---
 
     public void SetStatus(string mainText, string hintText)
     {
-        statusLabel.text = mainText;
-        hintLabel.text = hintText;
-        statusLabel.style.display = DisplayStyle.Flex;
-        hintLabel.style.display = DisplayStyle.Flex;
-        completionLabel.style.display = DisplayStyle.None;
+        lastStatusText = mainText ?? "";
+        lastHintText = hintText ?? "";
+        isCompletionShowing = false;
+
+        if (string.IsNullOrWhiteSpace(lastStatusText) && string.IsNullOrWhiteSpace(lastHintText))
+        {
+            StartFadeOut(0f);
+        }
+        else
+        {
+            if (statusLabel != null)
+            {
+                statusLabel.text = lastStatusText;
+                hintLabel.text = lastHintText;
+                statusLabel.style.display = DisplayStyle.Flex;
+                hintLabel.style.display = DisplayStyle.Flex;
+                completionLabel.style.display = DisplayStyle.None;
+                uiDocument.rootVisualElement.style.opacity = 1f;
+                targetOpacity = 1f;
+            }
+
+            if (fadeDelay > 0f)
+                StartFadeCountdown(fadeDelay);
+            else
+            {
+                CancelFade();
+                SetOpacity(1f);
+            }
+        }
     }
 
     public void ShowCompletionMessage(string message)
     {
-        statusLabel.style.display = DisplayStyle.None;
-        hintLabel.style.display = DisplayStyle.None;
-        completionLabel.text = message;
-        completionLabel.style.display = DisplayStyle.Flex;
+        lastCompletionMessage = message ?? "";
+        isCompletionShowing = true;
+
+        if (statusLabel != null)
+        {
+            statusLabel.style.display = DisplayStyle.None;
+            hintLabel.style.display = DisplayStyle.None;
+            completionLabel.text = lastCompletionMessage;
+            completionLabel.style.display = DisplayStyle.Flex;
+            uiDocument.rootVisualElement.style.opacity = 1f;
+            targetOpacity = 1f;
+        }
+
+        if (fadeDelay > 0f)
+            StartFadeCountdown(fadeDelay);
+        else
+        {
+            CancelFade();
+            SetOpacity(1f);
+        }
+    }
+
+    public void SetTarget(Transform target)
+    {
+        currentTarget = target;
+
+        // Destroy existing pointer
+        if (currentPointer != null)
+        {
+            if (Application.isPlaying) Destroy(currentPointer);
+            else DestroyImmediate(currentPointer);
+            currentPointer = null;
+        }
+
+        if (target != null && pointerPrefab != null)
+        {
+            CreatePointer(target);
+        }
+
+        UpdatePointerVisibility();
+    }
+
+    private void CreatePointer(Transform target)
+    {
+        Transform parent = hudObject != null ? hudObject.transform : transform;
+        currentPointer = Instantiate(pointerPrefab, parent);
+        currentPointer.transform.localPosition = pointerOffset;
+        currentPointer.transform.localRotation = Quaternion.identity;
+        // Initial rotation from pointer's position
+        Vector3 toTarget = target.position - currentPointer.transform.position;
+        if (toTarget != Vector3.zero)
+            currentPointer.transform.rotation = Quaternion.LookRotation(toTarget, Vector3.up);
     }
 
     public void ClearHighlight()
     {
-        // No highlight in this minimal HUD, but method exists for compatibility.
+        SetTarget(null);
+    }
+
+    private void UpdatePointerVisibility()
+    {
+        if (currentPointer != null)
+        {
+            bool visible = targetOpacity > 0.01f;
+            currentPointer.SetActive(visible);
+        }
+    }
+
+    // --- Fade Handling ---
+
+    private void StartFadeCountdown(float delay)
+    {
+        CancelFade();
+        fadeCoroutine = StartCoroutine(FadeAfterDelay(delay));
+    }
+
+    private void StartFadeOut(float delay)
+    {
+        CancelFade();
+        fadeCoroutine = StartCoroutine(FadeOutAfterDelay(delay));
+    }
+
+    private void CancelFade()
+    {
+        if (fadeCoroutine != null)
+        {
+            StopCoroutine(fadeCoroutine);
+            fadeCoroutine = null;
+        }
+    }
+
+    private IEnumerator FadeAfterDelay(float delay)
+    {
+        yield return new WaitForSeconds(delay);
+        fadeCoroutine = StartCoroutine(FadeTo(0f, fadeDuration));
+    }
+
+    private IEnumerator FadeOutAfterDelay(float delay)
+    {
+        yield return new WaitForSeconds(delay);
+        fadeCoroutine = StartCoroutine(FadeTo(0f, fadeDuration));
+    }
+
+    private IEnumerator FadeTo(float target, float duration)
+    {
+        if (uiDocument == null) yield break;
+        var root = uiDocument.rootVisualElement;
+        float start = root.style.opacity.value;
+        float time = 0f;
+        while (time < duration)
+        {
+            time += Time.deltaTime;
+            root.style.opacity = Mathf.Lerp(start, target, time / duration);
+            UpdatePointerVisibility();
+            yield return null;
+        }
+        root.style.opacity = target;
+        targetOpacity = target;
+        UpdatePointerVisibility();
+        fadeCoroutine = null;
+    }
+
+    private void SetOpacity(float value)
+    {
+        if (uiDocument != null)
+        {
+            uiDocument.rootVisualElement.style.opacity = value;
+            targetOpacity = value;
+            UpdatePointerVisibility();
+        }
+    }
+
+    [ContextMenu("Refresh HUD")]
+    public void RefreshHUD()
+    {
+        CreateHUD();
     }
 }

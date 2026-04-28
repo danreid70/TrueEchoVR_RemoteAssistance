@@ -29,7 +29,7 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 7759746591027909438}
   serializedVersion: 2
-  m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: 0, y: 0, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
@@ -48,21 +48,29 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 45f82e264a4b08745ab1c4c5659e98bc, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::VRHUDManager
+  worldScaleMultiplier: 1
   followDistance: 1.5
   verticalOffset: 0.3
   positionSmoothTime: 0.15
   rotationSmoothSpeed: 2.5
-  visibleAngle: 35
-  outOfViewDelay: 2
-  customUSS: "\r\n        .container {\r\n            background-color: rgba(0,0,0,0.75);\r\n           
-    border-radius: 16px;\r\n            padding: 24px;\r\n            min-width:
-    400px;\r\n            align-items: center;\r\n            border-width: 1px;\r\n           
-    border-color: rgba(255,255,255,0.2);\r\n        }\r\n        .status {\r\n           
-    font-size: 22px;\r\n            color: #FFFFFF;\r\n            -unity-font-style:
-    bold;\r\n            margin-bottom: 12px;\r\n        }\r\n        .hint {\r\n           
-    font-size: 16px;\r\n            color: #CCCCCC;\r\n        }\r\n        .completion
-    {\r\n            font-size: 20px;\r\n            color: #00FF88;\r\n           
-    -unity-font-style: bold;\r\n        }\r\n    "
+  panelWidth: 450
+  panelHeight: 300
+  panelPadding: 24
+  backgroundColor: {r: 0.11654504, g: 0.13872679, b: 0.9150943, a: 0.75}
+  borderRadius: 16
+  borderWidth: 1
+  borderColor: {r: 1, g: 1, b: 1, a: 0.2}
+  statusFontSize: 20
+  statusColor: {r: 1, g: 1, b: 1, a: 1}
+  statusBottomMargin: 10
+  hintFontSize: 14
+  hintColor: {r: 0.8, g: 0.8, b: 0.8, a: 1}
+  completionFontSize: 18
+  completionColor: {r: 0, g: 1, b: 0.53, a: 1}
+  fadeDelay: 0
+  fadeDuration: 0.5
+  pointerPrefab: {fileID: 921447344581038579, guid: c44216c9451c537428612d017e33f2bd, type: 3}
+  pointerOffset: {x: 0, y: 0, z: -0.1}
 --- !u!114 &3396781567084203095
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -87,12 +95,41 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: f9a6f59469afe074b90469594080f21c, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::TaskManager
-  taskSteps:
-  - {fileID: 11400000, guid: fd7133a62de8edc49bd238e611cb3f45, type: 2}
-  - {fileID: 11400000, guid: b0771790453348d45bbc06de95c8d3bf, type: 2}
-  autoProgress: 1
+  steps:
+  - stepId: grab_empty_beaker
+    description: Grab the empty beaker.
+    hintMessage: The empty beaker is on the table next to the machine with the glass
+      box on top of it.
+    completionCondition: 0
+    targetObject: {fileID: 0}
+    onStepStarted:
+      m_PersistentCalls:
+        m_Calls: []
+    onStepCompleted:
+      m_PersistentCalls:
+        m_Calls: []
+    onStepFailed:
+      m_PersistentCalls:
+        m_Calls: []
+  - stepId: snap_empty_beaker
+    description: 'Drop the beaker into the glass box on top of the machine. '
+    hintMessage: Literally the machine with the glass box on top is mere inches from
+      where you picked up the empty glass beaker.
+    completionCondition: 1
+    targetObject: {fileID: 0}
+    onStepStarted:
+      m_PersistentCalls:
+        m_Calls: []
+    onStepCompleted:
+      m_PersistentCalls:
+        m_Calls: []
+    onStepFailed:
+      m_PersistentCalls:
+        m_Calls: []
+  autoStart: 1
   stepCompletionDelay: 1
   statusUI: {fileID: 3396781567084203095}
+  lmsTrackers: []
   onTaskStarted:
     m_PersistentCalls:
       m_Calls: []

@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: fa4a2b7b000dc61439cce474d6f1a231
+timeCreated: 1462417701
+licenseType: Store
+NativeFormatImporter:
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 59925
+  packageName: Simple Icons - Cartoon assets
+  packageVersion: 1.1
+  assetPath: Assets/SimpleIcons/Prefabs/SI_BatteryFullIcon.prefab
+  uploadId: 648204

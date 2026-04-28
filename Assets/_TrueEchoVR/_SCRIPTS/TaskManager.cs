@@ -3,17 +3,13 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Events;
 
-/// <summary>
-/// Manages the sequence of task steps. Automatically progresses when steps are completed.
-/// Reports to a TaskStatusUI and logs to LMS trackers.
-/// </summary>
 public class TaskManager : MonoBehaviour
 {
+    public static TaskManager Current { get; private set; }
+
     [Header("Task Configuration")]
-    [SerializeField] private List<TaskStep> taskSteps = new List<TaskStep>();
-    [Tooltip("Automatically start the task when the scene loads.")]
-    [SerializeField] private bool autoProgress = true;
-    [Tooltip("Delay after completing a step before the next begins (seconds).")]
+    [SerializeField] private List<TaskStepData> steps = new List<TaskStepData>();
+    [SerializeField] private bool autoStart = true;
     [SerializeField] private float stepCompletionDelay = 1.0f;
 
     [Header("UI & Trackers")]
@@ -23,62 +19,88 @@ public class TaskManager : MonoBehaviour
     [Header("Events")]
     public UnityEvent onTaskStarted;
     public UnityEvent onTaskCompleted;
-    public UnityEvent<string> onStepCompleted;   // passes stepId
+    public UnityEvent<string> onStepCompleted;
 
     private int currentStepIndex = -1;
     private bool isTaskRunning = false;
-    private Dictionary<string, bool> completedSteps = new Dictionary<string, bool>();
 
-    private void Start()
+    private void OnEnable()
     {
-        // Initialize LMS trackers
-        foreach (var tracker in lmsTrackers)
-            tracker.Initialize();
-
-        if (autoProgress)
-            StartTask();
+        Current = this;
+        if (autoStart && !isTaskRunning && steps.Count > 0)
+            StartCoroutine(DelayedStartTask());
     }
 
-    /// <summary>
-    /// Begins the task sequence from the first step.
-    /// </summary>
+    private void OnDisable()
+    {
+        if (Current == this)
+            Current = null;
+    }
+
+    private IEnumerator DelayedStartTask()
+    {
+        yield return null;
+        if (statusUI == null)
+            statusUI = FindObjectOfType<TaskStatusUI>(true);
+        foreach (var tracker in lmsTrackers)
+            tracker.Initialize();
+        StartTask();
+    }
+
     public void StartTask()
     {
-        if (taskSteps.Count == 0)
+        if (steps.Count == 0)
         {
-            Debug.LogError("[TaskManager] No task steps defined!");
+            Debug.LogError("[TaskManager] No steps defined!");
             return;
         }
         currentStepIndex = 0;
         isTaskRunning = true;
         onTaskStarted?.Invoke();
         ActivateStep(currentStepIndex);
-        LogStepAttempt(taskSteps[currentStepIndex].stepId);
     }
 
     private void ActivateStep(int index)
     {
-        var step = taskSteps[index];
+        if (!isTaskRunning) return;
+        if (index < 0 || index >= steps.Count)
+        {
+            Debug.LogWarning($"[TaskManager] Step index {index} is out of range. Task will stop.", this);
+            statusUI?.ShowMessage("Task configuration error", "The current step is missing. Notify a developer.");
+            StopTask();
+            return;
+        }
+
+        TaskStepData step = steps[index];
         step.onStepStarted?.Invoke();
         statusUI?.ShowMessage(step.description, step.hintMessage);
+        statusUI?.HighlightTarget(step.targetObject != null ? step.targetObject.gameObject : null);
     }
 
-    /// <summary>
-    /// Called by interaction handlers when the condition for a step is met.
-    /// </summary>
+    public void TryCompleteWithObject(GameObject obj)
+    {
+        if (!isTaskRunning || currentStepIndex >= steps.Count) return;
+        var step = steps[currentStepIndex];
+        if (step.targetObject != null && step.targetObject.gameObject == obj)
+        {
+            CompleteStep(step.stepId);
+        }
+    }
+
     public void CompleteStep(string stepId)
     {
-        if (!isTaskRunning || currentStepIndex >= taskSteps.Count) return;
+        if (!isTaskRunning || currentStepIndex >= steps.Count) return;
+        TaskStepData current = steps[currentStepIndex];
+        if (current.stepId != stepId) return;
 
-        var currentStep = taskSteps[currentStepIndex];
-        if (currentStep.stepId != stepId) return;
-
-        completedSteps[stepId] = true;
         onStepCompleted?.Invoke(stepId);
-        currentStep.onStepCompleted?.Invoke();
-        LogStepCompletion(stepId, true);
+        current.onStepCompleted?.Invoke();
+        statusUI?.ClearHighlight();
 
-        if (currentStepIndex < taskSteps.Count - 1)
+        foreach (var tracker in lmsTrackers)
+            tracker.LogProgress(stepId, true, Time.time);
+
+        if (currentStepIndex < steps.Count - 1)
         {
             StartCoroutine(DelayedNextStep());
         }
@@ -88,40 +110,51 @@ public class TaskManager : MonoBehaviour
             statusUI?.ShowCompletionMessage("All tasks completed!");
             onTaskCompleted?.Invoke();
             foreach (var tracker in lmsTrackers)
-                tracker.CompleteCourse("default_course"); // customize as needed
+                tracker.CompleteCourse("default_course");
         }
     }
 
     private IEnumerator DelayedNextStep()
     {
         yield return new WaitForSeconds(stepCompletionDelay);
+
+        // Safety: if task was stopped or list changed while we waited, abort
+        if (!isTaskRunning) yield break;
+
         currentStepIndex++;
+        if (currentStepIndex >= steps.Count)
+        {
+            Debug.LogWarning($"[TaskManager] No more steps after delay (index {currentStepIndex}). Completing task.", this);
+            isTaskRunning = false;
+            statusUI?.ShowCompletionMessage("All tasks completed!");
+            onTaskCompleted?.Invoke();
+            yield break;
+        }
+
         ActivateStep(currentStepIndex);
-        LogStepAttempt(taskSteps[currentStepIndex].stepId);
+
+        // LMS log the attempt
+        foreach (var tracker in lmsTrackers)
+            tracker.LogProgress(steps[currentStepIndex].stepId, false, Time.time);
     }
 
-    /// <summary>
-    /// Call to log a failure (optional).
-    /// </summary>
     public void FailStep(string stepId)
     {
         if (!isTaskRunning) return;
-        var step = taskSteps.Find(s => s.stepId == stepId);
+        var step = steps.Find(s => s.stepId == stepId);
         step?.onStepFailed?.Invoke();
-        LogStepCompletion(stepId, false);
-    }
-
-    public TaskStep GetCurrentStep() => isTaskRunning ? taskSteps[currentStepIndex] : null;
-
-    private void LogStepAttempt(string stepId)
-    {
         foreach (var tracker in lmsTrackers)
             tracker.LogProgress(stepId, false, Time.time);
     }
 
-    private void LogStepCompletion(string stepId, bool completed)
+    public TaskStepData GetCurrentStep() => isTaskRunning && currentStepIndex >= 0 && currentStepIndex < steps.Count
+        ? steps[currentStepIndex]
+        : null;
+
+    public void StopTask()
     {
-        foreach (var tracker in lmsTrackers)
-            tracker.LogProgress(stepId, completed, Time.time);
+        isTaskRunning = false;
+        currentStepIndex = -1;
+        statusUI?.ClearHighlight();
     }
 }

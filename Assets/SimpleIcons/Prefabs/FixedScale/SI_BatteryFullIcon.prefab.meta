@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: 99ccc7f3723f82d47a98bb61e65ca330
+PrefabImporter:
+  externalObjects: {}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 59925
+  packageName: Simple Icons - Cartoon assets
+  packageVersion: 1.1
+  assetPath: Assets/SimpleIcons/Prefabs/FixedScale/SI_BatteryFullIcon.prefab
+  uploadId: 648204

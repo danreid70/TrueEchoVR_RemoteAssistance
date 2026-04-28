@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: e72781aed5d30ae47b62874765b27b60
+timeCreated: 1462417693
+licenseType: Store
+NativeFormatImporter:
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 59925
+  packageName: Simple Icons - Cartoon assets
+  packageVersion: 1.1
+  assetPath: Assets/SimpleIcons/Prefabs/SI_StopIcon.prefab
+  uploadId: 648204

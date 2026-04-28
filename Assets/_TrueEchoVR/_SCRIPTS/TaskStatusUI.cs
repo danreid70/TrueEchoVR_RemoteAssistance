@@ -1,9 +1,5 @@
 using UnityEngine;
 
-/// <summary>
-/// Bridges TaskManager commands to the dynamic VRHUDManager.
-/// No UI elements need to be assigned manually.
-/// </summary>
 public class TaskStatusUI : MonoBehaviour
 {
     private VRHUDManager hud;
@@ -12,7 +8,7 @@ public class TaskStatusUI : MonoBehaviour
     {
         hud = VRHUDManager.Instance;
         if (hud == null)
-            Debug.LogError("TaskStatusUI: No VRHUDManager found in scene.");
+            Debug.LogError("[TaskStatusUI] No VRHUDManager found in scene.");
     }
 
     public void ShowMessage(string mainText, string hint)
@@ -22,12 +18,18 @@ public class TaskStatusUI : MonoBehaviour
 
     public void HighlightTarget(GameObject target)
     {
-        hud?.ClearHighlight();   // compatibility, no effect in this HUD
+        if (hud != null)
+        {
+            if (target != null)
+                hud.SetTarget(target.transform);
+            else
+                hud.ClearHighlight();
+        }
     }
 
     public void ClearHighlight()
     {
-        hud?.ClearHighlight();
+        hud?.ClearHighlight();   // removes the pointer
     }
 
     public void ShowCompletionMessage(string message)

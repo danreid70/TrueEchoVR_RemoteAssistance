@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: bd96af3d15508c443b025b4fb4b22947
+timeCreated: 1462417701
+licenseType: Store
+NativeFormatImporter:
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 59925
+  packageName: Simple Icons - Cartoon assets
+  packageVersion: 1.1
+  assetPath: Assets/SimpleIcons/Prefabs/SI_BatteryEmptyIcon.prefab
+  uploadId: 648204
