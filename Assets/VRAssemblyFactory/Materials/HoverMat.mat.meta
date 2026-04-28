@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: 98f05d1735e3f144085b897f32121a8f
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 2100000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 360520
+  packageName: VR Assembly Factory
+  packageVersion: 1.0
+  assetPath: Assets/VRAssemblyFactory/Materials/HoverMat.mat
+  uploadId: 899962

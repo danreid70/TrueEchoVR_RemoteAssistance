@@ -1,0 +1,9 @@
+fileFormatVersion: 2
+guid: b9e699e16703ad4498cdb53ec07991eb
+AssetOrigin:
+  serializedVersion: 1
+  productId: 360520
+  packageName: VR Assembly Factory
+  packageVersion: 1.0
+  assetPath: Assets/VRAssemblyFactory/Scripts/AttachablePartCreator.cs
+  uploadId: 899962
