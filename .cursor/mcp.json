@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "unity-mcp-gateway": {
+      "command": "C:\\_GIT_danreid70\\TrueEchoVR_Octane_V1\\Library\\PackageCache\\com.unity.ai.assistant@fc16ca46e208\\RelayApp~\\relay_win.exe",
+      "args": [
+        "--mcp",
+        "--log-dir",
+        "C:\\_GIT_danreid70\\TrueEchoVR_Octane_V1\\Logs"
+      ],
+      "env": {
+        "UNITY_ACP_SESSION_TOKEN": "53be201e60c04c51b8d164ea3408f5b7e516228d0a120e7c6120f1718d592d99",
+        "UNITY_INSTANCE_ID": "2652"
+      }
+    }
+  }
+}
