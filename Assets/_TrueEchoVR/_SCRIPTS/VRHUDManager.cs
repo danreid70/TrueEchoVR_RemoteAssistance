@@ -17,28 +17,28 @@ public class VRHUDManager : MonoBehaviour
     [SerializeField] private float rotationSmoothSpeed = 3.0f;
 
     [Header("Panel Size (UI Pixels)")]
-    [SerializeField] private float panelWidth = 450f;
-    [SerializeField] private float panelHeight = 300f;
-    [SerializeField] private float panelPadding = 24f;
+    public float panelWidth = 450f;
+    public float panelHeight = 300f;
+    public float panelPadding = 24f;
 
     [Header("Background & Border")]
-    [SerializeField] private Color backgroundColor = new Color(0, 0, 0, 0.75f);
-    [SerializeField] private float borderRadius = 16f;
-    [SerializeField] private float borderWidth = 1f;
-    [SerializeField] private Color borderColor = new Color(1, 1, 1, 0.2f);
+    public Color backgroundColor = new Color(0, 0, 0, 0.75f);
+    public float borderRadius = 16f;
+    public float borderWidth = 1f;
+    public Color borderColor = new Color(1, 1, 1, 0.2f);
 
     [Header("Status Text")]
-    [SerializeField] private float statusFontSize = 20f;
-    [SerializeField] private Color statusColor = Color.white;
-    [SerializeField] private float statusBottomMargin = 10f;
+    public float statusFontSize = 20f;
+    public Color statusColor = Color.white;
+    public float statusBottomMargin = 10f;
 
     [Header("Hint Text")]
-    [SerializeField] private float hintFontSize = 14f;
-    [SerializeField] private Color hintColor = new Color(0.8f, 0.8f, 0.8f);
+    public float hintFontSize = 14f;
+    public Color hintColor = new Color(0.8f, 0.8f, 0.8f);
 
     [Header("Completion Text")]
-    [SerializeField] private float completionFontSize = 18f;
-    [SerializeField] private Color completionColor = new Color(0, 1, 0.53f);
+    public float completionFontSize = 18f;
+    public Color completionColor = new Color(0, 1, 0.53f);
 
     [Header("Auto‑Fade")]
     [SerializeField] private float fadeDelay = 0f;

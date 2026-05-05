@@ -8,7 +8,7 @@ namespace TrueEchoVR.LiveTroubleShooting
 {
     public class TEVRStreamingManager : MonoBehaviour
     {
-        [Header("Server")] public string ServerUrl = "wss://server-url";
+        [Header("Server")] public string ServerUrl = "wss://live-troubleshooting-app.replit.app";
         private WebSocket _ws;
 
         // UI Events
