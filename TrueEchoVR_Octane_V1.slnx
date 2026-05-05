@@ -87,7 +87,6 @@
   <Project Path="AssistantCoreSDKRuntime.csproj" />
   <Project Path="Unity.AppUI.Navigation.Editor.csproj" />
   <Project Path="Meta.XR.Audio.Editor.csproj" />
-  <Project Path="Unity.Serialization.csproj" />
   <Project Path="Unity.XR.CompositionLayers.csproj" />
   <Project Path="Oculus.Interaction.OVR.Editor.csproj" />
   <Project Path="Oculus.Platform.csproj" />
@@ -260,7 +259,6 @@
   <Project Path="Unity.InternalAPIEngineBridge.004.csproj" />
   <Project Path="Unity.Services.Core.Device.csproj" />
   <Project Path="Meta.XR.Editor.StatusMenu.csproj" />
-  <Project Path="Unity.Serialization.Editor.csproj" />
   <Project Path="Unity.Services.Core.Configuration.Editor.csproj" />
   <Project Path="Meta.XR.MultiplayerBlocks.Fusion.Editor.csproj" />
   <Project Path="Meta.Wit.Dictation.csproj" />

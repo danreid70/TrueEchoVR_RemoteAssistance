@@ -1,0 +1,206 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!1 &1196107872146366308
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 5003421245050620899}
+  - component: {fileID: 3444734742346904413}
+  - component: {fileID: 9157865303555339371}
+  - component: {fileID: 4748299935583410328}
+  - component: {fileID: 434638605570138116}
+  - component: {fileID: 2445041983621719367}
+  - component: {fileID: 708029579295134168}
+  - component: {fileID: 8765684592355192735}
+  m_Layer: 0
+  m_Name: TEVR_Managers_Troubleshooting
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &5003421245050620899
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1196107872146366308}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0.9925076, z: 0.12218324, w: 0}
+  m_LocalPosition: {x: 0.954, y: 1.6614399, z: 0.755}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: -11.31, y: 90, z: 0}
+--- !u!114 &3444734742346904413
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1196107872146366308}
+  m_Enabled: 0
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 45f82e264a4b08745ab1c4c5659e98bc, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::VRHUDManager
+  worldScaleMultiplier: 1
+  followDistance: 1.2
+  verticalOffset: 0.3
+  positionSmoothTime: 0.15
+  rotationSmoothSpeed: 2.5
+  panelWidth: 450
+  panelHeight: 300
+  panelPadding: 24
+  backgroundColor: {r: 0.11654504, g: 0.13872679, b: 0.9150943, a: 0.75}
+  borderRadius: 16
+  borderWidth: 1
+  borderColor: {r: 1, g: 1, b: 1, a: 0.2}
+  statusFontSize: 20
+  statusColor: {r: 1, g: 1, b: 1, a: 1}
+  statusBottomMargin: 10
+  hintFontSize: 14
+  hintColor: {r: 0.8, g: 0.8, b: 0.8, a: 1}
+  completionFontSize: 18
+  completionColor: {r: 0, g: 1, b: 0.53, a: 1}
+  fadeDelay: 0
+  fadeDuration: 0.5
+  pointerPrefab: {fileID: 921447344581038579, guid: c44216c9451c537428612d017e33f2bd, type: 3}
+  pointerOffset: {x: -0.35, y: 0, z: -0.1}
+--- !u!114 &9157865303555339371
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1196107872146366308}
+  m_Enabled: 0
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 76c6dcf72253ad94fa8332233fadf66d, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::TaskStatusUI
+--- !u!114 &4748299935583410328
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1196107872146366308}
+  m_Enabled: 0
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: f9a6f59469afe074b90469594080f21c, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::TaskManager
+  steps:
+  - stepId: grab_empty_beaker
+    description: Grab the empty beaker.
+    hintMessage: The empty beaker is on the table next to the machine with the glass
+      box on top of it.
+    completionCondition: 0
+    targetObject: {fileID: 0}
+    onStepStarted:
+      m_PersistentCalls:
+        m_Calls: []
+    onStepCompleted:
+      m_PersistentCalls:
+        m_Calls: []
+    onStepFailed:
+      m_PersistentCalls:
+        m_Calls: []
+  - stepId: snap_empty_beaker
+    description: 'Drop the beaker into the glass box on top of the machine. '
+    hintMessage: Literally the machine with the glass box on top is mere inches from
+      where you picked up the empty glass beaker.
+    completionCondition: 1
+    targetObject: {fileID: 0}
+    onStepStarted:
+      m_PersistentCalls:
+        m_Calls: []
+    onStepCompleted:
+      m_PersistentCalls:
+        m_Calls: []
+    onStepFailed:
+      m_PersistentCalls:
+        m_Calls: []
+  autoStart: 1
+  stepCompletionDelay: 1
+  statusUI: {fileID: 9157865303555339371}
+  lmsTrackers: []
+  onTaskStarted:
+    m_PersistentCalls:
+      m_Calls: []
+  onTaskCompleted:
+    m_PersistentCalls:
+      m_Calls: []
+  onStepCompleted:
+    m_PersistentCalls:
+      m_Calls: []
+--- !u!114 &434638605570138116
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1196107872146366308}
+  m_Enabled: 0
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: b8369da1fb1ad754f9473ec3f54a2e51, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::XApiTracker
+  lrsEndpoint: https://lrs.example.com/data/xAPI
+  authToken: 
+--- !u!114 &2445041983621719367
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1196107872146366308}
+  m_Enabled: 0
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: c727f71a7789ee549bbede29103ccae5, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::ScormTracker
+--- !u!114 &708029579295134168
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1196107872146366308}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 91659791033b40640a8382aad58ea23f, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::TrueEchoVR.LiveTroubleShooting.TEVRStreamingManager
+  ServerUrl: wss://server-url
+  webcamDeviceName: 
+--- !u!114 &8765684592355192735
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1196107872146366308}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 9ac9abe7f6317784c847f90c3257147f, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::TrueEchoVR.LiveTroubleShooting.TEVRSessionUI
+  StreamingManager: {fileID: 0}
+  JoinPanel: {fileID: 0}
+  RoomCodeInput: {fileID: 0}
+  JoinButton: {fileID: 0}
+  StatusText: {fileID: 0}
+  SessionPanel: {fileID: 0}
+  ConnectionStatusText: {fileID: 0}
+  ChatDisplay: {fileID: 0}
+  ChatInput: {fileID: 0}
+  SendChatButton: {fileID: 0}
+  PointToText: {fileID: 0}

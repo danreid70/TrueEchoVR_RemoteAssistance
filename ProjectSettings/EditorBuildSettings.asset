@@ -6,7 +6,7 @@ EditorBuildSettings:
   serializedVersion: 2
   m_Scenes:
   - enabled: 1
-    path: Assets/_TrueEchoVR/_SCENES/_TrueEchoVR_StartScene_Unity-XRIT-Rig.unity
+    path: Assets/_TrueEchoVR/_SCENES/_TrueEchoVR_StartScene_Demo-XRIT-Rig.unity
     guid: 9e077683b92226e4f88f96ecdc66ff39
   m_configObjects:
     Unity.XR.Oculus.Settings: {fileID: 11400000, guid: bfa1182bd221b4ca89619141f66f1260, type: 2}
