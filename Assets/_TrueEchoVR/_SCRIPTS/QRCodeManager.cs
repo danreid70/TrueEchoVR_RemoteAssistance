@@ -36,7 +36,6 @@ namespace TrueEchoVR
 
         public bool IsDetecting { get; private set; } = true;
 
-        // Public class to expose tracked QR code information
         public class QRCodeInstance
         {
             public GameObject visualObject;
@@ -46,23 +45,33 @@ namespace TrueEchoVR
             public Quaternion lastRotation;
         }
 
-        // Events for UI binding
         public System.Action<QRCodeInstance> OnQRCodeAdded;
         public System.Action<QRCodeInstance> OnQRCodeUpdated;
         public System.Action<string> OnQRCodeRemoved; // identifierKey
 
-        // Public read-only access to tracked QR codes
         private Dictionary<string, QRCodeInstance> trackedQRCodes = new Dictionary<string, QRCodeInstance>();
         public IReadOnlyDictionary<string, QRCodeInstance> TrackedQRCodes => trackedQRCodes;
+
+        private void Start()
+        {
+            if (autoSaveLoad)
+            {
+                LoadFromDiskAndRestore();
+            }
+        }
 
         public void StartQRCodeDetection() => IsDetecting = true;
         public void StopQRCodeDetection() => IsDetecting = false;
 
         public void ClearQRCodes()
         {
-            foreach (var instance in trackedQRCodes.Values)
+            // Fire removal events for each QR before destroying
+            var keys = new List<string>(trackedQRCodes.Keys);
+            foreach (var key in keys)
             {
-                if (instance.visualObject != null) Destroy(instance.visualObject);
+                OnQRCodeRemoved?.Invoke(key);
+                if (trackedQRCodes[key].visualObject != null)
+                    Destroy(trackedQRCodes[key].visualObject);
             }
             trackedQRCodes.Clear();
             if (autoSaveLoad) SaveToDisk();
@@ -92,7 +101,7 @@ namespace TrueEchoVR
                 existing.visualObject.transform.SetPositionAndRotation(pos, rot);
                 existing.lastPosition = pos;
                 existing.lastRotation = rot;
-                existing.fullPayload = payload; // update payload in case it changed
+                existing.fullPayload = payload;
                 OnQRCodeUpdated?.Invoke(existing);
             }
             else
@@ -264,16 +273,12 @@ namespace TrueEchoVR
             File.WriteAllText(Path.Combine(Application.persistentDataPath, saveFileName), json);
         }
 
-        private void LoadFromDisk()
+        private void LoadFromDiskAndRestore()
         {
             string path = Path.Combine(Application.persistentDataPath, saveFileName);
             if (!File.Exists(path)) return;
-
             string json = File.ReadAllText(path);
-            Wrapper wrapper = JsonUtility.FromJson<Wrapper>(json);
-            if (wrapper?.data == null) return;
-
-            Debug.Log($"Loaded {wrapper.data.Count} previous QR records. They are kept for reference only – objects will be re‑created upon real detection.");
+            ManualLoadFromJson(json);
         }
 
         [System.Serializable]
@@ -283,7 +288,7 @@ namespace TrueEchoVR
         }
 
         public void ManualSave() => SaveToDisk();
-        public void ManualLoad() => LoadFromDisk();
+        public void ManualLoad() => LoadFromDiskAndRestore();
 
         public void ManualLoadFromJson(string json)
         {

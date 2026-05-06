@@ -8,17 +8,19 @@ namespace TrueEchoVR
 {
     public class TEVRStreamingManager : MonoBehaviour
     {
-        [Header("Server")] public string ServerUrl = "wss://live-troubleshooting-app.replit.app";
+        [Header("Server")] 
+        public string ServerUrl = "wss://live-troubleshooting-app.replit.app";
         private WebSocket _ws;
 
         // UI Events
         public Action OnConnected;
         public Action OnDisconnected;
+        public Action<string> OnConnectionError;  // new
         public Action<string> OnChatMessageReceived;
         public Action<string, string, string> OnPointToReceived; // name, qrCodePayload, poseData
         public Action<string> OnQRCodesPulled;
         public Action<Texture> OnRemoteStreamStarted;
-        public Action<Texture> OnLocalStreamStarted; // new: local preview texture
+        public Action<Texture> OnLocalStreamStarted;
 
         // WebRTC Components
         private RTCPeerConnection _pc;
@@ -26,8 +28,8 @@ namespace TrueEchoVR
         private VideoStreamTrack _videoTrack;
         private AudioStreamTrack _audioTrack;
 
-        // WebCam Fallback
-        [Header("Video")] public string webcamDeviceName = "";
+        [Header("Video")]
+        public string webcamDeviceName = "";
         private WebCamTexture _webcamTexture;
         public WebCamTexture LocalWebcamTexture => _webcamTexture;
 
@@ -61,6 +63,11 @@ namespace TrueEchoVR
                 Debug.Log("WebSocket connected");
                 SendSocketEvent("join-room", new { role = "headset", roomCode = _currentRoomCode });
                 OnConnected?.Invoke();
+            };
+
+            _ws.OnError += (err) => {
+                Debug.LogError($"WebSocket error: {err}");
+                OnConnectionError?.Invoke(err);
             };
 
             _ws.OnMessage += (bytes, start, length) => {
@@ -136,16 +143,15 @@ namespace TrueEchoVR
                 }
             };
 
-            // Setup Local Stream from Webcam
             var devices = WebCamTexture.devices;
             if (devices.Length > 0)
             {
-                string device = string.IsNullOrEmpty(webcamDeviceName) ? devices[0].name : devices[0].name;
+                string device = string.IsNullOrEmpty(webcamDeviceName) ? devices[0].name : webcamDeviceName;
                 _webcamTexture = new WebCamTexture(device);
                 _webcamTexture.Play();
                 yield return new WaitUntil(() => _webcamTexture.width > 100);
                 _videoTrack = new VideoStreamTrack(_webcamTexture);
-                OnLocalStreamStarted?.Invoke(_webcamTexture); // notify UI
+                OnLocalStreamStarted?.Invoke(_webcamTexture);
             }
             _audioTrack = new AudioStreamTrack();
 
@@ -191,7 +197,12 @@ namespace TrueEchoVR
             _ws?.SendText(json);
         }
 
-        void Update() { _ws?.Receive(); }
+        void Update() 
+        { 
+            if (_ws != null && _ws.State == WebSocketState.Open)
+                _ws.Receive(); 
+        }
+
         void OnDestroy() { Disconnect(); }
     }
 }

@@ -4,10 +4,6 @@ using System.Collections.Generic;
 
 namespace TrueEchoVR
 {
-    /// <summary>
-    /// VR world-space UI for session management, QR code list, video previews, and chat.
-    /// Hovers to the left of the VRHUDManager panel.
-    /// </summary>
     public class TEVRSessionUI : MonoBehaviour
     {
         [Header("References (auto‑found if empty)")]
@@ -28,21 +24,17 @@ namespace TrueEchoVR
         [SerializeField] private float panelHeight = 0.9f;
         [SerializeField] private Color bgColor = new Color(0, 0, 0, 0.85f);
 
-        // UI root (child object)
         private GameObject uiRoot;
         private Transform uiTransform;
         private Canvas canvas;
 
-        // Panels
         private GameObject joinPanel;
         private GameObject sessionPanel;
 
-        // Join screen widgets
         private InputField roomCodeInput;
         private Button joinButton;
         private Text joinStatusText;
 
-        // Session screen widgets
         private Text connectionStatusText;
         private RawImage localVideoImage;
         private RawImage remoteVideoImage;
@@ -52,7 +44,6 @@ namespace TrueEchoVR
         private Button pullQRButton;
         private Button clearQRButton;
 
-        // QR Code list UI
         private Transform qrListContent;
         private GameObject qrListItemPrefab;
         private Dictionary<string, GameObject> qrListItems = new Dictionary<string, GameObject>();
@@ -63,21 +54,24 @@ namespace TrueEchoVR
         private Button sendButton;
         private Button leaveButton;
 
-        // Follow logic
         private Transform camTransform;
         private Vector3 velocity = Vector3.zero;
         private Quaternion targetRot;
 
-        // Chat history
         private string chatHistory = "";
+
+        // Cache default font to avoid repeated lookups
+        private Font defaultFont;
 
         private void Start()
         {
-            // Find required managers
             if (streamingManager == null) streamingManager = GetComponent<TEVRStreamingManager>();
             if (hudManager == null) hudManager = VRHUDManager.Instance;
             if (qrManager == null) qrManager = GetComponent<QRCodeManager>();
             if (statusUI == null) statusUI = GetComponent<TaskStatusUI>();
+
+            defaultFont = Resources.GetBuiltinResource<Font>("Arial.ttf");
+            if (defaultFont == null) defaultFont = Font.CreateDynamicFontFromOSFont("Arial", 14); // fallback
 
             camTransform = Camera.main?.transform;
             if (camTransform == null)
@@ -204,13 +198,11 @@ namespace TrueEchoVR
             joinStatusText.rectTransform.anchoredPosition = new Vector2(0, -0.3f);
 
             // ========== SESSION SCREEN ==========
-            // Top Title
             var sessionTitle = CreateText(sessionPanel.transform, "Title", "Live Session", 40, FontStyle.Bold, Color.white);
             sessionTitle.rectTransform.anchorMin = new Vector2(0.5f, 1);
             sessionTitle.rectTransform.anchorMax = new Vector2(0.5f, 1);
             sessionTitle.rectTransform.anchoredPosition = new Vector2(0, -0.05f);
 
-            // Videos
             var videoContainer = CreateUIObject("Videos", sessionPanel.transform);
             var vcRect = videoContainer.GetComponent<RectTransform>();
             vcRect.anchorMin = new Vector2(0.05f, 0.55f);
@@ -223,7 +215,6 @@ namespace TrueEchoVR
             localVideoImage = CreateVideoDisplay(videoContainer.transform, "LocalVideo", "Preview");
             remoteVideoImage = CreateVideoDisplay(videoContainer.transform, "RemoteVideo", "Web Stream");
 
-            // QR Management Buttons
             var qrControls = CreateUIObject("QRControls", sessionPanel.transform);
             var qrRect = qrControls.GetComponent<RectTransform>();
             qrRect.anchorMin = new Vector2(0.05f, 0.48f);
@@ -246,7 +237,6 @@ namespace TrueEchoVR
             pullQRButton = CreateButton(qrControls.transform, "PullQR", "Pull QR Codes", new Color(0.1f, 0.4f, 0.6f));
             pullQRButton.onClick.AddListener(OnPullQRPressed);
 
-            // QR Code List
             var qrListHeader = CreateText(sessionPanel.transform, "QRListHeader", "Detected QR Codes:", 22, FontStyle.Bold, Color.white);
             var headerRect = qrListHeader.rectTransform;
             headerRect.anchorMin = new Vector2(0.05f, 0.45f);
@@ -279,19 +269,17 @@ namespace TrueEchoVR
             var itemLayout = qrListItemPrefab.AddComponent<LayoutElement>();
             itemLayout.minHeight = 30;
             var itemText = qrListItemPrefab.AddComponent<Text>();
-            itemText.font = Resources.GetBuiltinResource<Font>("Arial.ttf");
+            itemText.font = defaultFont; // Use cached font
             itemText.fontSize = 16;
             itemText.color = Color.white;
             qrListItemPrefab.SetActive(false);
 
-            // Connection status
             connectionStatusText = CreateText(sessionPanel.transform, "ConnStatus", "Status: Connecting...", 20, FontStyle.Italic, Color.cyan);
             connectionStatusText.rectTransform.anchorMin = new Vector2(0, 1);
             connectionStatusText.rectTransform.anchorMax = new Vector2(0, 1);
             connectionStatusText.rectTransform.pivot = new Vector2(0, 1);
             connectionStatusText.rectTransform.anchoredPosition = new Vector2(0.05f, -0.02f);
 
-            // Chat
             var chatContainer = CreateUIObject("Chat", sessionPanel.transform);
             var chatRect = chatContainer.GetComponent<RectTransform>();
             chatRect.anchorMin = new Vector2(0.05f, 0.08f);
@@ -350,7 +338,6 @@ namespace TrueEchoVR
             sendButton.GetComponent<LayoutElement>().preferredWidth = 0.2f;
             sendButton.onClick.AddListener(OnSendChat);
 
-            // Leave button
             leaveButton = CreateButton(sessionPanel.transform, "Leave", "LEAVE SESSION", new Color(0.6f, 0.2f, 0.2f));
             var leaveRect = leaveButton.GetComponent<RectTransform>();
             leaveRect.anchorMin = new Vector2(0.5f, 0);
@@ -408,7 +395,7 @@ namespace TrueEchoVR
             obj.transform.SetParent(parent, false);
             var txt = obj.AddComponent<Text>();
             txt.text = text;
-            txt.font = Resources.GetBuiltinResource<Font>("Arial.ttf");
+            txt.font = defaultFont;
             txt.fontSize = fontSize;
             txt.fontStyle = style;
             txt.color = color;
@@ -437,7 +424,6 @@ namespace TrueEchoVR
                 qrManager.OnQRCodeAdded += OnQRCodeAdded;
                 qrManager.OnQRCodeUpdated += OnQRCodeUpdated;
                 qrManager.OnQRCodeRemoved += OnQRCodeRemoved;
-                // Initial population
                 foreach (var item in qrManager.TrackedQRCodes)
                     OnQRCodeAdded(item.Value);
             }
@@ -508,7 +494,6 @@ namespace TrueEchoVR
 
         public void PointToQRCode(string name, string qrCodePayload, string poseData)
         {
-            // Find matching QR code by payload (exact or partial)
             QRCodeManager.QRCodeInstance targetQR = null;
             foreach (var qr in qrManager.TrackedQRCodes.Values)
             {
@@ -521,11 +506,8 @@ namespace TrueEchoVR
 
             if (targetQR != null)
             {
-                // Update TaskStatusUI with the name
                 string displayName = string.IsNullOrEmpty(name) ? "Remote Target" : name;
                 statusUI?.ShowMessage(displayName, $"Payload: {qrCodePayload}");
-
-                // Point HUD arrow to the QR code's position
                 if (hudManager != null)
                 {
                     hudManager.SetTarget(targetQR.visualObject.transform);
@@ -533,7 +515,6 @@ namespace TrueEchoVR
             }
             else
             {
-                // If QR not found, try to parse pose from poseData and create arrow
                 if (!string.IsNullOrEmpty(poseData))
                 {
                     try

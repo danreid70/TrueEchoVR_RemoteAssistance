@@ -1,218 +1,305 @@
-// Copyright (c) Meta Platforms, Inc. and affiliates.
-
 using Meta.XR.MRUtilityKit;
-using Meta.XR.Samples;
-
-using System;
-
+using System.Collections.Generic;
+using System.IO;
+using TMPro;
 using UnityEngine;
+using UnityEngine.Events;
 
-
-namespace Meta.XR.MRUtilityKitSamples.QRCodeDetection
+namespace TrueEchoVR
 {
-    [MetaCodeSample("MRUKSample-QRCodeDetection")]
     public class QRCodeManager : MonoBehaviour
     {
-        //
-        // Static interface
-
-        public const string ScenePermission = OVRPermissionsRequester.ScenePermission;
-
-        public static bool IsSupported => MRUK.Instance.QRCodeTrackingSupported;
-
-        public static bool HasPermissions
-#if UNITY_EDITOR
-            => true;
-#else
-            => UnityEngine.Android.Permission.HasUserAuthorizedPermission(ScenePermission);
-#endif
-
-        public static int ActiveTrackedCount
-            => s_instance ? s_instance._activeCount : 0;
-
-        public static bool TrackingEnabled
+        [System.Serializable]
+        public class QRPayloadAction
         {
-            get => s_instance && s_instance._mrukInstance && s_instance._mrukInstance.SceneSettings.TrackerConfiguration.QRCodeTrackingEnabled;
-            set
+            public string matchString;
+            public GameObject customPrefab;
+            public UnityEvent onPayloadMatched;
+        }
+
+        [Header("QR Code Tracking")]
+        [Tooltip("Max position change (meters) before updating the visual object.")]
+        public float positionThreshold = 0.05f;
+        [Tooltip("Max euler angle change (degrees) before updating the visual object.")]
+        public float rotationThreshold = 0.05f;
+
+        [Header("Payload Identification")]
+        [Tooltip("How many characters of the payload to use as the unique key. Set to 0 or negative to use the full payload.")]
+        public int payloadIdentifierMaxLength = 20;
+
+        [Header("Actions & Prefabs")]
+        public List<QRPayloadAction> payloadActions = new List<QRPayloadAction>();
+
+        [Header("Persistence")]
+        public bool autoSaveLoad = true;
+        public string saveFileName = "QRDetectedData.json";
+
+        public bool IsDetecting { get; private set; } = true;
+
+        public class QRCodeInstance
+        {
+            public GameObject visualObject;
+            public string fullPayload;
+            public string identifierKey;
+            public Vector3 lastPosition;
+            public Quaternion lastRotation;
+        }
+
+        public System.Action<QRCodeInstance> OnQRCodeAdded;
+        public System.Action<QRCodeInstance> OnQRCodeUpdated;
+        public System.Action<string> OnQRCodeRemoved; // identifierKey
+
+        private Dictionary<string, QRCodeInstance> trackedQRCodes = new Dictionary<string, QRCodeInstance>();
+        public IReadOnlyDictionary<string, QRCodeInstance> TrackedQRCodes => trackedQRCodes;
+
+        private void Start()
+        {
+            if (autoSaveLoad)
             {
-                if (!s_instance || !s_instance._mrukInstance)
+                LoadFromDiskAndRestore();
+            }
+        }
+
+        public void StartQRCodeDetection() => IsDetecting = true;
+        public void StopQRCodeDetection() => IsDetecting = false;
+
+        public void ClearQRCodes()
+        {
+            // Fire removal events for each QR before destroying
+            var keys = new List<string>(trackedQRCodes.Keys);
+            foreach (var key in keys)
+            {
+                OnQRCodeRemoved?.Invoke(key);
+                if (trackedQRCodes[key].visualObject != null)
+                    Destroy(trackedQRCodes[key].visualObject);
+            }
+            trackedQRCodes.Clear();
+            if (autoSaveLoad) SaveToDisk();
+        }
+
+        public string GetQRCodeDataAsJson()
+        {
+            List<SerializableQRData> list = new List<SerializableQRData>();
+            foreach (var kvp in trackedQRCodes)
+            {
+                list.Add(new SerializableQRData
                 {
-                    return;
-                }
-                var config = s_instance._mrukInstance.SceneSettings.TrackerConfiguration;
-                config.QRCodeTrackingEnabled = value;
-                s_instance._mrukInstance.SceneSettings.TrackerConfiguration = config;
+                    identifierKey = kvp.Value.identifierKey,
+                    fullPayload = kvp.Value.fullPayload,
+                    position = kvp.Value.lastPosition,
+                    rotation = kvp.Value.lastRotation
+                });
             }
+            return JsonUtility.ToJson(new { data = list });
         }
 
-
-        public static void RequestRequiredPermissions(Action<bool> onRequestComplete)
+        public void UpdateQRCodeFromRemote(string payload, Vector3 pos, Quaternion rot)
         {
-            if (!s_instance)
+            string key = GetIdentifierKey(payload);
+            if (trackedQRCodes.TryGetValue(key, out QRCodeInstance existing))
             {
-                Debug.LogError($"{nameof(RequestRequiredPermissions)} failed; no QRCodeManager instance.");
-                return;
+                existing.visualObject.transform.SetPositionAndRotation(pos, rot);
+                existing.lastPosition = pos;
+                existing.lastRotation = rot;
+                existing.fullPayload = payload;
+                OnQRCodeUpdated?.Invoke(existing);
             }
-
-#if UNITY_EDITOR
-            const string kCantRequestMsg =
-                "Cannot request Android permission when using Link or XR Sim. " +
-                "For Link, enable the spatial data permission from the Link app under Settings > Beta > Spatial Data over Meta Quest Link. " +
-                "For XR Sim, no permission is necessary.";
-
-            Log(kCantRequestMsg, LogType.Warning);
-
-            onRequestComplete?.Invoke(HasPermissions);
-#else
-            Log($"Requesting {ScenePermission} ... (currently: {HasPermissions})");
-
-            var callbacks = new UnityEngine.Android.PermissionCallbacks();
-            callbacks.PermissionGranted += perm => Log($"{perm} granted");
-
-            var msgDenied = $"{ScenePermission} denied. Please press the 'Request Permission' button again.";
-            var msgDeniedPermanently = $"{ScenePermission} permanently denied. To enable:\n" +
-                                       $"    1. Uninstall and reinstall the app, OR\n" +
-                                       $"    2. Manually grant permission in device Settings > Privacy & Safety > App Permissions.";
-
-#if !UNITY_6000_0_OR_NEWER
-            callbacks.PermissionDenied += _ => Log(msgDenied, LogType.Error);
-            callbacks.PermissionDeniedAndDontAskAgain += _ => Log(msgDeniedPermanently, LogType.Error);
-#else
-            callbacks.PermissionDenied += perm =>
+            else
             {
-                // ShouldShowRequestPermissionRationale returns false only if
-                // the user selected 'Never ask again' or if the user has never
-                // been asked for the permission (which can't be the case here).
-                Log(
-                    UnityEngine.Android.Permission.ShouldShowRequestPermissionRationale(perm)
-                        ? msgDenied
-                        : msgDeniedPermanently,
-                    LogType.Error);
-            };
-#endif // UNITY_6000_0_OR_NEWER
-
-            if (onRequestComplete is not null)
-            {
-                callbacks.PermissionGranted += _ => onRequestComplete(HasPermissions);
-                callbacks.PermissionDenied += _ => onRequestComplete(HasPermissions);
-#if !UNITY_6000_0_OR_NEWER
-                callbacks.PermissionDeniedAndDontAskAgain += _ => onRequestComplete(HasPermissions);
-#endif // UNITY_6000_0_OR_NEWER
+                GameObject visualObj = CreateVisualObject(payload, pos, rot);
+                var instance = new QRCodeInstance
+                {
+                    visualObject = visualObj,
+                    fullPayload = payload,
+                    identifierKey = key,
+                    lastPosition = pos,
+                    lastRotation = rot
+                };
+                trackedQRCodes.Add(key, instance);
+                OnQRCodeAdded?.Invoke(instance);
             }
-
-            UnityEngine.Android.Permission.RequestUserPermission(ScenePermission, callbacks);
-#endif // UNITY_EDITOR
+            if (autoSaveLoad) SaveToDisk();
         }
-
-
-        //
-        // Serialized fields
-
-        [SerializeField]
-        QRCode _qrCodePrefab;
-
-        [SerializeField]
-        QRCodeSampleUI _uiInstance;
-
-        [SerializeField]
-        MRUK _mrukInstance;
-
-        // non-serialized fields
-
-        int _activeCount;
-
-        static QRCodeManager s_instance;
-
-
-        //
-        // MonoBehaviour messages
-
-        void OnValidate()
-        {
-            if (!_uiInstance && FindAnyObjectByType<QRCodeSampleUI>() is { } ui && ui.gameObject.scene == gameObject.scene)
-            {
-                _uiInstance = ui;
-            }
-            if (!_mrukInstance && FindAnyObjectByType<MRUK>() is { } mruk && mruk.gameObject.scene == gameObject.scene)
-            {
-                _mrukInstance = mruk;
-            }
-        }
-
-        void OnEnable()
-        {
-            s_instance = this;
-
-            if (!_mrukInstance)
-            {
-                Log($"{nameof(QRCodeManager)} requires an MRUK object in the scene!", LogType.Error);
-                return;
-            }
-
-            _mrukInstance.SceneSettings.TrackableAdded.AddListener(OnTrackableAdded);
-            _mrukInstance.SceneSettings.TrackableRemoved.AddListener(OnTrackableRemoved);
-        }
-
-        void OnDestroy()
-            => s_instance = null;
-
-
-        //
-        // UnityEvent listeners
 
         public void OnTrackableAdded(MRUKTrackable trackable)
         {
-            if (trackable.TrackableType != OVRAnchor.TrackableType.QRCode)
+            if (!IsDetecting) return;
+            if (trackable == null) return;
+            if (trackable.TrackableType != OVRAnchor.TrackableType.QRCode) return;
+
+            string fullPayload = trackable.MarkerPayloadString ?? "";
+            string identifierKey = GetIdentifierKey(fullPayload);
+
+            if (trackedQRCodes.TryGetValue(identifierKey, out QRCodeInstance existing))
             {
+                Vector3 newPos = trackable.transform.position;
+                Quaternion newRot = trackable.transform.rotation;
+
+                if (Vector3.Distance(existing.lastPosition, newPos) > positionThreshold ||
+                    Quaternion.Angle(existing.lastRotation, newRot) > rotationThreshold)
+                {
+                    existing.visualObject.transform.SetPositionAndRotation(newPos, newRot);
+                    existing.lastPosition = newPos;
+                    existing.lastRotation = newRot;
+                    UpdateTextOnObject(existing.visualObject, fullPayload);
+                    OnQRCodeUpdated?.Invoke(existing);
+                }
+                InvokePayloadActions(fullPayload, existing.visualObject);
+                if (autoSaveLoad) SaveToDisk();
                 return;
             }
 
-            var log = $"{nameof(OnTrackableAdded)}: QRCode detected!\n";
-
-            var instance = Instantiate(_qrCodePrefab, trackable.transform);
-            var qrCode = instance.GetComponent<QRCode>();
-            qrCode.Initialize(trackable);
-            instance.GetComponent<Bounded2DVisualizer>().Initialize(trackable);
-
-            ++_activeCount;
-
-            Log($"{log}\nPayload={qrCode.PayloadText}");
+            GameObject visualObj = CreateVisualObject(fullPayload, trackable.transform.position, trackable.transform.rotation);
+            var instance = new QRCodeInstance
+            {
+                visualObject = visualObj,
+                fullPayload = fullPayload,
+                identifierKey = identifierKey,
+                lastPosition = visualObj.transform.position,
+                lastRotation = visualObj.transform.rotation
+            };
+            trackedQRCodes.Add(identifierKey, instance);
+            InvokePayloadActions(fullPayload, visualObj);
+            OnQRCodeAdded?.Invoke(instance);
+            if (autoSaveLoad) SaveToDisk();
         }
 
         public void OnTrackableRemoved(MRUKTrackable trackable)
         {
-            if (trackable.TrackableType != OVRAnchor.TrackableType.QRCode)
+            if (!IsDetecting) return;
+            if (trackable == null) return;
+            if (trackable.TrackableType != OVRAnchor.TrackableType.QRCode) return;
+
+            string fullPayload = trackable.MarkerPayloadString ?? "";
+            string identifierKey = GetIdentifierKey(fullPayload);
+
+            if (trackedQRCodes.TryGetValue(identifierKey, out QRCodeInstance instance))
             {
-                return;
+                Destroy(instance.visualObject);
+                trackedQRCodes.Remove(identifierKey);
+                OnQRCodeRemoved?.Invoke(identifierKey);
+                if (autoSaveLoad) SaveToDisk();
             }
-
-            Log($"QRCode removed");
-
-            --_activeCount;
-
-            Destroy(trackable.gameObject);
         }
 
-
-        //
-        // private impl.
-
-        static void Log(object msg, LogType type = LogType.Log)
+        private string GetIdentifierKey(string payload)
         {
-            if (s_instance && s_instance._uiInstance)
+            if (payloadIdentifierMaxLength <= 0 || payload.Length <= payloadIdentifierMaxLength)
+                return payload;
+            return payload.Substring(0, payloadIdentifierMaxLength);
+        }
+
+        private GameObject CreateVisualObject(string payload, Vector3 position, Quaternion rotation)
+        {
+            GameObject prefabToUse = null;
+            foreach (var action in payloadActions)
             {
-                s_instance._uiInstance.Log(msg, type);
+                if (!string.IsNullOrEmpty(action.matchString) && payload.Contains(action.matchString))
+                {
+                    prefabToUse = action.customPrefab;
+                    break;
+                }
+            }
+
+            GameObject obj;
+            if (prefabToUse != null)
+            {
+                obj = Instantiate(prefabToUse, position, rotation);
             }
             else
             {
-                Debug.LogFormat(
-                    logType: type,
-                    logOptions: LogOption.None,
-                    context: s_instance,
-                    format: "{0}(noinst): {1}", nameof(QRCodeManager), msg
-                );
+                obj = new GameObject($"QR_Display_{payload.GetHashCode()}");
+                obj.transform.SetPositionAndRotation(position, rotation);
+
+                GameObject cube = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                cube.transform.SetParent(obj.transform);
+                cube.transform.localScale = Vector3.one * 0.2f;
+                cube.transform.localPosition = Vector3.zero;
+
+                GameObject textObj = new GameObject("QR_Text");
+                textObj.transform.SetParent(obj.transform);
+                TextMeshPro tmp = textObj.AddComponent<TextMeshPro>();
+                tmp.text = payload;
+                tmp.fontSize = 0.5f;
+                tmp.alignment = TextAlignmentOptions.Center;
+                tmp.color = Color.black;
+                tmp.rectTransform.sizeDelta = new Vector2(1.0f, 0.5f);
+                tmp.rectTransform.localPosition = new Vector3(0, 0.15f, 0);
+                textObj.transform.localRotation = Quaternion.identity;
+            }
+            return obj;
+        }
+
+        private void UpdateTextOnObject(GameObject obj, string newPayload)
+        {
+            TextMeshPro tmp = obj.GetComponentInChildren<TextMeshPro>();
+            if (tmp != null) tmp.text = newPayload;
+        }
+
+        private void InvokePayloadActions(string payload, GameObject visualObject)
+        {
+            foreach (var action in payloadActions)
+            {
+                if (!string.IsNullOrEmpty(action.matchString) && payload.Contains(action.matchString))
+                {
+                    action.onPayloadMatched?.Invoke();
+                }
             }
         }
 
+        [System.Serializable]
+        private class SerializableQRData
+        {
+            public string identifierKey;
+            public string fullPayload;
+            public Vector3 position;
+            public Quaternion rotation;
+        }
+
+        private void SaveToDisk()
+        {
+            List<SerializableQRData> saveList = new List<SerializableQRData>();
+            foreach (var kvp in trackedQRCodes)
+            {
+                saveList.Add(new SerializableQRData
+                {
+                    identifierKey = kvp.Value.identifierKey,
+                    fullPayload = kvp.Value.fullPayload,
+                    position = kvp.Value.visualObject.transform.position,
+                    rotation = kvp.Value.visualObject.transform.rotation
+                });
+            }
+            string json = JsonUtility.ToJson(new { data = saveList }, true);
+            File.WriteAllText(Path.Combine(Application.persistentDataPath, saveFileName), json);
+        }
+
+        private void LoadFromDiskAndRestore()
+        {
+            string path = Path.Combine(Application.persistentDataPath, saveFileName);
+            if (!File.Exists(path)) return;
+            string json = File.ReadAllText(path);
+            ManualLoadFromJson(json);
+        }
+
+        [System.Serializable]
+        private class Wrapper
+        {
+            public List<SerializableQRData> data;
+        }
+
+        public void ManualSave() => SaveToDisk();
+        public void ManualLoad() => LoadFromDiskAndRestore();
+
+        public void ManualLoadFromJson(string json)
+        {
+            Wrapper wrapper = JsonUtility.FromJson<Wrapper>(json);
+            if (wrapper?.data == null) return;
+
+            foreach (var item in wrapper.data)
+            {
+                UpdateQRCodeFromRemote(item.fullPayload, item.position, item.rotation);
+            }
+            if (autoSaveLoad) SaveToDisk();
+        }
     }
 }
