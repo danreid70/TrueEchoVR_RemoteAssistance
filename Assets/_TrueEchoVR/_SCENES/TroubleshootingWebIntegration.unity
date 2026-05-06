@@ -250,7 +250,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 4748299935583410328, guid: 210c4e7d75a89f8408d439d9c40794a7, type: 3}
       propertyPath: m_Enabled
-      value: 1
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 4748299935583410328, guid: 210c4e7d75a89f8408d439d9c40794a7, type: 3}
       propertyPath: steps.Array.data[0].targetObject
@@ -302,7 +302,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 9157865303555339371, guid: 210c4e7d75a89f8408d439d9c40794a7, type: 3}
       propertyPath: m_Enabled
-      value: 1
+      value: 0
       objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects: []
