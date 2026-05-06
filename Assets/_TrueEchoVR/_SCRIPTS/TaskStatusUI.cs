@@ -1,39 +1,42 @@
 using UnityEngine;
 
-public class TaskStatusUI : MonoBehaviour
+namespace TrueEchoVR
 {
-    private VRHUDManager hud;
-
-    private void Start()
+    public class TaskStatusUI : MonoBehaviour
     {
-        hud = VRHUDManager.Instance;
-        if (hud == null)
-            Debug.LogError("[TaskStatusUI] No VRHUDManager found in scene.");
-    }
+        private VRHUDManager hud;
 
-    public void ShowMessage(string mainText, string hint)
-    {
-        hud?.SetStatus(mainText, hint);
-    }
-
-    public void HighlightTarget(GameObject target)
-    {
-        if (hud != null)
+        private void Start()
         {
-            if (target != null)
-                hud.SetTarget(target.transform);
-            else
-                hud.ClearHighlight();
+            hud = VRHUDManager.Instance;
+            if (hud == null)
+                Debug.LogError("[TaskStatusUI] No VRHUDManager found in scene.");
         }
-    }
 
-    public void ClearHighlight()
-    {
-        hud?.ClearHighlight();   // removes the pointer
-    }
+        public void ShowMessage(string mainText, string hint)
+        {
+            hud?.SetStatus(mainText, hint);
+        }
 
-    public void ShowCompletionMessage(string message)
-    {
-        hud?.ShowCompletionMessage(message);
+        public void HighlightTarget(GameObject target)
+        {
+            if (hud != null)
+            {
+                if (target != null)
+                    hud.SetTarget(target.transform);
+                else
+                    hud.ClearHighlight();
+            }
+        }
+
+        public void ClearHighlight()
+        {
+            hud?.ClearHighlight();   // removes the pointer
+        }
+
+        public void ShowCompletionMessage(string message)
+        {
+            hud?.ShowCompletionMessage(message);
+        }
     }
 }

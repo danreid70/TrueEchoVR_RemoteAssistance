@@ -27,18 +27,22 @@ public class XApiTracker : LmsTracker
     private IEnumerator SendStatement(string json)
     {
         using (var request = new UnityWebRequest(lrsEndpoint, "POST"))
-        {
-            byte[] bodyRaw = System.Text.Encoding.UTF8.GetBytes(json);
-            request.uploadHandler = new UploadHandlerRaw(bodyRaw);
-            request.downloadHandler = new DownloadHandlerBuffer();
-            request.SetRequestHeader("Content-Type", "application/json");
-            request.SetRequestHeader("Authorization", "Basic " + authToken);
-            yield return request.SendWebRequest();
-            if (request.result != UnityWebRequest.Result.Success)
-                Debug.LogError($"xAPI send failed: {request.error}");
-        }
-    }
 
-    public override void LogScore(string stepId, float score) { /* ... */ }
-    public override void CompleteCourse(string courseId) { /* ... */ }
+namespace TrueEchoVR
+{
+            {
+                byte[] bodyRaw = System.Text.Encoding.UTF8.GetBytes(json);
+                request.uploadHandler = new UploadHandlerRaw(bodyRaw);
+                request.downloadHandler = new DownloadHandlerBuffer();
+                request.SetRequestHeader("Content-Type", "application/json");
+                request.SetRequestHeader("Authorization", "Basic " + authToken);
+                yield return request.SendWebRequest();
+                if (request.result != UnityWebRequest.Result.Success)
+                    Debug.LogError($"xAPI send failed: {request.error}");
+            }
+        }
+
+        public override void LogScore(string stepId, float score) { /* ... */ }
+        public override void CompleteCourse(string courseId) { /* ... */ }
+    }
 }

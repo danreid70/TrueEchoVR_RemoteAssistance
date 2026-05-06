@@ -2,40 +2,44 @@ using System;
 using UnityEngine;
 using UnityEngine.Events;
 
-/// <summary>
-/// Contains all data for a single task step, including its UI text,
-/// an optional target object for the HUD arrow, and UnityEvents
-/// for inspector‑driven behaviour.
-/// </summary>
-[Serializable]
-public class TaskStepData
+namespace TrueEchoVR
 {
-    [Tooltip("Unique ID used by interaction handlers to complete this step.")]
-    public string stepId;
 
-    [TextArea]
-    public string description;
+    /// <summary>
+    /// Contains all data for a single task step, including its UI text,
+    /// an optional target object for the HUD arrow, and UnityEvents
+    /// for inspector‑driven behaviour.
+    /// </summary>
+    [Serializable]
+    public class TaskStepData
+    {
+        [Tooltip("Unique ID used by interaction handlers to complete this step.")]
+        public string stepId;
 
-    [TextArea]
-    public string hintMessage;
+        [TextArea]
+        public string description;
 
-    [Tooltip("For reference only – the interaction handler decides completion.")]
-    public ConditionType completionCondition;
+        [TextArea]
+        public string hintMessage;
 
-    [Tooltip("Scene object the HUD arrow should point at during this step (optional).")]
-    public Transform targetObject;
+        [Tooltip("For reference only – the interaction handler decides completion.")]
+        public ConditionType completionCondition;
 
-    public UnityEvent onStepStarted;
-    public UnityEvent onStepCompleted;
-    public UnityEvent onStepFailed;
-}
+        [Tooltip("Scene object the HUD arrow should point at during this step (optional).")]
+        public Transform targetObject;
 
-public enum ConditionType
-{
-    Grab,
-    Snap,
-    ButtonPress,
-    UISelection,
-    LookAt,
-    Custom
+        public UnityEvent onStepStarted;
+        public UnityEvent onStepCompleted;
+        public UnityEvent onStepFailed;
+    }
+
+    public enum ConditionType
+    {
+        Grab,
+        Snap,
+        ButtonPress,
+        UISelection,
+        LookAt,
+        Custom
+    }
 }

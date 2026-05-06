@@ -2,10 +2,12 @@ using System.Collections;
 using UnityEngine;
 using UnityEngine.UIElements;
 
-[ExecuteAlways]
-public class VRHUDManager : MonoBehaviour
+namespace TrueEchoVR
 {
-    public static VRHUDManager Instance { get; private set; }
+    [ExecuteAlways]
+    public class VRHUDManager : MonoBehaviour
+    {
+        public static VRHUDManager Instance { get; private set; }
 
     [Header("World Scale")]
     [SerializeField] private float worldScaleMultiplier = 1.0f;
@@ -397,4 +399,5 @@ public class VRHUDManager : MonoBehaviour
     {
         CreateHUD();
     }
-}
+    }
+    }

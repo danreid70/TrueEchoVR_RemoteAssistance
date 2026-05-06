@@ -3,9 +3,11 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Events;
 
-public class TaskManager : MonoBehaviour
+namespace TrueEchoVR
 {
-    public static TaskManager Current { get; private set; }
+    public class TaskManager : MonoBehaviour
+    {
+        public static TaskManager Current { get; private set; }
 
     [Header("Task Configuration")]
     [SerializeField] private List<TaskStepData> steps = new List<TaskStepData>();
@@ -157,4 +159,5 @@ public class TaskManager : MonoBehaviour
         currentStepIndex = -1;
         statusUI?.ClearHighlight();
     }
-}
+    }
+    }

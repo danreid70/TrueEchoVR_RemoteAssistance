@@ -4,7 +4,7 @@ using Meta.Net.NativeWebSocket;
 using System.Collections;
 using System;
 
-namespace TrueEchoVR.LiveTroubleShooting
+namespace TrueEchoVR
 {
     public class TEVRStreamingManager : MonoBehaviour
     {
@@ -15,7 +15,10 @@ namespace TrueEchoVR.LiveTroubleShooting
         public Action OnConnected;
         public Action OnDisconnected;
         public Action<string> OnChatMessageReceived;
-        public Action<string> OnPointToReceived;
+        public Action<string, string, string> OnPointToReceived; // name, qrCodePayload, poseData
+        public Action<string> OnQRCodesPulled;
+        public Action<Texture> OnRemoteStreamStarted;
+        public Action<Texture> OnLocalStreamStarted; // new: local preview texture
 
         // WebRTC Components
         private RTCPeerConnection _pc;
@@ -26,12 +29,12 @@ namespace TrueEchoVR.LiveTroubleShooting
         // WebCam Fallback
         [Header("Video")] public string webcamDeviceName = "";
         private WebCamTexture _webcamTexture;
+        public WebCamTexture LocalWebcamTexture => _webcamTexture;
 
         private string _currentRoomCode;
 
         void Start()
         {
-            // Initializing WebRTC
             StartCoroutine(WebRTC.Update());
         }
 
@@ -39,6 +42,13 @@ namespace TrueEchoVR.LiveTroubleShooting
         {
             _currentRoomCode = roomCode;
             ConnectToSignalingServer();
+        }
+
+        public void Disconnect()
+        {
+            _ws?.Close();
+            _pc?.Close();
+            if (_webcamTexture != null) _webcamTexture.Stop();
         }
 
         async void ConnectToSignalingServer()
@@ -56,15 +66,14 @@ namespace TrueEchoVR.LiveTroubleShooting
             _ws.OnMessage += (bytes, start, length) => {
                 string msg = System.Text.Encoding.UTF8.GetString(bytes, start, length);
                 if (msg.StartsWith("42")) {
-                    // Extract payload from "42[ ... ]"
                     int startIdx = msg.IndexOf('[');
                     if (startIdx >= 0)
                     {
                         string dataStr = msg.Substring(startIdx);
-                        // Very basic manual parsing for demonstration, real app should use a proper Socket.io library
-                        if (dataStr.Contains("offer")) StartCoroutine(SetupPeerConnection(dataStr));
-                        if (dataStr.Contains("chat")) HandleChat(dataStr);
-                        if (dataStr.Contains("point-to")) HandlePointTo(dataStr);
+                        if (dataStr.Contains("\"offer\"")) StartCoroutine(SetupPeerConnection(dataStr));
+                        if (dataStr.Contains("\"chat\"")) HandleChat(dataStr);
+                        if (dataStr.Contains("\"point-to\"")) HandlePointTo(dataStr);
+                        if (dataStr.Contains("\"pull-qrcodes\"")) HandleQRCodesPulled(dataStr);
                     }
                 }
             };
@@ -77,41 +86,77 @@ namespace TrueEchoVR.LiveTroubleShooting
         }
 
         private void HandleChat(string json) {
-            // Placeholder for chat parsing
-            OnChatMessageReceived?.Invoke("New message");
+            try {
+                string msg = ParseJsonValue(json, "text");
+                OnChatMessageReceived?.Invoke(msg);
+            } catch { }
         }
 
         private void HandlePointTo(string json) {
-            // Placeholder for point-to parsing
-            OnPointToReceived?.Invoke("Target Object");
+            try {
+                string name = ParseJsonValue(json, "name");
+                string qrCode = ParseJsonValue(json, "qrCode");
+                string pose = ParseJsonValue(json, "pose");
+                OnPointToReceived?.Invoke(name, qrCode, pose);
+            } catch { }
         }
 
-        IEnumerator SetupPeerConnection(string offerSdp)
+        private void HandleQRCodesPulled(string json) {
+            int dataStart = json.IndexOf(",{");
+            if (dataStart > 0) {
+                string data = json.Substring(dataStart + 1);
+                data = data.Substring(0, data.Length - 1);
+                OnQRCodesPulled?.Invoke(data);
+            }
+        }
+
+        private string ParseJsonValue(string json, string key) {
+            string search = $"\"{key}\":\"";
+            int idx = json.IndexOf(search);
+            if (idx < 0) return null;
+            string val = json.Substring(idx + search.Length);
+            int endIdx = val.IndexOf("\"");
+            if (endIdx < 0) return null;
+            return val.Substring(0, endIdx);
+        }
+
+        IEnumerator SetupPeerConnection(string offerSdpJson)
         {
+            string sdp = ParseJsonValue(offerSdpJson, "sdp");
+            if (string.IsNullOrEmpty(sdp)) yield break;
+
             _pc = new RTCPeerConnection();
 
-            // --- Setup Local Stream from Webcam ---
+            _pc.OnTrack = (RTCTrackEvent ev) => {
+                if (ev.Track is VideoStreamTrack videoTrack)
+                {
+                    videoTrack.OnVideoReceived += (Texture tex) => {
+                        OnRemoteStreamStarted?.Invoke(tex);
+                    };
+                }
+            };
+
+            // Setup Local Stream from Webcam
             var devices = WebCamTexture.devices;
             if (devices.Length > 0)
             {
-                string device = string.IsNullOrEmpty(webcamDeviceName) ? devices[0].name : webcamDeviceName;
+                string device = string.IsNullOrEmpty(webcamDeviceName) ? devices[0].name : devices[0].name;
                 _webcamTexture = new WebCamTexture(device);
                 _webcamTexture.Play();
                 yield return new WaitUntil(() => _webcamTexture.width > 100);
                 _videoTrack = new VideoStreamTrack(_webcamTexture);
+                OnLocalStreamStarted?.Invoke(_webcamTexture); // notify UI
             }
-            // Add audio track
             _audioTrack = new AudioStreamTrack();
 
             _localStream = new MediaStream();
-            _localStream.AddTrack(_videoTrack);
+            if (_videoTrack != null) _localStream.AddTrack(_videoTrack);
             _localStream.AddTrack(_audioTrack);
 
             foreach (var track in _localStream.GetTracks())
                 _pc.AddTrack(track, _localStream);
 
-            // --- Handle the 'offer' from admin ---
-            var offer = new RTCSessionDescription { type = RTCSdpType.Offer, sdp = offerSdp };
+            var offer = new RTCSessionDescription { type = RTCSdpType.Offer, sdp = sdp };
             var setRemoteOp = _pc.SetRemoteDescription(ref offer);
             yield return setRemoteOp;
 
@@ -122,7 +167,6 @@ namespace TrueEchoVR.LiveTroubleShooting
             var setLocalOp = _pc.SetLocalDescription(ref answerDesc);
             yield return setLocalOp;
 
-            // Send 'answer' back to admin via WebSocket
             SendSocketEvent("answer", new { sdp = answerDesc.sdp, type = "answer" });
 
             _pc.OnIceCandidate = (candidate) => {
@@ -134,12 +178,20 @@ namespace TrueEchoVR.LiveTroubleShooting
             SendSocketEvent("chat", new { text = message });
         }
 
+        public void PushQRCodes(string qrDataJson) {
+            _ws?.SendText($"42[\"push-qrcodes\",{qrDataJson}]");
+        }
+
+        public void PullQRCodes() {
+            SendSocketEvent("pull-qrcodes", new { });
+        }
+
         void SendSocketEvent(string eventName, object payload) {
             string json = $"42[\"{eventName}\",{JsonUtility.ToJson(payload)}]";
             _ws?.SendText(json);
         }
 
         void Update() { _ws?.Receive(); }
-        void OnDestroy() { _ws?.Close(); }
+        void OnDestroy() { Disconnect(); }
     }
 }

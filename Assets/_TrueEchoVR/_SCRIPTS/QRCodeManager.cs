@@ -1,9 +1,9 @@
 using Meta.XR.MRUtilityKit;
 using System.Collections.Generic;
 using System.IO;
+using TMPro;
 using UnityEngine;
 using UnityEngine.Events;
-using TMPro;
 
 namespace TrueEchoVR
 {
@@ -12,9 +12,9 @@ namespace TrueEchoVR
         [System.Serializable]
         public class QRPayloadAction
         {
-            public string matchString;          // substring to look for in the QR payload
-            public GameObject customPrefab;     // if null → default cube+text
-            public UnityEvent onPayloadMatched; // triggered when this QR is added/updated
+            public string matchString;
+            public GameObject customPrefab;
+            public UnityEvent onPayloadMatched;
         }
 
         [Header("QR Code Tracking")]
@@ -34,7 +34,10 @@ namespace TrueEchoVR
         public bool autoSaveLoad = true;
         public string saveFileName = "QRDetectedData.json";
 
-        private class QRCodeInstance
+        public bool IsDetecting { get; private set; } = true;
+
+        // Public class to expose tracked QR code information
+        public class QRCodeInstance
         {
             public GameObject visualObject;
             public string fullPayload;
@@ -42,13 +45,76 @@ namespace TrueEchoVR
             public Vector3 lastPosition;
             public Quaternion lastRotation;
         }
-        private Dictionary<string, QRCodeInstance> trackedQRCodes = new Dictionary<string, QRCodeInstance>();
 
-        // ---------------------------------------------------------------------
-        // Public methods called by MRUK Inspector events
-        // ---------------------------------------------------------------------
+        // Events for UI binding
+        public System.Action<QRCodeInstance> OnQRCodeAdded;
+        public System.Action<QRCodeInstance> OnQRCodeUpdated;
+        public System.Action<string> OnQRCodeRemoved; // identifierKey
+
+        // Public read-only access to tracked QR codes
+        private Dictionary<string, QRCodeInstance> trackedQRCodes = new Dictionary<string, QRCodeInstance>();
+        public IReadOnlyDictionary<string, QRCodeInstance> TrackedQRCodes => trackedQRCodes;
+
+        public void StartQRCodeDetection() => IsDetecting = true;
+        public void StopQRCodeDetection() => IsDetecting = false;
+
+        public void ClearQRCodes()
+        {
+            foreach (var instance in trackedQRCodes.Values)
+            {
+                if (instance.visualObject != null) Destroy(instance.visualObject);
+            }
+            trackedQRCodes.Clear();
+            if (autoSaveLoad) SaveToDisk();
+        }
+
+        public string GetQRCodeDataAsJson()
+        {
+            List<SerializableQRData> list = new List<SerializableQRData>();
+            foreach (var kvp in trackedQRCodes)
+            {
+                list.Add(new SerializableQRData
+                {
+                    identifierKey = kvp.Value.identifierKey,
+                    fullPayload = kvp.Value.fullPayload,
+                    position = kvp.Value.lastPosition,
+                    rotation = kvp.Value.lastRotation
+                });
+            }
+            return JsonUtility.ToJson(new { data = list });
+        }
+
+        public void UpdateQRCodeFromRemote(string payload, Vector3 pos, Quaternion rot)
+        {
+            string key = GetIdentifierKey(payload);
+            if (trackedQRCodes.TryGetValue(key, out QRCodeInstance existing))
+            {
+                existing.visualObject.transform.SetPositionAndRotation(pos, rot);
+                existing.lastPosition = pos;
+                existing.lastRotation = rot;
+                existing.fullPayload = payload; // update payload in case it changed
+                OnQRCodeUpdated?.Invoke(existing);
+            }
+            else
+            {
+                GameObject visualObj = CreateVisualObject(payload, pos, rot);
+                var instance = new QRCodeInstance
+                {
+                    visualObject = visualObj,
+                    fullPayload = payload,
+                    identifierKey = key,
+                    lastPosition = pos,
+                    lastRotation = rot
+                };
+                trackedQRCodes.Add(key, instance);
+                OnQRCodeAdded?.Invoke(instance);
+            }
+            if (autoSaveLoad) SaveToDisk();
+        }
+
         public void OnTrackableAdded(MRUKTrackable trackable)
         {
+            if (!IsDetecting) return;
             if (trackable == null) return;
             if (trackable.TrackableType != OVRAnchor.TrackableType.QRCode) return;
 
@@ -57,7 +123,6 @@ namespace TrueEchoVR
 
             if (trackedQRCodes.TryGetValue(identifierKey, out QRCodeInstance existing))
             {
-                // Update existing marker's position/rotation if moved beyond threshold
                 Vector3 newPos = trackable.transform.position;
                 Quaternion newRot = trackable.transform.rotation;
 
@@ -68,16 +133,14 @@ namespace TrueEchoVR
                     existing.lastPosition = newPos;
                     existing.lastRotation = newRot;
                     UpdateTextOnObject(existing.visualObject, fullPayload);
+                    OnQRCodeUpdated?.Invoke(existing);
                 }
-                // Fire actions again if needed (e.g., for every update)
                 InvokePayloadActions(fullPayload, existing.visualObject);
                 if (autoSaveLoad) SaveToDisk();
                 return;
             }
 
-            // New QR code – create visual object
             GameObject visualObj = CreateVisualObject(fullPayload, trackable.transform.position, trackable.transform.rotation);
-
             var instance = new QRCodeInstance
             {
                 visualObject = visualObj,
@@ -87,13 +150,14 @@ namespace TrueEchoVR
                 lastRotation = visualObj.transform.rotation
             };
             trackedQRCodes.Add(identifierKey, instance);
-
             InvokePayloadActions(fullPayload, visualObj);
+            OnQRCodeAdded?.Invoke(instance);
             if (autoSaveLoad) SaveToDisk();
         }
 
         public void OnTrackableRemoved(MRUKTrackable trackable)
         {
+            if (!IsDetecting) return;
             if (trackable == null) return;
             if (trackable.TrackableType != OVRAnchor.TrackableType.QRCode) return;
 
@@ -104,13 +168,11 @@ namespace TrueEchoVR
             {
                 Destroy(instance.visualObject);
                 trackedQRCodes.Remove(identifierKey);
+                OnQRCodeRemoved?.Invoke(identifierKey);
                 if (autoSaveLoad) SaveToDisk();
             }
         }
 
-        // ---------------------------------------------------------------------
-        // Helper: generate identifier key from payload
-        // ---------------------------------------------------------------------
         private string GetIdentifierKey(string payload)
         {
             if (payloadIdentifierMaxLength <= 0 || payload.Length <= payloadIdentifierMaxLength)
@@ -118,12 +180,8 @@ namespace TrueEchoVR
             return payload.Substring(0, payloadIdentifierMaxLength);
         }
 
-        // ---------------------------------------------------------------------
-        // Visual Object Factory
-        // ---------------------------------------------------------------------
         private GameObject CreateVisualObject(string payload, Vector3 position, Quaternion rotation)
         {
-            // Find first matching custom prefab based on substring match
             GameObject prefabToUse = null;
             foreach (var action in payloadActions)
             {
@@ -141,7 +199,6 @@ namespace TrueEchoVR
             }
             else
             {
-                // Default: cube (0.2 scale) + TextMeshPro (1m wide x 0.5m high)
                 obj = new GameObject($"QR_Display_{payload.GetHashCode()}");
                 obj.transform.SetPositionAndRotation(position, rotation);
 
@@ -170,9 +227,6 @@ namespace TrueEchoVR
             if (tmp != null) tmp.text = newPayload;
         }
 
-        // ---------------------------------------------------------------------
-        // Payload Actions (substring matching)
-        // ---------------------------------------------------------------------
         private void InvokePayloadActions(string payload, GameObject visualObject)
         {
             foreach (var action in payloadActions)
@@ -184,9 +238,6 @@ namespace TrueEchoVR
             }
         }
 
-        // ---------------------------------------------------------------------
-        // Persistence
-        // ---------------------------------------------------------------------
         [System.Serializable]
         private class SerializableQRData
         {
@@ -233,5 +284,17 @@ namespace TrueEchoVR
 
         public void ManualSave() => SaveToDisk();
         public void ManualLoad() => LoadFromDisk();
+
+        public void ManualLoadFromJson(string json)
+        {
+            Wrapper wrapper = JsonUtility.FromJson<Wrapper>(json);
+            if (wrapper?.data == null) return;
+
+            foreach (var item in wrapper.data)
+            {
+                UpdateQRCodeFromRemote(item.fullPayload, item.position, item.rotation);
+            }
+            if (autoSaveLoad) SaveToDisk();
+        }
     }
 }
