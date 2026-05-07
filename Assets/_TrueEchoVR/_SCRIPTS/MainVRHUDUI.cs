@@ -7,7 +7,7 @@ namespace TrueEchoVR
     public class MainVRHUDUI : MonoBehaviour
     {
         [Header("UI References (assign in Inspector)")]
-        public GameObject hudPanel;                 // Root panel (will be moved)
+        public GameObject hudPanel;                 // The root Canvas/Panel to move
         public TMP_Text statusText;
         public TMP_Text hintText;
         public TMP_Text completionText;
@@ -36,6 +36,7 @@ namespace TrueEchoVR
         private bool isFollowing = true;
         private Vector3 velocity = Vector3.zero;
         private Quaternion targetRotation;
+        private Transform panelTransform;   // The transform of hudPanel
 
         private void Start()
         {
@@ -54,6 +55,8 @@ namespace TrueEchoVR
                 return;
             }
 
+            panelTransform = hudPanel.transform;
+
             canvasGroup = hudPanel.GetComponent<CanvasGroup>();
             if (canvasGroup == null)
                 canvasGroup = hudPanel.AddComponent<CanvasGroup>();
@@ -66,8 +69,8 @@ namespace TrueEchoVR
 
             lastCameraPos = camTransform.position;
             lastCameraRot = camTransform.rotation;
-            transform.position = ComputeTargetPosition();
-            transform.rotation = CameraFaceRotation();
+            panelTransform.position = ComputeTargetPosition();
+            panelTransform.rotation = CameraFaceRotation();
             isFollowing = false;
         }
 
@@ -87,19 +90,20 @@ namespace TrueEchoVR
             if (isFollowing)
             {
                 Vector3 targetPos = ComputeTargetPosition();
-                transform.position = Vector3.SmoothDamp(transform.position, targetPos, ref velocity, smoothTime);
+                panelTransform.position = Vector3.SmoothDamp(panelTransform.position, targetPos, ref velocity, smoothTime);
                 targetRotation = CameraFaceRotation();
-                transform.rotation = Quaternion.Slerp(transform.rotation, targetRotation, rotationSpeed * Time.deltaTime);
+                panelTransform.rotation = Quaternion.Slerp(panelTransform.rotation, targetRotation, rotationSpeed * Time.deltaTime);
 
-                if (Vector3.Distance(transform.position, targetPos) < 0.01f &&
-                    Quaternion.Angle(transform.rotation, targetRotation) < 0.5f)
+                if (Vector3.Distance(panelTransform.position, targetPos) < 0.01f &&
+                    Quaternion.Angle(panelTransform.rotation, targetRotation) < 0.5f)
                 {
                     isFollowing = false;
-                    transform.position = targetPos;
-                    transform.rotation = targetRotation;
+                    panelTransform.position = targetPos;
+                    panelTransform.rotation = targetRotation;
                 }
             }
 
+            // Update pointer arrow
             if (pointerArrow != null)
             {
                 if (currentTarget != null && hudPanel.activeSelf)
@@ -126,7 +130,7 @@ namespace TrueEchoVR
 
         private Quaternion CameraFaceRotation()
         {
-            Vector3 toCamera = camTransform.position - transform.position;
+            Vector3 toCamera = camTransform.position - panelTransform.position;
             return Quaternion.LookRotation(-toCamera, Vector3.up);
         }
 

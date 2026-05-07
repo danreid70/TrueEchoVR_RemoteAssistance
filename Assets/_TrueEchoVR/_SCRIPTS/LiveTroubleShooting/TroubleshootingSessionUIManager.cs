@@ -60,6 +60,7 @@ namespace TrueEchoVR
         private string chatHistory = "";
         private Dictionary<string, GameObject> qrListItems = new Dictionary<string, GameObject>();
         private List<QRCodeManager.QRCodeInstance> qrCodeList = new List<QRCodeManager.QRCodeInstance>();
+        private Transform panelTransform;
 
         private void Start()
         {
@@ -75,6 +76,15 @@ namespace TrueEchoVR
                 enabled = false;
                 return;
             }
+
+            if (sessionUIPanel == null)
+            {
+                Debug.LogError("[TroubleshootingSessionUIManager] No sessionUIPanel assigned.");
+                enabled = false;
+                return;
+            }
+
+            panelTransform = sessionUIPanel.transform;
 
             if (joinButton != null) joinButton.onClick.AddListener(OnJoinPressed);
             if (sendButton != null) sendButton.onClick.AddListener(OnSendChat);
@@ -95,8 +105,8 @@ namespace TrueEchoVR
                 streamingManager.OnQRCodesPulled += OnQRCodesPulled;
             }
 
-            transform.position = ComputeTargetPosition();
-            transform.rotation = ComputeTargetRotation();
+            panelTransform.position = ComputeTargetPosition();
+            panelTransform.rotation = ComputeTargetRotation();
             lastCameraPos = camTransform.position;
             lastCameraRot = camTransform.rotation;
             isFollowing = false;
@@ -119,16 +129,16 @@ namespace TrueEchoVR
             if (isFollowing)
             {
                 Vector3 targetPos = ComputeTargetPosition();
-                transform.position = Vector3.SmoothDamp(transform.position, targetPos, ref velocity, smoothTime);
+                panelTransform.position = Vector3.SmoothDamp(panelTransform.position, targetPos, ref velocity, smoothTime);
                 targetRot = ComputeTargetRotation();
-                transform.rotation = Quaternion.Slerp(transform.rotation, targetRot, rotationSpeed * Time.deltaTime);
+                panelTransform.rotation = Quaternion.Slerp(panelTransform.rotation, targetRot, rotationSpeed * Time.deltaTime);
 
-                if (Vector3.Distance(transform.position, targetPos) < 0.01f &&
-                    Quaternion.Angle(transform.rotation, targetRot) < 0.5f)
+                if (Vector3.Distance(panelTransform.position, targetPos) < 0.01f &&
+                    Quaternion.Angle(panelTransform.rotation, targetRot) < 0.5f)
                 {
                     isFollowing = false;
-                    transform.position = targetPos;
-                    transform.rotation = targetRot;
+                    panelTransform.position = targetPos;
+                    panelTransform.rotation = targetRot;
                 }
             }
         }
@@ -143,7 +153,7 @@ namespace TrueEchoVR
 
         private Quaternion ComputeTargetRotation()
         {
-            Vector3 toCam = camTransform.position - transform.position;
+            Vector3 toCam = camTransform.position - panelTransform.position;
             return Quaternion.LookRotation(-toCam, Vector3.up);
         }
 
