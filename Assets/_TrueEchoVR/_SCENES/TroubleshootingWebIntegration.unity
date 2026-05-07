@@ -119,6 +119,17 @@ NavMeshSettings:
     debug:
       m_Flags: 0
   m_NavMeshData: {fileID: 0}
+--- !u!114 &304502362 stripped
+MonoBehaviour:
+  m_CorrespondingSourceObject: {fileID: 5790466923927883662, guid: ba2ebd14a1e515d4d9ce7169e63d1e50, type: 3}
+  m_PrefabInstance: {fileID: 3932311787048659447}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 3e61fa72eb408d54a8e7224dab71d8ed, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::TrueEchoVR.QRAnchor
 --- !u!1 &1271813115
 GameObject:
   m_ObjectHideFlags: 0
@@ -232,6 +243,39 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &1832413365 stripped
+MonoBehaviour:
+  m_CorrespondingSourceObject: {fileID: 708029579295134168, guid: 210c4e7d75a89f8408d439d9c40794a7, type: 3}
+  m_PrefabInstance: {fileID: 427870497746368196}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 91659791033b40640a8382aad58ea23f, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::TrueEchoVR.LiveTroubleShooting.TEVRStreamingManager
+--- !u!114 &1832413369 stripped
+MonoBehaviour:
+  m_CorrespondingSourceObject: {fileID: 9157865303555339371, guid: 210c4e7d75a89f8408d439d9c40794a7, type: 3}
+  m_PrefabInstance: {fileID: 427870497746368196}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 76c6dcf72253ad94fa8332233fadf66d, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::TaskStatusUI
+--- !u!114 &1832413370 stripped
+MonoBehaviour:
+  m_CorrespondingSourceObject: {fileID: 3444734742346904413, guid: 210c4e7d75a89f8408d439d9c40794a7, type: 3}
+  m_PrefabInstance: {fileID: 427870497746368196}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 45f82e264a4b08745ab1c4c5659e98bc, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::VRHUDManager
 --- !u!1001 &427870497746368196
 PrefabInstance:
   m_ObjectHideFlags: 0
@@ -300,9 +344,25 @@ PrefabInstance:
       propertyPath: m_LocalEulerAnglesHint.z
       value: 0
       objectReference: {fileID: 0}
+    - target: {fileID: 8765684592355192735, guid: 210c4e7d75a89f8408d439d9c40794a7, type: 3}
+      propertyPath: statusUI
+      value: 
+      objectReference: {fileID: 1832413369}
+    - target: {fileID: 8765684592355192735, guid: 210c4e7d75a89f8408d439d9c40794a7, type: 3}
+      propertyPath: qrManager
+      value: 
+      objectReference: {fileID: 304502362}
+    - target: {fileID: 8765684592355192735, guid: 210c4e7d75a89f8408d439d9c40794a7, type: 3}
+      propertyPath: hudManager
+      value: 
+      objectReference: {fileID: 1832413370}
+    - target: {fileID: 8765684592355192735, guid: 210c4e7d75a89f8408d439d9c40794a7, type: 3}
+      propertyPath: streamingManager
+      value: 
+      objectReference: {fileID: 1832413365}
     - target: {fileID: 9157865303555339371, guid: 210c4e7d75a89f8408d439d9c40794a7, type: 3}
       propertyPath: m_Enabled
-      value: 0
+      value: 1
       objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects: []

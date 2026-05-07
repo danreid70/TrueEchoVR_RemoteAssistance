@@ -98,18 +98,20 @@ namespace Meta.XR.MRUtilityKitSamples.QRCodeDetection
         {
             Log($"{nameof(Tog_TrackingEnabled)}({value})");
 
-            QRCodeManager.TrackingEnabled = value;
+            // QRCodeManager.TrackingEnabled = value;
         }
 
         public void Btn_RequestPermissions()
         {
             Log(nameof(Btn_RequestPermissions));
 
+            /*
             QRCodeManager.RequestRequiredPermissions(hasPerms =>
             {
                 _icoHasPermissions.enabled = hasPerms;
                 _icoNoPermissions.enabled = !hasPerms;
             });
+            */
         }
 
 
@@ -128,21 +130,21 @@ namespace Meta.XR.MRUtilityKitSamples.QRCodeDetection
         void UpdateUI()
         {
             // QRCodeTrackingSupported?
-            bool isSupported = QRCodeManager.IsSupported;
+            bool isSupported = false; // QRCodeManager.IsSupported;
             _icoTrackingSupported.enabled = isSupported;
             _icoTrackingNotSupported.enabled = !isSupported;
 
             // HasPermissions?
-            bool hasPerms = QRCodeManager.HasPermissions;
+            bool hasPerms = false; // QRCodeManager.HasPermissions;
             _icoHasPermissions.enabled = hasPerms;
             _icoNoPermissions.enabled = !hasPerms;
 
             // QRCodeTrackingEnabled?
-            bool trackingEnabled = QRCodeManager.TrackingEnabled;
+            bool trackingEnabled = false; // QRCodeManager.TrackingEnabled;
             _togTrackingEnabled.SetIsOnWithoutNotify(trackingEnabled);
 
             // # Active MRUKTrackers:
-            int nActive = QRCodeManager.ActiveTrackedCount;
+            int nActive = 0; // QRCodeManager.ActiveTrackedCount;
             _txtNumActive.text = $"{nActive}";
 
             // Info Panel - Logs

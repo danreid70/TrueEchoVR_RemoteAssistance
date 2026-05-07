@@ -14,9 +14,14 @@ namespace TrueEchoVR
 
         [Header("Position & Follow")]
         [SerializeField] private float followDistance = 1.5f;
+        [SerializeField] private float horizontalOffset = 0f;
         [SerializeField] private float verticalOffset = 0.3f;
         [SerializeField] private float positionSmoothTime = 0.15f;
         [SerializeField] private float rotationSmoothSpeed = 3.0f;
+        [Tooltip("Degrees of head rotation before panel starts moving again.")]
+        [SerializeField] private float angleThreshold = 30f;
+        [Tooltip("Distance moved before panel starts moving again.")]
+        [SerializeField] private float distanceThreshold = 0.2f;
 
         [Header("Panel Size (UI Pixels)")]
         public float panelWidth = 450f;
@@ -71,6 +76,13 @@ namespace TrueEchoVR
         private GameObject currentPointer;
         private Transform currentTarget;
 
+        private bool hasActiveText = false;
+
+        // Threshold following
+        private Vector3 lastCameraPosition;
+        private Quaternion lastCameraRotation;
+        private bool isFollowing = true;
+
         private void Awake()
         {
             if (Application.isPlaying)
@@ -99,8 +111,11 @@ namespace TrueEchoVR
 
             if (cameraTransform != null)
             {
+                lastCameraPosition = cameraTransform.position;
+                lastCameraRotation = cameraTransform.rotation;
                 transform.position = ComputeTargetPosition();
                 transform.rotation = CameraFaceRotation();
+                isFollowing = false;
             }
         }
 
@@ -108,13 +123,34 @@ namespace TrueEchoVR
         {
             if (cameraTransform == null) return;
 
-            Vector3 targetPos = ComputeTargetPosition();
-            transform.position = Vector3.SmoothDamp(transform.position, targetPos, ref velocity, positionSmoothTime);
+            // Check if we need to start following again
+            float angle = Quaternion.Angle(lastCameraRotation, cameraTransform.rotation);
+            float distance = Vector3.Distance(lastCameraPosition, cameraTransform.position);
+            if (angle > angleThreshold || distance > distanceThreshold)
+            {
+                isFollowing = true;
+                lastCameraPosition = cameraTransform.position;
+                lastCameraRotation = cameraTransform.rotation;
+            }
 
-            targetRotation = CameraFaceRotation();
-            transform.rotation = Quaternion.Slerp(transform.rotation, targetRotation, rotationSmoothSpeed * Time.deltaTime);
+            if (isFollowing)
+            {
+                Vector3 targetPos = ComputeTargetPosition();
+                transform.position = Vector3.SmoothDamp(transform.position, targetPos, ref velocity, positionSmoothTime);
+                targetRotation = CameraFaceRotation();
+                transform.rotation = Quaternion.Slerp(transform.rotation, targetRotation, rotationSmoothSpeed * Time.deltaTime);
 
-            if (currentPointer != null && currentTarget != null)
+                if (Vector3.Distance(transform.position, targetPos) < 0.01f &&
+                    Quaternion.Angle(transform.rotation, targetRotation) < 0.5f)
+                {
+                    isFollowing = false;
+                    transform.position = targetPos;
+                    transform.rotation = targetRotation;
+                }
+            }
+
+            // Pointer update
+            if (currentPointer != null && currentTarget != null && hudObject != null && hudObject.activeSelf)
             {
                 Vector3 toTarget = currentTarget.position - currentPointer.transform.position;
                 if (toTarget != Vector3.zero)
@@ -128,6 +164,7 @@ namespace TrueEchoVR
         {
             return cameraTransform.position
                    + cameraTransform.forward * followDistance
+                   + cameraTransform.right * horizontalOffset
                    + Vector3.up * verticalOffset;
         }
 
@@ -181,6 +218,9 @@ namespace TrueEchoVR
 
             if (currentTarget != null)
                 CreatePointer(currentTarget);
+
+            if (!hasActiveText)
+                hudObject.SetActive(false);
         }
 
         private void ApplyPanelStyles(VisualElement panel)
@@ -231,10 +271,15 @@ namespace TrueEchoVR
 
             if (string.IsNullOrWhiteSpace(lastStatusText) && string.IsNullOrWhiteSpace(lastHintText))
             {
+                hasActiveText = false;
                 StartFadeOut(0f);
             }
             else
             {
+                hasActiveText = true;
+                if (hudObject != null && !hudObject.activeSelf)
+                    hudObject.SetActive(true);
+
                 if (statusLabel != null)
                 {
                     statusLabel.text = lastStatusText;
@@ -260,6 +305,10 @@ namespace TrueEchoVR
         {
             lastCompletionMessage = message ?? "";
             isCompletionShowing = true;
+            hasActiveText = true;
+
+            if (hudObject != null && !hudObject.activeSelf)
+                hudObject.SetActive(true);
 
             if (statusLabel != null)
             {
@@ -291,7 +340,7 @@ namespace TrueEchoVR
                 currentPointer = null;
             }
 
-            if (target != null && pointerPrefab != null)
+            if (target != null && pointerPrefab != null && hudObject != null && hudObject.activeSelf)
             {
                 CreatePointer(target);
             }
@@ -319,7 +368,7 @@ namespace TrueEchoVR
         {
             if (currentPointer != null)
             {
-                bool visible = targetOpacity > 0.01f;
+                bool visible = targetOpacity > 0.01f && hasActiveText && hudObject != null && hudObject.activeSelf;
                 currentPointer.SetActive(visible);
             }
         }
@@ -373,6 +422,10 @@ namespace TrueEchoVR
             root.style.opacity = target;
             targetOpacity = Mathf.Clamp01(target);
             UpdatePointerVisibility();
+
+            if (target <= 0.01f && !hasActiveText && hudObject != null)
+                hudObject.SetActive(false);
+
             fadeCoroutine = null;
         }
 
