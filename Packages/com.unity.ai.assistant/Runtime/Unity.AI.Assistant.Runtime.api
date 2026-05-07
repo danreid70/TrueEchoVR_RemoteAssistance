@@ -1,0 +1,42 @@
+// This file is generated. Do not modify by hand.
+// XML documentation file not found. To check if public methods have XML comments,
+// make sure the XML doc file is present and located next to the scraped dll
+namespace Unity.AI.Assistant
+{
+    public class VirtualAttachment
+    {
+        public string DisplayName;
+        public object Metadata;
+        public readonly string Payload;
+        public string Type;
+        public VirtualAttachment(string payload, string type, string displayName, object metadata) {}
+        public override bool Equals(object obj);
+        public override int GetHashCode();
+    }
+}
+
+namespace Unity.AI.Assistant.Agents
+{
+    public interface IAgent
+    {
+        public string Description { get; }
+        public string Name { get; }
+        public string UniqueId { get; }
+    }
+}
+
+namespace Unity.AI.Assistant.FunctionCalling
+{
+    [System.AttributeUsage(System.AttributeTargets.Method, AllowMultiple = false, Inherited = false)] public class AgentToolAttribute : System.Attribute
+    {
+        public readonly string Description;
+        public readonly string Id;
+        public AgentToolAttribute(string description, string id) {}
+    }
+
+    [System.AttributeUsage(System.AttributeTargets.Parameter)] public class ToolParameterAttribute : System.Attribute
+    {
+        public readonly string Description;
+        public ToolParameterAttribute(string description) {}
+    }
+}

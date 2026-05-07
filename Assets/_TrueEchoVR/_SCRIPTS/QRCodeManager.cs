@@ -90,11 +90,11 @@ namespace TrueEchoVR
                     rotation = kvp.Value.lastRotation
                 });
             }
-            return JsonUtility.ToJson(new { data = list });
+            return JsonUtility.ToJson(new Wrapper { data = list });
         }
 
         public void UpdateQRCodeFromRemote(string payload, Vector3 pos, Quaternion rot)
-        {
+{
             string key = GetIdentifierKey(payload);
             if (trackedQRCodes.TryGetValue(key, out QRCodeInstance existing))
             {
@@ -269,9 +269,9 @@ namespace TrueEchoVR
                     rotation = kvp.Value.visualObject.transform.rotation
                 });
             }
-            string json = JsonUtility.ToJson(new { data = saveList }, true);
+            string json = JsonUtility.ToJson(new Wrapper { data = saveList }, true);
             File.WriteAllText(Path.Combine(Application.persistentDataPath, saveFileName), json);
-        }
+}
 
         private void LoadFromDiskAndRestore()
         {

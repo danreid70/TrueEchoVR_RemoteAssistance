@@ -16,13 +16,11 @@ namespace TrueEchoVR
 
         public override void LogProgress(string stepId, bool completed, float timestamp)
         {
-            // Note: JsonUtility doesn't support anonymous types, but this is a runtime issue.
-            // Keeping the logic for now to fix compilation first.
-            var statement = new
+            var statement = new XApiStatement
             {
-                actor = new { objectType = "Agent", mbox = "mailto:learner@example.com" },
-                verb = new { id = completed ? "http://adlnet.gov/expapi/verbs/completed" : "http://adlnet.gov/expapi/verbs/attempted" },
-                @object = new { id = $"http://training.company.com/activities/{stepId}", objectType = "Activity" }
+                actor = new XApiActor { objectType = "Agent", mbox = "mailto:learner@example.com" },
+                verb = new XApiVerb { id = completed ? "http://adlnet.gov/expapi/verbs/completed" : "http://adlnet.gov/expapi/verbs/attempted" },
+                @object = new XApiObject { id = $"http://training.company.com/activities/{stepId}", objectType = "Activity" }
             };
             string json = JsonUtility.ToJson(statement);
             StartCoroutine(SendStatement(json));
@@ -45,5 +43,10 @@ namespace TrueEchoVR
 
         public override void LogScore(string stepId, float score) { /* ... */ }
         public override void CompleteCourse(string courseId) { /* ... */ }
-    }
-}
+        }
+
+        [System.Serializable] public class XApiStatement { public XApiActor actor; public XApiVerb verb; public XApiObject @object; }
+        [System.Serializable] public class XApiActor { public string objectType; public string mbox; }
+        [System.Serializable] public class XApiVerb { public string id; }
+        [System.Serializable] public class XApiObject { public string id; public string objectType; }
+        }

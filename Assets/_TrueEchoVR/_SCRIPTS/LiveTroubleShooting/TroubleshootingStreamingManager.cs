@@ -61,7 +61,7 @@ namespace TrueEchoVR
 
             _ws.OnOpen += () => {
                 Debug.Log("WebSocket connected");
-                SendSocketEvent("join-room", new { role = "headset", roomCode = _currentRoomCode });
+                SendSocketEvent("join-room", new JoinRoomPayload { role = "headset", roomCode = _currentRoomCode });
                 OnConnected?.Invoke();
             };
 
@@ -173,15 +173,15 @@ namespace TrueEchoVR
             var setLocalOp = _pc.SetLocalDescription(ref answerDesc);
             yield return setLocalOp;
 
-            SendSocketEvent("answer", new { sdp = answerDesc.sdp, type = "answer" });
+            SendSocketEvent("answer", new AnswerPayload { sdp = answerDesc.sdp, type = "answer" });
 
             _pc.OnIceCandidate = (candidate) => {
-                SendSocketEvent("ice-candidate", new { candidate = candidate.Candidate });
+                SendSocketEvent("ice-candidate", new IceCandidatePayload { candidate = candidate.Candidate });
             };
         }
 
         public void SendChatMessage(string message) {
-            SendSocketEvent("chat", new { text = message });
+            SendSocketEvent("chat", new ChatPayload { text = message });
         }
 
         public void PushQRCodes(string qrDataJson) {
@@ -189,7 +189,7 @@ namespace TrueEchoVR
         }
 
         public void PullQRCodes() {
-            SendSocketEvent("pull-qrcodes", new { });
+            SendSocketEvent("pull-qrcodes", new EmptyPayload { });
         }
 
         void SendSocketEvent(string eventName, object payload) {
@@ -199,10 +199,15 @@ namespace TrueEchoVR
 
         void Update() 
         { 
-            if (_ws != null && _ws.State == WebSocketState.Open)
-                _ws.Receive(); 
+            // _ws.Receive() is not needed here as the WebSocket library handles it in a task.
         }
 
         void OnDestroy() { Disconnect(); }
-    }
-}
+        }
+
+        [Serializable] public class JoinRoomPayload { public string role; public string roomCode; }
+        [Serializable] public class ChatPayload { public string text; }
+        [Serializable] public class AnswerPayload { public string sdp; public string type; }
+        [Serializable] public class IceCandidatePayload { public string candidate; }
+        [Serializable] public class EmptyPayload { }
+        }

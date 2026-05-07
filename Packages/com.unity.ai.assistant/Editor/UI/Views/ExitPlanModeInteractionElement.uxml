@@ -1,0 +1,26 @@
+<ui:UXML xmlns:ui="UnityEngine.UIElements" editor-extension-mode="False">
+    <ui:VisualElement class="plan-review-root">
+        <ui:Label name="titleLabel" text="Review Implementation Plan" class="plan-review-heading"/>
+        <ui:Label name="pathLabel" class="plan-review-path-label"/>
+        <ui:VisualElement class="plan-review-container">
+            <ui:VisualElement class="plan-review-topbar">
+                <ui:VisualElement class="plan-review-plan-icon"/>
+                <ui:Label text="Implementation Plan" class="plan-review-title"/>
+                <ui:Button name="copyButton" class="plan-review-copy-btn">
+                    <ui:VisualElement class="plan-review-copy-icon"/>
+                </ui:Button>
+            </ui:VisualElement>
+            <ui:ScrollView name="planContentScroll" class="plan-review-content" mode="Vertical"/>
+        </ui:VisualElement>
+        <ui:VisualElement name="feedbackSection">
+            <ui:Label text="Feedback (optional):" class="plan-review-feedback-label"/>
+            <ui:TextField name="feedbackField" multiline="true" class="plan-review-feedback-field"/>
+        </ui:VisualElement>
+        <ui:VisualElement name="buttonRow" class="plan-review-button-row">
+            <ui:Button name="cancelButton" text="Cancel" class="plan-review-cancel-btn"/>
+            <ui:Button name="feedbackButton" text="Send Feedback" class="plan-review-feedback-btn"/>
+            <ui:Button name="approveButton" text="Approve"/>
+        </ui:VisualElement>
+        <ui:Label name="feedbackConfirmedLabel" text="&#x2713; Feedback recorded"/>
+    </ui:VisualElement>
+</ui:UXML>

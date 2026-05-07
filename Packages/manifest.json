@@ -1,7 +1,6 @@
 {
   "dependencies": {
     "com.meta.xr.mrutilitykit": "201.0.0",
-    "com.meta.xr.runtimeoptimizer": "0.2.2",
     "com.meta.xr.sdk.all": "201.0.0",
     "com.meta.xr.sdk.core": "201.0.0",
     "com.meta.xr.sdk.voice": "85.0.0",

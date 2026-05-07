@@ -1,6 +1,5 @@
 ﻿<Solution>
   <Project Path="Unity.AI.Sound.csproj" />
-  <Project Path="Meta.XR.RuntimeOptimizer.csproj" />
   <Project Path="Meta.Voice.NLayer.csproj" />
   <Project Path="Meta.XR.MultiplayerBlocks.Shared.csproj" />
   <Project Path="Unity.AppUI.csproj" />
@@ -214,7 +213,6 @@
   <Project Path="Unity.Services.Core.Analytics.csproj" />
   <Project Path="UnityEditor.UI.Analytics.csproj" />
   <Project Path="Unity.EditorCoroutines.Editor.csproj" />
-  <Project Path="Meta.XR.RuntimeOptimizer.Editor.csproj" />
   <Project Path="Unity.InferenceEngine.Editor.Visualizer.csproj" />
   <Project Path="Unity.SurfaceCache.Runtime.csproj" />
   <Project Path="Unity.Netcode.Editor.csproj" />
@@ -328,7 +326,6 @@
   <Project Path="Meta.Wit.Dictation.Editor.csproj" />
   <Project Path="Unity.XR.OpenXR.Features.RuntimeDebugger.Editor.csproj" />
   <Project Path="Meta.XR.Editor.ToolingSupport.RuntimeOptimizer.csproj" />
-  <Project Path="Meta.XR.RuntimeOptimizer.Core.csproj" />
   <Project Path="Unity.Netcode.PackageChecker.Editor.csproj" />
   <Project Path="Unity.RenderPipelines.Universal.Shaders.csproj" />
   <Project Path="Unity.InferenceEngine.MacBLAS.csproj" />
