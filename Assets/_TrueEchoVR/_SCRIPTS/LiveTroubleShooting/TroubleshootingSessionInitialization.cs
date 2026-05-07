@@ -4,13 +4,12 @@ using System.Collections.Generic;
 
 namespace TrueEchoVR
 {
-    public class SessionInitialization : MonoBehaviour
+    public class TroubleshootingSessionInitialization : MonoBehaviour
     {
         [Header("References (assign manually)")]
-        public Transform xrOrigin;                  // XR Origin (or Camera Offset)
+        public Transform xrOrigin;
         public QRCodeManager qrManager;
-        public VRHUDManager hudManager;
-        public TaskStatusUI statusUI;
+        public MainVRHUDUI statusUI;
         public TroubleshootingSessionUIManager uiManager;
         public TroubleshootingStreamingManager streamingManager;
 
@@ -27,8 +26,7 @@ namespace TrueEchoVR
         private void Start()
         {
             if (qrManager == null) qrManager = GetComponent<QRCodeManager>();
-            if (hudManager == null) hudManager = VRHUDManager.Instance;
-            if (statusUI == null) statusUI = GetComponent<TaskStatusUI>();
+            if (statusUI == null) statusUI = GetComponent<MainVRHUDUI>();
             if (uiManager == null) uiManager = GetComponent<TroubleshootingSessionUIManager>();
             if (streamingManager == null) streamingManager = GetComponent<TroubleshootingStreamingManager>();
             if (xrOrigin == null)
@@ -38,7 +36,6 @@ namespace TrueEchoVR
                 return;
             }
 
-            // Subscribe to QR detection only for initialization
             if (qrManager != null)
                 qrManager.OnQRCodeAdded += OnQRCodeAddedForInit;
 
@@ -53,7 +50,6 @@ namespace TrueEchoVR
             if (statusUI != null)
                 statusUI.ShowMessage("To begin, please look at the 'RoomAnchor' QR code.", "Find the QR code labelled with 'RoomAnchor'.");
 
-            // Wait until room anchor is found
             while (isInitializing)
                 yield return null;
         }
@@ -72,34 +68,28 @@ namespace TrueEchoVR
         {
             isInitializing = false;
 
-            // 1. Reposition XR Origin so that the real QR position becomes scene origin
             Vector3 realQRPosition = anchorQR.visualObject.transform.position;
             Vector3 delta = -realQRPosition;
             xrOrigin.position += delta;
 
-            // 2. Create a GameObject "RoomAnchor" at scene origin
             if (roomAnchorObject != null) Destroy(roomAnchorObject);
             roomAnchorObject = new GameObject("RoomAnchor");
             roomAnchorObject.transform.position = Vector3.zero;
             roomAnchorObject.transform.rotation = Quaternion.identity;
 
-            // 3. Load QR codes from server or local
             if (statusUI != null)
                 statusUI.ShowMessage("Room anchor set. Loading QR codes...", "Please wait.");
 
             yield return StartCoroutine(LoadQRCodes());
 
-            // 4. Generate GameObjects for each QR (excluding anchor)
             GenerateQRGameObjects();
 
-            // 5. Finalize
             InitializationComplete = true;
             if (statusUI != null)
                 statusUI.ShowMessage("Initialization complete", "You can now join a session.");
             if (uiManager != null)
                 uiManager.ShowJoinScreen();
 
-            // Unregister init event and register normal QR events
             if (qrManager != null)
             {
                 qrManager.OnQRCodeAdded -= OnQRCodeAddedForInit;
@@ -107,7 +97,6 @@ namespace TrueEchoVR
                 qrManager.OnQRCodeUpdated += OnQRCodeUpdatedNormal;
                 qrManager.OnQRCodeRemoved += OnQRCodeRemovedNormal;
 
-                // Populate UI with existing QRs (excluding anchor)
                 foreach (var kvp in qrManager.TrackedQRCodes)
                 {
                     if (kvp.Value.fullPayload.Contains(roomAnchorPayloadSubstring)) continue;
@@ -160,7 +149,6 @@ namespace TrueEchoVR
         {
             if (roomAnchorObject == null) return;
 
-            // Clear previous generated objects
             foreach (var item in generatedQRTransforms.Values)
             {
                 if (item != null) Destroy(item.gameObject);
@@ -188,12 +176,11 @@ namespace TrueEchoVR
             if (!InitializationComplete) return;
             if (generatedQRTransforms.TryGetValue(qr.identifierKey, out var target))
             {
-                hudManager?.SetTarget(target);
+                statusUI?.HighlightTarget(target);
                 statusUI?.ShowMessage($"Pointing to: {qr.identifierKey}", qr.fullPayload);
             }
         }
 
-        // Normal QR event handlers (after init)
         private void OnQRCodeAddedNormal(QRCodeManager.QRCodeInstance qr)
         {
             if (qr.fullPayload.Contains(roomAnchorPayloadSubstring)) return;

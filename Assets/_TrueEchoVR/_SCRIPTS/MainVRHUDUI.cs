@@ -4,12 +4,10 @@ using System.Collections;
 
 namespace TrueEchoVR
 {
-    public class VRHUDManager : MonoBehaviour
+    public class MainVRHUDUI : MonoBehaviour
     {
-        public static VRHUDManager Instance { get; private set; }
-
         [Header("UI References (assign in Inspector)")]
-        public GameObject hudPanel;
+        public GameObject hudPanel;                 // Root panel (will be moved)
         public TMP_Text statusText;
         public TMP_Text hintText;
         public TMP_Text completionText;
@@ -21,12 +19,10 @@ namespace TrueEchoVR
         [SerializeField] private float verticalOffset = 0.3f;
         [SerializeField] private float smoothTime = 0.15f;
         [SerializeField] private float rotationSpeed = 3f;
-        [Tooltip("Degrees of head rotation before panel starts moving again.")]
         [SerializeField] private float angleThreshold = 30f;
-        [Tooltip("Distance moved before panel starts moving again.")]
         [SerializeField] private float distanceThreshold = 0.2f;
 
-        [Header("Fade Settings")]
+        [Header("Auto‑Fade")]
         [SerializeField] private float fadeDelay = 2f;
         [SerializeField] private float fadeDuration = 0.5f;
 
@@ -41,29 +37,19 @@ namespace TrueEchoVR
         private Vector3 velocity = Vector3.zero;
         private Quaternion targetRotation;
 
-        private void Awake()
-        {
-            if (Instance != null && Instance != this)
-            {
-                Destroy(gameObject);
-                return;
-            }
-            Instance = this;
-        }
-
         private void Start()
         {
             camTransform = Camera.main?.transform;
             if (camTransform == null)
             {
-                Debug.LogError("[VRHUDManager] No main camera found.");
+                Debug.LogError("[TaskStatusUI] No main camera found.");
                 enabled = false;
                 return;
             }
 
             if (hudPanel == null)
             {
-                Debug.LogError("[VRHUDManager] No hudPanel assigned.");
+                Debug.LogError("[TaskStatusUI] No hudPanel assigned.");
                 enabled = false;
                 return;
             }
@@ -144,7 +130,7 @@ namespace TrueEchoVR
             return Quaternion.LookRotation(-toCamera, Vector3.up);
         }
 
-        public void SetStatus(string mainText, string hint)
+        public void ShowMessage(string mainText, string hint)
         {
             hasActiveText = !string.IsNullOrEmpty(mainText) || !string.IsNullOrEmpty(hint);
             if (!hasActiveText)
@@ -195,7 +181,7 @@ namespace TrueEchoVR
                 StartFadeCountdown();
         }
 
-        public void SetTarget(Transform target)
+        public void HighlightTarget(Transform target)
         {
             currentTarget = target;
         }

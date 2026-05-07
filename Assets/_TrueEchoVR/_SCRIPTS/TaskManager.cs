@@ -15,7 +15,7 @@ namespace TrueEchoVR
         [SerializeField] private float stepCompletionDelay = 1.0f;
 
         [Header("UI & Trackers")]
-        [SerializeField] private TaskStatusUI statusUI;
+        [SerializeField] private MainVRHUDUI statusUI;
         [SerializeField] private List<LmsTracker> lmsTrackers = new List<LmsTracker>();
 
         [Header("Events")]
@@ -44,7 +44,7 @@ namespace TrueEchoVR
         {
             yield return null;
             if (statusUI == null)
-                statusUI = FindObjectOfType<TaskStatusUI>(true);
+                statusUI = FindObjectOfType<MainVRHUDUI>(true);
             foreach (var tracker in lmsTrackers)
                 tracker.Initialize();
             StartTask();

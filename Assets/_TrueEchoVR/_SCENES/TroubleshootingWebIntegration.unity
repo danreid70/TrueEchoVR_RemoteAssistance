@@ -243,39 +243,6 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!114 &1832413365 stripped
-MonoBehaviour:
-  m_CorrespondingSourceObject: {fileID: 708029579295134168, guid: 210c4e7d75a89f8408d439d9c40794a7, type: 3}
-  m_PrefabInstance: {fileID: 427870497746368196}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 427870497746368197}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 91659791033b40640a8382aad58ea23f, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::TrueEchoVR.LiveTroubleShooting.TEVRStreamingManager
---- !u!114 &1832413369 stripped
-MonoBehaviour:
-  m_CorrespondingSourceObject: {fileID: 9157865303555339371, guid: 210c4e7d75a89f8408d439d9c40794a7, type: 3}
-  m_PrefabInstance: {fileID: 427870497746368196}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 427870497746368197}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 76c6dcf72253ad94fa8332233fadf66d, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::TaskStatusUI
---- !u!114 &1832413370 stripped
-MonoBehaviour:
-  m_CorrespondingSourceObject: {fileID: 3444734742346904413, guid: 210c4e7d75a89f8408d439d9c40794a7, type: 3}
-  m_PrefabInstance: {fileID: 427870497746368196}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 427870497746368197}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 45f82e264a4b08745ab1c4c5659e98bc, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::VRHUDManager
 --- !u!1001 &427870497746368196
 PrefabInstance:
   m_ObjectHideFlags: 0
@@ -287,22 +254,6 @@ PrefabInstance:
     - target: {fileID: 1196107872146366308, guid: 210c4e7d75a89f8408d439d9c40794a7, type: 3}
       propertyPath: m_Name
       value: TEVR_Managers_Troubleshooting
-      objectReference: {fileID: 0}
-    - target: {fileID: 3444734742346904413, guid: 210c4e7d75a89f8408d439d9c40794a7, type: 3}
-      propertyPath: m_Enabled
-      value: 1
-      objectReference: {fileID: 0}
-    - target: {fileID: 4748299935583410328, guid: 210c4e7d75a89f8408d439d9c40794a7, type: 3}
-      propertyPath: m_Enabled
-      value: 0
-      objectReference: {fileID: 0}
-    - target: {fileID: 4748299935583410328, guid: 210c4e7d75a89f8408d439d9c40794a7, type: 3}
-      propertyPath: steps.Array.data[0].targetObject
-      value: 
-      objectReference: {fileID: 0}
-    - target: {fileID: 4748299935583410328, guid: 210c4e7d75a89f8408d439d9c40794a7, type: 3}
-      propertyPath: steps.Array.data[1].targetObject
-      value: 
       objectReference: {fileID: 0}
     - target: {fileID: 5003421245050620899, guid: 210c4e7d75a89f8408d439d9c40794a7, type: 3}
       propertyPath: m_LocalPosition.x
@@ -344,110 +295,23 @@ PrefabInstance:
       propertyPath: m_LocalEulerAnglesHint.z
       value: 0
       objectReference: {fileID: 0}
-    - target: {fileID: 8765684592355192735, guid: 210c4e7d75a89f8408d439d9c40794a7, type: 3}
-      propertyPath: statusUI
-      value: 
-      objectReference: {fileID: 1832413369}
-    - target: {fileID: 8765684592355192735, guid: 210c4e7d75a89f8408d439d9c40794a7, type: 3}
+    - target: {fileID: 6319788753918978219, guid: 210c4e7d75a89f8408d439d9c40794a7, type: 3}
       propertyPath: qrManager
       value: 
       objectReference: {fileID: 304502362}
-    - target: {fileID: 8765684592355192735, guid: 210c4e7d75a89f8408d439d9c40794a7, type: 3}
-      propertyPath: hudManager
+    - target: {fileID: 7406356646707095539, guid: 210c4e7d75a89f8408d439d9c40794a7, type: 3}
+      propertyPath: xrOrigin
       value: 
-      objectReference: {fileID: 1832413370}
-    - target: {fileID: 8765684592355192735, guid: 210c4e7d75a89f8408d439d9c40794a7, type: 3}
-      propertyPath: streamingManager
+      objectReference: {fileID: 4876439885971092208}
+    - target: {fileID: 7406356646707095539, guid: 210c4e7d75a89f8408d439d9c40794a7, type: 3}
+      propertyPath: qrManager
       value: 
-      objectReference: {fileID: 1832413365}
-    - target: {fileID: 9157865303555339371, guid: 210c4e7d75a89f8408d439d9c40794a7, type: 3}
-      propertyPath: m_Enabled
-      value: 1
-      objectReference: {fileID: 0}
-    m_RemovedComponents:
-    - {fileID: 8765684592355192735, guid: 210c4e7d75a89f8408d439d9c40794a7, type: 3}
+      objectReference: {fileID: 304502362}
+    m_RemovedComponents: []
     m_RemovedGameObjects: []
     m_AddedGameObjects: []
-    m_AddedComponents:
-    - targetCorrespondingSourceObject: {fileID: 1196107872146366308, guid: 210c4e7d75a89f8408d439d9c40794a7, type: 3}
-      insertIndex: 6
-      addedObject: {fileID: 427870497746368199}
-    - targetCorrespondingSourceObject: {fileID: 1196107872146366308, guid: 210c4e7d75a89f8408d439d9c40794a7, type: 3}
-      insertIndex: 7
-      addedObject: {fileID: 427870497746368198}
+    m_AddedComponents: []
   m_SourcePrefab: {fileID: 100100000, guid: 210c4e7d75a89f8408d439d9c40794a7, type: 3}
---- !u!1 &427870497746368197 stripped
-GameObject:
-  m_CorrespondingSourceObject: {fileID: 1196107872146366308, guid: 210c4e7d75a89f8408d439d9c40794a7, type: 3}
-  m_PrefabInstance: {fileID: 427870497746368196}
-  m_PrefabAsset: {fileID: 0}
---- !u!114 &427870497746368198
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 427870497746368197}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 145ee4f3874db1044ba2e5b17581fb1a, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::TrueEchoVR.TroubleshootingSessionUIManager
-  sessionUIPanel: {fileID: 0}
-  joinPanel: {fileID: 0}
-  sessionPanel: {fileID: 0}
-  roomCodeInput: {fileID: 0}
-  joinButton: {fileID: 0}
-  joinStatusText: {fileID: 0}
-  connectionStatusText: {fileID: 0}
-  localVideoImage: {fileID: 0}
-  remoteVideoImage: {fileID: 0}
-  toggleDetectionButton: {fileID: 0}
-  toggleDetectionButtonText: {fileID: 0}
-  pushQRButton: {fileID: 0}
-  pullQRButton: {fileID: 0}
-  clearQRButton: {fileID: 0}
-  locationIdInput: {fileID: 0}
-  qrCodeDropdown: {fileID: 0}
-  qrListContent: {fileID: 0}
-  qrListItemPrefab: {fileID: 0}
-  chatScrollRect: {fileID: 0}
-  chatDisplayText: {fileID: 0}
-  chatInputField: {fileID: 0}
-  sendButton: {fileID: 0}
-  leaveButton: {fileID: 0}
-  forwardDistance: 1.6
-  rightOffset: 0.85
-  verticalOffset: 0.2
-  smoothTime: 0.15
-  rotationSpeed: 3
-  angleThreshold: 30
-  distanceThreshold: 0.2
-  streamingManager: {fileID: 0}
-  hudManager: {fileID: 0}
-  qrManager: {fileID: 0}
-  statusUI: {fileID: 0}
-  sessionInit: {fileID: 0}
---- !u!114 &427870497746368199
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 427870497746368197}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 3c862b57db9159b488c2d1ce3e5b8fa3, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::TrueEchoVR.SessionInitialization
-  xrOrigin: {fileID: 0}
-  qrManager: {fileID: 0}
-  hudManager: {fileID: 0}
-  statusUI: {fileID: 0}
-  uiManager: {fileID: 0}
-  streamingManager: {fileID: 0}
-  roomAnchorPayloadSubstring: RoomAnchor
-  pullTimeoutSeconds: 5
 --- !u!114 &3127728407676174906
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -696,6 +560,11 @@ PrefabInstance:
     m_AddedGameObjects: []
     m_AddedComponents: []
   m_SourcePrefab: {fileID: 100100000, guid: 8cd1b957775c83d419a50ca0dd170690, type: 3}
+--- !u!4 &4876439885971092208 stripped
+Transform:
+  m_CorrespondingSourceObject: {fileID: 7243407822387126982, guid: 8cd1b957775c83d419a50ca0dd170690, type: 3}
+  m_PrefabInstance: {fileID: 4876439885971092207}
+  m_PrefabAsset: {fileID: 0}
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0

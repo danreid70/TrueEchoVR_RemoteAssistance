@@ -12,12 +12,10 @@ namespace TrueEchoVR
         public GameObject joinPanel;
         public GameObject sessionPanel;
 
-        // Join screen
         public TMP_InputField roomCodeInput;
         public Button joinButton;
         public TMP_Text joinStatusText;
 
-        // Session screen
         public TMP_Text connectionStatusText;
         public RawImage localVideoImage;
         public RawImage remoteVideoImage;
@@ -28,7 +26,6 @@ namespace TrueEchoVR
         public Button clearQRButton;
         public TMP_InputField locationIdInput;
 
-        // QR Code Dropdown
         public TMP_Dropdown qrCodeDropdown;
 
         public Transform qrListContent;
@@ -49,12 +46,10 @@ namespace TrueEchoVR
         [SerializeField] private float angleThreshold = 30f;
         [SerializeField] private float distanceThreshold = 0.2f;
 
-        // External references
         public TroubleshootingStreamingManager streamingManager;
-        public VRHUDManager hudManager;
         public QRCodeManager qrManager;
-        public TaskStatusUI statusUI;
-        public SessionInitialization sessionInit;
+        public MainVRHUDUI statusUI;
+        public TroubleshootingSessionInitialization sessionInit;
 
         private Transform camTransform;
         private Vector3 velocity = Vector3.zero;
@@ -69,20 +64,18 @@ namespace TrueEchoVR
         private void Start()
         {
             if (streamingManager == null) streamingManager = GetComponent<TroubleshootingStreamingManager>();
-            if (hudManager == null) hudManager = VRHUDManager.Instance;
             if (qrManager == null) qrManager = GetComponent<QRCodeManager>();
-            if (statusUI == null) statusUI = GetComponent<TaskStatusUI>();
-            if (sessionInit == null) sessionInit = GetComponent<SessionInitialization>();
+            if (statusUI == null) statusUI = GetComponent<MainVRHUDUI>();
+            if (sessionInit == null) sessionInit = GetComponent<TroubleshootingSessionInitialization>();
 
             camTransform = Camera.main?.transform;
             if (camTransform == null)
             {
-                Debug.LogError("[SessionUIManager] No main camera found.");
+                Debug.LogError("[TroubleshootingSessionUIManager] No main camera found.");
                 enabled = false;
                 return;
             }
 
-            // UI event listeners
             if (joinButton != null) joinButton.onClick.AddListener(OnJoinPressed);
             if (sendButton != null) sendButton.onClick.AddListener(OnSendChat);
             if (leaveButton != null) leaveButton.onClick.AddListener(OnLeaveSession);
@@ -92,7 +85,6 @@ namespace TrueEchoVR
             if (pullQRButton != null) pullQRButton.onClick.AddListener(OnPullQRPressed);
             if (qrCodeDropdown != null) qrCodeDropdown.onValueChanged.AddListener(OnQRCodeSelected);
 
-            // Streaming events
             if (streamingManager != null)
             {
                 streamingManager.OnConnected += OnConnected;
@@ -103,7 +95,6 @@ namespace TrueEchoVR
                 streamingManager.OnQRCodesPulled += OnQRCodesPulled;
             }
 
-            // Initial panel positioning
             transform.position = ComputeTargetPosition();
             transform.rotation = ComputeTargetRotation();
             lastCameraPos = camTransform.position;
@@ -114,7 +105,7 @@ namespace TrueEchoVR
         private void LateUpdate()
         {
             if (camTransform == null || sessionUIPanel == null) return;
-            if (!sessionInit.InitializationComplete) return; // only move after init
+            if (!sessionInit.InitializationComplete) return;
 
             float angle = Quaternion.Angle(lastCameraRot, camTransform.rotation);
             float distance = Vector3.Distance(lastCameraPos, camTransform.position);
@@ -156,13 +147,11 @@ namespace TrueEchoVR
             return Quaternion.LookRotation(-toCam, Vector3.up);
         }
 
-        #region UI Event Handlers
-
         private void OnJoinPressed()
         {
             if (!sessionInit.InitializationComplete)
             {
-                joinStatusText.text = "Initialization in progress...";
+                if (joinStatusText != null) joinStatusText.text = "Initialization in progress...";
                 return;
             }
             if (string.IsNullOrEmpty(roomCodeInput?.text)) return;
@@ -236,7 +225,7 @@ namespace TrueEchoVR
             {
                 qrManager.ManualLoadFromJson(json);
                 AppendChatMessage("Successfully synced QR Codes from server.");
-                sessionInit.GenerateQRGameObjects(); // regenerate after pull
+                sessionInit.GenerateQRGameObjects();
             }
             catch (System.Exception e)
             {
@@ -253,7 +242,7 @@ namespace TrueEchoVR
             {
                 string displayName = !string.IsNullOrEmpty(selectedQR.identifierKey) ? selectedQR.identifierKey : selectedQR.fullPayload;
                 statusUI?.ShowMessage($"Selected QR: {displayName}", $"Payload: {selectedQR.fullPayload}");
-                sessionInit.PointToQRCode(selectedQR); // delegate pointing to initialization component
+                sessionInit.PointToQRCode(selectedQR);
             }
         }
 
@@ -272,7 +261,7 @@ namespace TrueEchoVR
         {
             if (joinPanel != null) joinPanel.SetActive(true);
             if (sessionPanel != null) sessionPanel.SetActive(false);
-            if (hudManager != null) hudManager.ClearHighlight();
+            if (statusUI != null) statusUI.ClearHighlight();
         }
 
         public void ShowSessionScreen()
@@ -329,8 +318,6 @@ namespace TrueEchoVR
                 qrListItems.Remove(identifierKey);
             }
         }
-
-        #endregion
 
         private void OnDestroy()
         {
