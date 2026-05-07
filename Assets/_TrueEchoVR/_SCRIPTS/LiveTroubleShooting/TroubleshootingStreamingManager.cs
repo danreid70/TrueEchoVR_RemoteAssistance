@@ -6,7 +6,7 @@ using System;
 
 namespace TrueEchoVR
 {
-    public class TEVRStreamingManager : MonoBehaviour
+    public class TroubleshootingStreamingManager : MonoBehaviour
     {
         [Header("Server")] 
         public string ServerUrl = "wss://live-troubleshooting-app.replit.app";

@@ -37,7 +37,7 @@ namespace TrueEchoVR
         {
             if (Current == this)
                 Current = null;
-            StopAllCoroutines(); // Prevent coroutines from running after disable
+            StopAllCoroutines();
         }
 
         private IEnumerator DelayedStartTask()
@@ -77,14 +77,14 @@ namespace TrueEchoVR
             TaskStepData step = steps[index];
             step.onStepStarted?.Invoke();
             statusUI?.ShowMessage(step.description, step.hintMessage);
-            statusUI?.HighlightTarget(step.targetObject != null ? step.targetObject.gameObject : null);
+            // FIXED: pass Transform directly (step.targetObject is a Transform)
+            statusUI?.HighlightTarget(step.targetObject);
         }
 
         public void TryCompleteWithObject(GameObject obj)
         {
             if (!isTaskRunning || currentStepIndex >= steps.Count) return;
             var step = steps[currentStepIndex];
-            // Null check added
             if (step.targetObject == null) return;
             if (step.targetObject.gameObject == obj)
             {
