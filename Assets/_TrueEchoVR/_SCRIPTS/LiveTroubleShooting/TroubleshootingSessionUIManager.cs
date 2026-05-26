@@ -100,9 +100,22 @@ namespace TrueEchoVR
                 streamingManager.OnConnected += OnConnected;
                 streamingManager.OnDisconnected += OnDisconnected;
                 streamingManager.OnChatMessageReceived += OnChatReceived;
-                streamingManager.OnRemoteStreamStarted += (tex) => { if (remoteVideoImage != null) remoteVideoImage.texture = tex; };
+                streamingManager.OnRemoteStreamStarted += (tex) => { 
+                    if (remoteVideoImage != null) {
+                        remoteVideoImage.texture = tex;
+                    }
+                };
                 streamingManager.OnLocalStreamStarted += (tex) => { if (localVideoImage != null) localVideoImage.texture = tex; };
                 streamingManager.OnQRCodesPulled += OnQRCodesPulled;
+                streamingManager.OnConnectionError += (err) => AppendChatMessage($"<color=red>Error: {err}</color>");
+            }
+
+            if (qrManager != null)
+            {
+                qrManager.OnQRCodeAdded += (qr) => AppendChatMessage($"[QR Added] {GetColoredPayload(qr)}");
+                qrManager.OnQRCodeUpdated += (qr) => AppendChatMessage($"[QR Updated] {GetColoredPayload(qr)}");
+                qrManager.OnQRCodeRemoved += (key) => AppendChatMessage($"[QR Removed] {key}");
+                qrManager.OnRoomAnchorDiscovered += (qr) => AppendChatMessage($"[Anchor Discovered] <color=green>{qr.fullPayload}</color>");
             }
 
             panelTransform.position = ComputeTargetPosition();
@@ -112,10 +125,27 @@ namespace TrueEchoVR
             isFollowing = false;
         }
 
+        private string GetColoredPayload(QRCodeManager.QRCodeInstance qr)
+        {
+            string color = qr.status == QRCodeManager.QRStatus.Official ? "#00FF00" : "#FF0000";
+            return $"<color={color}>{qr.fullPayload}</color>";
+        }
+
+        public void LogAllQRCodesToChat()
+        {
+            if (qrManager == null) return;
+            AppendChatMessage("--- Current QR Codes ---");
+            foreach (var kvp in qrManager.TrackedQRCodes)
+            {
+                AppendChatMessage(GetColoredPayload(kvp.Value));
+            }
+            AppendChatMessage("------------------------");
+        }
+
         private void LateUpdate()
         {
-            if (camTransform == null || sessionUIPanel == null) return;
-            if (!sessionInit.InitializationComplete) return;
+            if (camTransform == null || sessionUIPanel == null || sessionInit == null) return;
+            if (!sessionInit.InitializationComplete && sessionUIPanel.activeSelf == false) return;
 
             float angle = Quaternion.Angle(lastCameraRot, camTransform.rotation);
             float distance = Vector3.Distance(lastCameraPos, camTransform.position);
@@ -212,20 +242,24 @@ namespace TrueEchoVR
             }
         }
 
-        private void OnClearQRPressed() => qrManager?.ClearQRCodes();
+        private void OnClearQRPressed()
+        {
+            qrManager?.ClearQRCodes();
+            AppendChatMessage("<color=orange>Cleared all local QR Codes.</color>");
+        }
 
         private void OnPushQRPressed()
         {
             if (qrManager == null || streamingManager == null) return;
             string json = qrManager.GetQRCodeDataAsJson();
             streamingManager.PushQRCodes(json);
-            AppendChatMessage("Pushed QR Codes to server.");
+            AppendChatMessage("<color=yellow>Pushed local QR Codes to server.</color>");
         }
 
         private void OnPullQRPressed()
         {
             streamingManager?.PullQRCodes();
-            AppendChatMessage("Requested QR Codes from server.");
+            AppendChatMessage("<color=yellow>Requested QR Codes from server.</color>");
         }
 
         private void OnQRCodesPulled(string json)

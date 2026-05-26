@@ -15,7 +15,7 @@ namespace TrueEchoVR
         // UI Events
         public Action OnConnected;
         public Action OnDisconnected;
-        public Action<string> OnConnectionError;  // new
+        public Action<string> OnConnectionError; 
         public Action<string> OnChatMessageReceived;
         public Action<string, string, string> OnPointToReceived; // name, qrCodePayload, poseData
         public Action<string> OnQRCodesPulled;
@@ -28,15 +28,27 @@ namespace TrueEchoVR
         private VideoStreamTrack _videoTrack;
         private AudioStreamTrack _audioTrack;
 
-        [Header("Video")]
+        [Header("Video Capture (Outgoing)")]
+        [Tooltip("Note: Meta Quest 3 hardware prevents raw camera pixel access. This will stream virtual overlays only.")]
+        public bool useWebcam = false;
+        public Camera captureCamera;
+        public Vector2Int captureResolution = new Vector2Int(1280, 720);
         public string webcamDeviceName = "";
+
         private WebCamTexture _webcamTexture;
-        public WebCamTexture LocalWebcamTexture => _webcamTexture;
+        private RenderTexture _captureRT;
+        private Camera _internalCaptureCamera;
 
         private string _currentRoomCode;
 
         void Start()
         {
+            #if UNITY_ANDROID && !UNITY_EDITOR
+            if (!UnityEngine.Android.Permission.HasUserAuthorizedPermission(UnityEngine.Android.Permission.Camera))
+            {
+                UnityEngine.Android.Permission.RequestUserPermission(UnityEngine.Android.Permission.Camera);
+            }
+            #endif
             StartCoroutine(WebRTC.Update());
         }
 
@@ -51,6 +63,8 @@ namespace TrueEchoVR
             _ws?.Close();
             _pc?.Close();
             if (_webcamTexture != null) _webcamTexture.Stop();
+            if (_internalCaptureCamera != null) Destroy(_internalCaptureCamera.gameObject);
+            if (_captureRT != null) _captureRT.Release();
         }
 
         async void ConnectToSignalingServer()
@@ -143,15 +157,49 @@ namespace TrueEchoVR
                 }
             };
 
-            var devices = WebCamTexture.devices;
-            if (devices.Length > 0)
+            if (useWebcam)
             {
-                string device = string.IsNullOrEmpty(webcamDeviceName) ? devices[0].name : webcamDeviceName;
-                _webcamTexture = new WebCamTexture(device);
-                _webcamTexture.Play();
-                yield return new WaitUntil(() => _webcamTexture.width > 100);
-                _videoTrack = new VideoStreamTrack(_webcamTexture);
-                OnLocalStreamStarted?.Invoke(_webcamTexture);
+                var devices = WebCamTexture.devices;
+                Debug.Log($"[WebRTC] Found {devices.Length} webcam devices.");
+                foreach(var d in devices) Debug.Log($"[WebRTC] Device: {d.name}");
+
+                if (devices.Length > 0)
+                {
+                    string device = string.IsNullOrEmpty(webcamDeviceName) ? devices[0].name : webcamDeviceName;
+                    _webcamTexture = new WebCamTexture(device);
+                    _webcamTexture.Play();
+                    yield return new WaitUntil(() => _webcamTexture.width > 16);
+                    _videoTrack = new VideoStreamTrack(_webcamTexture);
+                    OnLocalStreamStarted?.Invoke(_webcamTexture);
+                    Debug.Log($"[WebRTC] Started local stream using webcam: {device}");
+                }
+                else
+                {
+                    Debug.LogError("[WebRTC] No webcam devices found for streaming.");
+                }
+            }
+            else
+            {
+                if (captureCamera == null) captureCamera = Camera.main;
+                if (captureCamera != null)
+                {
+                    if (_internalCaptureCamera == null)
+                    {
+                        GameObject camObj = new GameObject("WebRTC_CaptureCamera");
+                        _internalCaptureCamera = camObj.AddComponent<Camera>();
+                        _internalCaptureCamera.CopyFrom(captureCamera);
+                        camObj.transform.SetParent(captureCamera.transform, false);
+                        camObj.transform.localPosition = Vector3.zero;
+                        camObj.transform.localRotation = Quaternion.identity;
+
+                        _captureRT = new RenderTexture(captureResolution.x, captureResolution.y, 16, RenderTextureFormat.ARGB32);
+                        _captureRT.name = "WebRTC_CaptureRT";
+                        _captureRT.Create();
+                        _internalCaptureCamera.targetTexture = _captureRT;
+                    }
+                    _videoTrack = new VideoStreamTrack(_captureRT);
+                    OnLocalStreamStarted?.Invoke(_captureRT);
+                }
             }
             _audioTrack = new AudioStreamTrack();
 
