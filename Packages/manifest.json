@@ -1,11 +1,8 @@
 {
   "dependencies": {
-    "com.meta.xr.mrutilitykit": "201.0.0",
     "com.meta.xr.sdk.all": "201.0.0",
-    "com.meta.xr.sdk.core": "201.0.0",
-    "com.meta.xr.sdk.voice": "85.0.0",
     "com.unity.2d.sprite": "1.0.0",
-    "com.unity.ai.assistant": "2.7.0-pre.2",
+    "com.unity.ai.assistant": "2.9.0-pre.2",
     "com.unity.ai.inference": "2.6.1",
     "com.unity.feature.development": "1.0.2",
     "com.unity.ide.rider": "3.0.40",

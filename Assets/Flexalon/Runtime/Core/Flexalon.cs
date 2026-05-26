@@ -96,7 +96,9 @@ namespace Flexalon
             bool created = false;
             if (!_instance)
             {
-                #if UNITY_2023_1_OR_NEWER
+                #if UNITY_6000_0_OR_NEWER
+                    _instance = Object.FindAnyObjectByType<Flexalon>();
+                #elif UNITY_2023_1_OR_NEWER
                     _instance = FindFirstObjectByType<Flexalon>();
                 #else
                     _instance = FindObjectOfType<Flexalon>();

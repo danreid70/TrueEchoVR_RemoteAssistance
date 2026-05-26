@@ -14,13 +14,8 @@ namespace TrueEchoVR
         private static extern void ScormCommit();
         #endif
 
-        private string courseId;
-        private string learnerId;
-
         public override void Initialize()
         {
-            courseId = "default_course";
-            learnerId = "anonymous";
             Debug.Log("SCORM tracker initialized");
         }
 

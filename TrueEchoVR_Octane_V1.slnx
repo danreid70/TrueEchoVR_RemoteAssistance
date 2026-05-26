@@ -53,6 +53,7 @@
   <Project Path="Unity.InferenceEngine.Tokenization.csproj" />
   <Project Path="Unity.VisualScripting.Core.csproj" />
   <Project Path="Unity.Services.Core.Environments.Editor.csproj" />
+  <Project Path="Unity.AI.Assistant.Editor.csproj" />
   <Project Path="Unity.InferenceEngine.Editor.csproj" />
   <Project Path="UnityEditor.TestRunner.csproj" />
   <Project Path="Oculus.Interaction.OVR.csproj" />
@@ -69,7 +70,6 @@
   <Project Path="Oculus.Interaction.Editor.csproj" />
   <Project Path="Unity.Services.Authentication.csproj" />
   <Project Path="Unity.Services.Multiplayer.Editor.Shared.csproj" />
-  <Project Path="Unity.AI.Assistant.Editor.csproj" />
   <Project Path="Unity.VisualScripting.Flow.csproj" />
   <Project Path="UnityEngine.TestRunner.csproj" />
   <Project Path="Unity.PerformanceTesting.csproj" />

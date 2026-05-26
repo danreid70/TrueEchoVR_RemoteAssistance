@@ -6432,48 +6432,6 @@ Transform:
   m_CorrespondingSourceObject: {fileID: 8688982062548017324, guid: e6084503f826bbb428b1e677dc1a75d4, type: 3}
   m_PrefabInstance: {fileID: 1235099484}
   m_PrefabAsset: {fileID: 0}
---- !u!1 &2109553257 stripped
-GameObject:
-  m_CorrespondingSourceObject: {fileID: 7759746591027909438, guid: e43601f6b53f14449b7635860eedd5cf, type: 3}
-  m_PrefabInstance: {fileID: 8654615067597287082}
-  m_PrefabAsset: {fileID: 0}
---- !u!114 &2109553264
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 2109553257}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 9ac9abe7f6317784c847f90c3257147f, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::TrueEchoVR.LiveTroubleShooting.TEVRSessionUI
-  StreamingManager: {fileID: 0}
-  JoinPanel: {fileID: 0}
-  RoomCodeInput: {fileID: 0}
-  JoinButton: {fileID: 0}
-  StatusText: {fileID: 0}
-  SessionPanel: {fileID: 0}
-  ConnectionStatusText: {fileID: 0}
-  ChatDisplay: {fileID: 0}
-  ChatInput: {fileID: 0}
-  SendChatButton: {fileID: 0}
-  PointToText: {fileID: 0}
---- !u!114 &2109553265
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 2109553257}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 91659791033b40640a8382aad58ea23f, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::TrueEchoVR.LiveTroubleShooting.TEVRStreamingManager
-  ServerUrl: wss://server-url
-  webcamDeviceName: 
 --- !u!1001 &2133900252
 PrefabInstance:
   m_ObjectHideFlags: 0
@@ -12821,14 +12779,6 @@ PrefabInstance:
       propertyPath: m_LocalEulerAnglesHint.z
       value: 0
       objectReference: {fileID: 0}
-    - target: {fileID: 7155918759152094406, guid: e43601f6b53f14449b7635860eedd5cf, type: 3}
-      propertyPath: followDistance
-      value: 1.2
-      objectReference: {fileID: 0}
-    - target: {fileID: 7155918759152094406, guid: e43601f6b53f14449b7635860eedd5cf, type: 3}
-      propertyPath: pointerOffset.x
-      value: -0.35
-      objectReference: {fileID: 0}
     - target: {fileID: 7759746591027909438, guid: e43601f6b53f14449b7635860eedd5cf, type: 3}
       propertyPath: m_Name
       value: TEVR_Managers_Training
@@ -12836,13 +12786,7 @@ PrefabInstance:
     m_RemovedComponents: []
     m_RemovedGameObjects: []
     m_AddedGameObjects: []
-    m_AddedComponents:
-    - targetCorrespondingSourceObject: {fileID: 7759746591027909438, guid: e43601f6b53f14449b7635860eedd5cf, type: 3}
-      insertIndex: -1
-      addedObject: {fileID: 2109553265}
-    - targetCorrespondingSourceObject: {fileID: 7759746591027909438, guid: e43601f6b53f14449b7635860eedd5cf, type: 3}
-      insertIndex: -1
-      addedObject: {fileID: 2109553264}
+    m_AddedComponents: []
   m_SourcePrefab: {fileID: 100100000, guid: e43601f6b53f14449b7635860eedd5cf, type: 3}
 --- !u!1 &8816515674084146965
 GameObject:

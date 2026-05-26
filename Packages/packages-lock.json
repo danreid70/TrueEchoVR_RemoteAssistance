@@ -2,7 +2,7 @@
   "dependencies": {
     "com.meta.xr.mrutilitykit": {
       "version": "201.0.0",
-      "depth": 0,
+      "depth": 1,
       "source": "registry",
       "dependencies": {
         "com.meta.xr.sdk.core": "201.0.0",
@@ -36,18 +36,19 @@
       "url": "https://packages.unity.com"
     },
     "com.meta.xr.sdk.core": {
-      "version": "file:com.meta.xr.sdk.core",
-      "depth": 0,
-      "source": "embedded",
+      "version": "201.0.0",
+      "depth": 1,
+      "source": "registry",
       "dependencies": {
-        "com.unity.modules.audio": "1.0.0",
-        "com.unity.modules.imageconversion": "1.0.0",
-        "com.unity.modules.imgui": "1.0.0",
+        "com.unity.xr.hands": "1.7.2",
         "com.unity.modules.ui": "1.0.0",
+        "com.unity.modules.audio": "1.0.0",
+        "com.unity.modules.imgui": "1.0.0",
+        "com.unity.modules.imageconversion": "1.0.0",
         "com.unity.modules.unitywebrequest": "1.0.0",
-        "com.unity.modules.unitywebrequestaudio": "1.0.0",
-        "com.unity.xr.hands": "1.7.2"
-      }
+        "com.unity.modules.unitywebrequestaudio": "1.0.0"
+      },
+      "url": "https://packages.unity.com"
     },
     "com.meta.xr.sdk.haptics": {
       "version": "201.0.0",
@@ -90,7 +91,7 @@
     },
     "com.meta.xr.sdk.voice": {
       "version": "85.0.0",
-      "depth": 0,
+      "depth": 1,
       "source": "registry",
       "dependencies": {},
       "url": "https://packages.unity.com"
@@ -102,17 +103,18 @@
       "dependencies": {}
     },
     "com.unity.ai.assistant": {
-      "version": "file:com.unity.ai.assistant",
+      "version": "2.9.0-pre.2",
       "depth": 0,
-      "source": "embedded",
+      "source": "registry",
       "dependencies": {
-        "com.unity.nuget.newtonsoft-json": "3.2.1",
-        "com.unity.modules.unitywebrequest": "1.0.0",
-        "com.unity.modules.uielements": "1.0.0",
         "com.unity.2d.sprite": "1.0.0",
+        "com.unity.mathematics": "1.3.2",
         "com.unity.cloud.gltfast": "6.14.1",
-        "com.unity.mathematics": "1.3.2"
-      }
+        "com.unity.modules.uielements": "1.0.0",
+        "com.unity.nuget.newtonsoft-json": "3.2.1",
+        "com.unity.modules.unitywebrequest": "1.0.0"
+      },
+      "url": "https://packages.unity.com"
     },
     "com.unity.ai.inference": {
       "version": "2.6.1",
@@ -129,7 +131,7 @@
     },
     "com.unity.ai.navigation": {
       "version": "2.0.12",
-      "depth": 1,
+      "depth": 2,
       "source": "registry",
       "dependencies": {
         "com.unity.modules.ai": "1.0.0"
@@ -466,7 +468,7 @@
     },
     "com.unity.textmeshpro": {
       "version": "5.0.0",
-      "depth": 1,
+      "depth": 2,
       "source": "builtin",
       "dependencies": {
         "com.unity.ugui": "2.0.0"

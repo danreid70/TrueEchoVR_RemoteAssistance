@@ -146,7 +146,7 @@ namespace UnityEngine.XR.Templates.MR
                 m_OrientationVisualizer.SetActive(false);
             }
 
-            var controller = FindFirstObjectByType<ARFeatureController>();
+            var controller = Object.FindAnyObjectByType<ARFeatureController>();
             if (controller != null)
             {
                 if (!controller.BoundingBoxVisualsEnabled)

@@ -44,7 +44,7 @@ namespace TrueEchoVR
         {
             yield return null;
             if (statusUI == null)
-                statusUI = FindObjectOfType<MainVRHUDUI>(true);
+                statusUI = Object.FindAnyObjectByType<MainVRHUDUI>(FindObjectsInactive.Include);
             foreach (var tracker in lmsTrackers)
                 tracker.Initialize();
             StartTask();

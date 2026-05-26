@@ -175,10 +175,6 @@ MonoBehaviour:
         2}'
     - line: '|   - {fileID: 11400000, guid: fe2dd84f341392c4d8cb2e0912a04842, type:
         2}'
-    - line: '|   - {fileID: -2264778514210020867, guid: 136958f90a130274b8b70a31eed352fb,
-        type: 2}'
-    - line: '|   - {fileID: -3728528452315536981, guid: 2462f957eee75f940a3393fd6f039795,
-        type: 2}'
     - line: '|   metroInputSource: 0'
     - line: '|   wsaTransparentSwapchain: 0'
     - line: '|   xboxOneDisableKinectGpuReservation: 1'
@@ -1035,7 +1031,7 @@ MonoBehaviour:
     - line: '|   qnxGraphicConfPath: '
     - line: '|   apiCompatibilityLevel: 6'
     - line: '|   captureStartupLogs: {}'
-    - line: '|   activeInputHandler: 2'
+    - line: '|   activeInputHandler: 1'
     - line: '|   windowsGamepadBackendHint: 0'
     - line: '|   enableDirectStorage: 0'
     - line: '|   cloudProjectId: 921c7434-0324-47a4-9f9b-85d5e44cdccc'

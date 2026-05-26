@@ -9,11 +9,11 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 4866577709688908801}
-  - component: {fileID: 7155918759152094406}
   - component: {fileID: 3396781567084203095}
   - component: {fileID: 652281627516294644}
   - component: {fileID: 2043332319689981059}
   - component: {fileID: 5956542862040378232}
+  - component: {fileID: 883732855289986766}
   m_Layer: 0
   m_Name: TEVR_Managers_Training
   m_TagString: Untagged
@@ -36,41 +36,6 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!114 &7155918759152094406
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 7759746591027909438}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 45f82e264a4b08745ab1c4c5659e98bc, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::VRHUDManager
-  worldScaleMultiplier: 1
-  followDistance: 1.5
-  verticalOffset: 0.3
-  positionSmoothTime: 0.15
-  rotationSmoothSpeed: 2.5
-  panelWidth: 450
-  panelHeight: 300
-  panelPadding: 24
-  backgroundColor: {r: 0.11654504, g: 0.13872679, b: 0.9150943, a: 0.75}
-  borderRadius: 16
-  borderWidth: 1
-  borderColor: {r: 1, g: 1, b: 1, a: 0.2}
-  statusFontSize: 20
-  statusColor: {r: 1, g: 1, b: 1, a: 1}
-  statusBottomMargin: 10
-  hintFontSize: 14
-  hintColor: {r: 0.8, g: 0.8, b: 0.8, a: 1}
-  completionFontSize: 18
-  completionColor: {r: 0, g: 1, b: 0.53, a: 1}
-  fadeDelay: 0
-  fadeDuration: 0.5
-  pointerPrefab: {fileID: 921447344581038579, guid: c44216c9451c537428612d017e33f2bd, type: 3}
-  pointerOffset: {x: 0, y: 0, z: -0.1}
 --- !u!114 &3396781567084203095
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -83,6 +48,20 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 76c6dcf72253ad94fa8332233fadf66d, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::TaskStatusUI
+  hudPanel: {fileID: 0}
+  statusText: {fileID: 0}
+  hintText: {fileID: 0}
+  completionText: {fileID: 0}
+  pointerArrow: {fileID: 0}
+  forwardDistance: 1.5
+  horizontalOffset: 0
+  verticalOffset: 0.3
+  smoothTime: 0.15
+  rotationSpeed: 3
+  angleThreshold: 30
+  distanceThreshold: 0.2
+  fadeDelay: 2
+  fadeDuration: 0.5
 --- !u!114 &652281627516294644
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -165,3 +144,17 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c727f71a7789ee549bbede29103ccae5, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::ScormTracker
+--- !u!114 &883732855289986766
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7759746591027909438}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 91659791033b40640a8382aad58ea23f, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::TrueEchoVR.LiveTroubleShooting.TEVRStreamingManager
+  ServerUrl: wss://server-url
+  webcamDeviceName: 

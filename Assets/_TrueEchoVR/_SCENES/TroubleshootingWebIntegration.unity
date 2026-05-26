@@ -498,6 +498,26 @@ PrefabInstance:
       propertyPath: m_Name
       value: MRUK_QRCodeManager
       objectReference: {fileID: 0}
+    - target: {fileID: 4853963263407154236, guid: ba2ebd14a1e515d4d9ce7169e63d1e50, type: 3}
+      propertyPath: m_IsActive
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 5790466923927883662, guid: ba2ebd14a1e515d4d9ce7169e63d1e50, type: 3}
+      propertyPath: payloadActions.Array.size
+      value: 2
+      objectReference: {fileID: 0}
+    - target: {fileID: 5790466923927883662, guid: ba2ebd14a1e515d4d9ce7169e63d1e50, type: 3}
+      propertyPath: payloadActions.Array.data[0].matchString
+      value: RoomAnchor
+      objectReference: {fileID: 0}
+    - target: {fileID: 5790466923927883662, guid: ba2ebd14a1e515d4d9ce7169e63d1e50, type: 3}
+      propertyPath: payloadActions.Array.data[1].matchString
+      value: TrueEchoVR
+      objectReference: {fileID: 0}
+    - target: {fileID: 5790466923927883662, guid: ba2ebd14a1e515d4d9ce7169e63d1e50, type: 3}
+      propertyPath: payloadActions.Array.data[1].customPrefab
+      value: 
+      objectReference: {fileID: 6762319794414368924, guid: 88ded265eacc5cf4ba4667328d754d26, type: 3}
     m_RemovedComponents: []
     m_RemovedGameObjects: []
     m_AddedGameObjects: []
@@ -511,9 +531,17 @@ PrefabInstance:
     serializedVersion: 3
     m_TransformParent: {fileID: 0}
     m_Modifications:
+    - target: {fileID: 2678954996938236018, guid: 8cd1b957775c83d419a50ca0dd170690, type: 3}
+      propertyPath: m_Enabled
+      value: 0
+      objectReference: {fileID: 0}
     - target: {fileID: 7243407822387126981, guid: 8cd1b957775c83d419a50ca0dd170690, type: 3}
       propertyPath: m_Name
       value: XR Origin Hands (XR Rig)
+      objectReference: {fileID: 0}
+    - target: {fileID: 7243407822387126981, guid: 8cd1b957775c83d419a50ca0dd170690, type: 3}
+      propertyPath: m_IsActive
+      value: 1
       objectReference: {fileID: 0}
     - target: {fileID: 7243407822387126982, guid: 8cd1b957775c83d419a50ca0dd170690, type: 3}
       propertyPath: m_LocalPosition.x

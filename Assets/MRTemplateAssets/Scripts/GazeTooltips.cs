@@ -29,9 +29,9 @@ namespace UnityEngine.XR.Templates.MR
             if (m_XROrigin == null)
             {
 #if UNITY_2022_3_OR_NEWER
-                m_XROrigin = FindFirstObjectByType<XROrigin>();
+                m_XROrigin = Object.FindAnyObjectByType<XROrigin>();
 #else
-                m_XROrigin = FindObjectOfType<XROrigin>();
+                m_XROrigin = Object.FindAnyObjectByType<XROrigin>();
 #endif
             }
 
