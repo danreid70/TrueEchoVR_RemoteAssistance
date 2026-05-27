@@ -42,7 +42,25 @@ namespace TrueEchoVR
                 qrManager.OnRoomAnchorDiscovered += OnRoomAnchorDiscovered;
             }
 
+            if (streamingManager != null)
+            {
+                streamingManager.OnPointToReceived += OnRemotePointToReceived;
+            }
+
             StartCoroutine(InitializationPhase());
+        }
+
+        private void OnRemotePointToReceived(string name, string payload, string pose)
+        {
+            // Use payload or name to find the right tracked QR
+            foreach (var kvp in qrManager.TrackedQRCodes)
+            {
+                if (kvp.Value.fullPayload == payload || kvp.Value.identifierKey == name)
+                {
+                    PointToQRCode(kvp.Value);
+                    return;
+                }
+            }
         }
 
         private IEnumerator InitializationPhase()
@@ -61,8 +79,9 @@ namespace TrueEchoVR
         {
             if (!isInitializing)
             {
-                // Drift correction
-                if (Vector3.Distance(anchor.visualObject.transform.position, Vector3.zero) > 0.05f)
+                // Drift correction if the anchor is seen again
+                if (Vector3.Distance(anchor.visualObject.transform.position, Vector3.zero) > 0.02f ||
+                    Quaternion.Angle(anchor.visualObject.transform.rotation, Quaternion.identity) > 1.0f)
                 {
                     CalibrateOriginToAnchor(anchor);
                 }
@@ -76,21 +95,25 @@ namespace TrueEchoVR
 
         private void CalibrateOriginToAnchor(QRCodeManager.QRCodeInstance anchor)
         {
-            // Reset room anchor object
-            if (roomAnchorObject != null) Destroy(roomAnchorObject);
-            roomAnchorObject = new GameObject("RoomAnchorRoot");
-            roomAnchorObject.transform.position = Vector3.zero;
-            roomAnchorObject.transform.rotation = Quaternion.identity;
+            if (xrOrigin == null) return;
 
-            // Move Origin so Anchor is at World Zero
-            Vector3 offset = -anchor.visualObject.transform.position;
-            xrOrigin.position += offset;
+            // Use the visual object's transform which represents the last seen QR pose in Unity World Space
+            Vector3 qrWorldPos = anchor.visualObject.transform.position;
+            Quaternion qrWorldRot = anchor.visualObject.transform.rotation;
+
+            // 1. Move the Rig so the QR code ends up at World (0,0,0)
+            // RigPosition_new = RigPosition_current - QR_WorldPos
+            xrOrigin.position -= qrWorldPos;
+
+            // 2. Rotate the Rig around the World (0,0,0) point (where the QR now is)
+            // to align the QR's forward with World Z-forward.
+            float yRotationOffset = -qrWorldRot.eulerAngles.y;
+            xrOrigin.RotateAround(Vector3.zero, Vector3.up, yRotationOffset);
+
+            Debug.Log($"[Calibration] Rig aligned to anchor. QR is now at {anchor.visualObject.transform.position}");
             
-            // Align rotation (Y-axis only)
-            Quaternion rotOffset = Quaternion.Inverse(anchor.visualObject.transform.rotation);
-            xrOrigin.RotateAround(Vector3.zero, Vector3.up, rotOffset.eulerAngles.y);
-
-            Debug.Log("[SessionInitialization] Origin calibrated to anchor.");
+            // Fire event for UI logging
+            uiManager?.LogAllQRCodesToChat();
         }
 
         private IEnumerator CompleteInitializationAfterAnchor()

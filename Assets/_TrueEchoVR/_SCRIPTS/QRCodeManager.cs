@@ -110,7 +110,7 @@ namespace TrueEchoVR
             }
             else
             {
-                CreateAndAddInstance(payload, pos, rot, QRStatus.Official);
+                CreateAndAddInstance(payload, pos, rot, QRStatus.Official, new Vector3(0.15f, 0.15f, 0.005f));
             }
             if (autoSaveLoad) SaveToDisk();
         }
@@ -120,23 +120,12 @@ namespace TrueEchoVR
             if (!IsDetecting || trackable == null || trackable.TrackableType != OVRAnchor.TrackableType.QRCode) return;
 
             string fullPayload = trackable.MarkerPayloadString ?? "";
-
-            // Special logic for Anchor
-            if (!isAnchorSet)
-            {
-                if (fullPayload.Contains(qrRoomAnchorLabel))
-                {
-                    string key = GetIdentifierKey(fullPayload);
-                    if (!trackedQRCodes.TryGetValue(key, out QRCodeInstance instance))
-                    {
-                        instance = CreateAndAddInstance(fullPayload, trackable.transform.position, trackable.transform.rotation, QRStatus.Official);
-                    }
-                    OnRoomAnchorDiscovered?.Invoke(instance);
-                }
-                return;
-            }
-
             string identifierKey = GetIdentifierKey(fullPayload);
+            bool isAnchorMarker = fullPayload.Contains(qrRoomAnchorLabel);
+
+            // Special logic: If anchor isn't set, ONLY process the anchor.
+            // If anchor IS set, we process everything but still check the anchor for drift correction.
+            if (!isAnchorSet && !isAnchorMarker) return;
 
             if (trackedQRCodes.TryGetValue(identifierKey, out QRCodeInstance existing))
             {
@@ -151,18 +140,25 @@ namespace TrueEchoVR
                     existing.lastRotation = newRot;
                     UpdateTextOnObject(existing.visualObject, fullPayload);
                     OnQRCodeUpdated?.Invoke(existing);
+                    
+                    // If this was the anchor, notify the initialization script to re-calibrate
+                    if (isAnchorMarker) OnRoomAnchorDiscovered?.Invoke(existing);
                 }
-                if (autoSaveLoad) SaveToDisk();
                 return;
             }
 
-            CreateAndAddInstance(fullPayload, trackable.transform.position, trackable.transform.rotation, QRStatus.Unknown);
+            // Discovery of a new marker
+            QRCodeInstance instance = CreateAndAddInstance(fullPayload, trackable.transform.position, trackable.transform.rotation, 
+                isAnchorMarker ? QRStatus.Official : QRStatus.Unknown, trackable.transform.localScale);
+            
+            if (isAnchorMarker) OnRoomAnchorDiscovered?.Invoke(instance);
+            
             if (autoSaveLoad) SaveToDisk();
         }
 
-        private QRCodeInstance CreateAndAddInstance(string payload, Vector3 pos, Quaternion rot, QRStatus status)
+        private QRCodeInstance CreateAndAddInstance(string payload, Vector3 pos, Quaternion rot, QRStatus status, Vector3 scale)
         {
-            GameObject visualObj = CreateVisualObject(payload, pos, rot, status);
+            GameObject visualObj = CreateVisualObject(payload, pos, rot, status, scale);
             var instance = new QRCodeInstance
             {
                 visualObject = visualObj,
@@ -177,7 +173,7 @@ namespace TrueEchoVR
             return instance;
         }
 
-        public void OnTrackableRemoved(MRUKTrackable trackable)
+        private void OnTrackableRemoved(MRUKTrackable trackable)
         {
             if (!IsDetecting) return;
             if (trackable == null) return;
@@ -202,7 +198,7 @@ namespace TrueEchoVR
             return payload.Substring(0, payloadIdentifierMaxLength);
         }
 
-        private GameObject CreateVisualObject(string payload, Vector3 position, Quaternion rotation, QRStatus status)
+        private GameObject CreateVisualObject(string payload, Vector3 position, Quaternion rotation, QRStatus status, Vector3 scale)
         {
             GameObject prefabToUse = null;
             foreach (var action in payloadActions)
@@ -223,25 +219,67 @@ namespace TrueEchoVR
             }
             else
             {
-                GameObject cube = GameObject.CreatePrimitive(PrimitiveType.Cube);
-                cube.transform.SetParent(obj.transform);
-                cube.transform.localScale = new Vector3(0.15f, 0.15f, 0.01f);
-                cube.transform.localPosition = Vector3.zero;
-                
-                var renderer = cube.GetComponent<Renderer>();
-                renderer.material = new Material(Shader.Find("Transparent/Diffuse"));
-                renderer.material.color = status == QRStatus.Official ? new Color(0, 1, 0, 0.3f) : new Color(1, 0, 0, 0.3f);
+                Color baseColor = status == QRStatus.Official ? Color.green : Color.red;
 
-                GameObject textObj = new GameObject("QR_Text");
+                // 1. Semi-transparent background box
+                GameObject bg = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                bg.name = "Background";
+                bg.transform.SetParent(obj.transform);
+                bg.transform.localScale = new Vector3(scale.x, scale.y, 0.001f);
+                bg.transform.localPosition = Vector3.zero;
+                bg.transform.localRotation = Quaternion.identity;
+                Destroy(bg.GetComponent<BoxCollider>());
+
+                var bgRenderer = bg.GetComponent<Renderer>();
+                bgRenderer.material = new Material(Shader.Find("Transparent/Diffuse"));
+                bgRenderer.material.color = new Color(baseColor.r, baseColor.g, baseColor.b, 0.2f);
+
+                // 2. Border (thin lines around the edges)
+                CreateBorder(obj.transform, scale, baseColor);
+
+                // 3. Scaled text label
+                GameObject textObj = new GameObject("Label");
                 textObj.transform.SetParent(obj.transform);
-                TextMeshPro tmp = textObj.AddComponent<TextMeshPro>();
-                tmp.text = payload;
-                tmp.fontSize = 0.2f;
-                tmp.alignment = TextAlignmentOptions.Center;
-                tmp.rectTransform.localPosition = new Vector3(0, 0.1f, 0);
+                textObj.transform.localPosition = new Vector3(0, 0, -0.005f);
                 textObj.transform.localRotation = Quaternion.identity;
+
+                var tmp = textObj.AddComponent<TextMeshPro>();
+                tmp.text = payload;
+                tmp.fontSize = 0.1f;
+                tmp.alignment = TextAlignmentOptions.Center;
+                tmp.color = Color.white;
+                tmp.rectTransform.sizeDelta = new Vector2(scale.x, scale.y);
+                tmp.enableAutoSizing = true;
+                tmp.fontSizeMin = 0.01f;
+                tmp.fontSizeMax = 0.2f;
             }
             return obj;
+        }
+
+        private void CreateBorder(Transform parent, Vector3 scale, Color color)
+        {
+            float thickness = 0.005f;
+            // Top
+            CreateBar(parent, new Vector3(0, scale.y / 2, 0), new Vector3(scale.x + thickness, thickness, thickness), color);
+            // Bottom
+            CreateBar(parent, new Vector3(0, -scale.y / 2, 0), new Vector3(scale.x + thickness, thickness, thickness), color);
+            // Left
+            CreateBar(parent, new Vector3(-scale.x / 2, 0, 0), new Vector3(thickness, scale.y + thickness, thickness), color);
+            // Right
+            CreateBar(parent, new Vector3(scale.x / 2, 0, 0), new Vector3(thickness, scale.y + thickness, thickness), color);
+        }
+
+        private void CreateBar(Transform parent, Vector3 pos, Vector3 size, Color color)
+        {
+            GameObject bar = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            bar.transform.SetParent(parent);
+            bar.transform.localPosition = pos;
+            bar.transform.localScale = size;
+            bar.transform.localRotation = Quaternion.identity;
+            Destroy(bar.GetComponent<BoxCollider>());
+            var r = bar.GetComponent<Renderer>();
+            r.material = new Material(Shader.Find("Unlit/Color"));
+            r.material.color = color;
         }
 
         private void UpdateTextOnObject(GameObject obj, string newPayload)
