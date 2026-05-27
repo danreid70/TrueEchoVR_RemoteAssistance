@@ -37,14 +37,14 @@ namespace TrueEchoVR
         public Button sendButton;
         public Button leaveButton;
 
-        [Header("Positioning (relative to camera)")]
-        [SerializeField] private float forwardDistance = 1.6f;
-        [SerializeField] private float rightOffset = 0.85f;
-        [SerializeField] private float verticalOffset = 0.2f;
-        [SerializeField] private float smoothTime = 0.15f;
-        [SerializeField] private float rotationSpeed = 3f;
-        [SerializeField] private float angleThreshold = 30f;
-        [SerializeField] private float distanceThreshold = 0.2f;
+        [Header("Positioning (Tag-along)")]
+        [SerializeField] private float forwardDistance = 1.2f;
+        [SerializeField] private float rightOffset = 0.4f;
+        [SerializeField] private float verticalOffset = 0.15f;
+        [SerializeField] private float smoothTime = 0.25f;
+        [SerializeField] private float rotationSpeed = 5f;
+        [SerializeField] private float viewportMargin = 0.15f; 
+        [SerializeField] private float collisionOffset = 0.1f;
 
         public TroubleshootingStreamingManager streamingManager;
         public QRCodeManager qrManager;
@@ -53,10 +53,7 @@ namespace TrueEchoVR
 
         private Transform camTransform;
         private Vector3 velocity = Vector3.zero;
-        private Quaternion targetRot;
-        private Vector3 lastCameraPos;
-        private Quaternion lastCameraRot;
-        private bool isFollowing = true;
+        private bool isCatchingUp = false;
         private string chatHistory = "";
         private Dictionary<string, GameObject> qrListItems = new Dictionary<string, GameObject>();
         private List<QRCodeManager.QRCodeInstance> qrCodeList = new List<QRCodeManager.QRCodeInstance>();
@@ -118,11 +115,9 @@ namespace TrueEchoVR
                 qrManager.OnRoomAnchorDiscovered += (qr) => AppendChatMessage($"[Anchor Discovered] <color=green>{qr.fullPayload}</color>");
             }
 
-            panelTransform.position = ComputeTargetPosition();
+            // Initial placement
+            panelTransform.position = ComputeOptimalHUDPosition();
             panelTransform.rotation = ComputeTargetRotation();
-            lastCameraPos = camTransform.position;
-            lastCameraRot = camTransform.rotation;
-            isFollowing = false;
         }
 
         private string GetColoredPayload(QRCodeManager.QRCodeInstance qr)
@@ -145,45 +140,59 @@ namespace TrueEchoVR
         private void LateUpdate()
         {
             if (camTransform == null || sessionUIPanel == null || sessionInit == null) return;
-            if (!sessionInit.InitializationComplete && sessionUIPanel.activeSelf == false) return;
+            
+            // 1. Check if UI is currently in a visible "Safe Zone" in the viewport
+            Vector3 viewportPos = Camera.main.WorldToViewportPoint(panelTransform.position);
+            bool isVisible = viewportPos.z > 0 && 
+                             viewportPos.x > viewportMargin && viewportPos.x < (1 - viewportMargin) && 
+                             viewportPos.y > viewportMargin && viewportPos.y < (1 - viewportMargin);
 
-            float angle = Quaternion.Angle(lastCameraRot, camTransform.rotation);
-            float distance = Vector3.Distance(lastCameraPos, camTransform.position);
-            if (angle > angleThreshold || distance > distanceThreshold)
+            // 2. Trigger catch-up if not visible
+            if (!isVisible) isCatchingUp = true;
+
+            // 3. Move UI toward the optimal HUD spot
+            if (isCatchingUp)
             {
-                isFollowing = true;
-                lastCameraPos = camTransform.position;
-                lastCameraRot = camTransform.rotation;
-            }
-
-            if (isFollowing)
-            {
-                Vector3 targetPos = ComputeTargetPosition();
-                panelTransform.position = Vector3.SmoothDamp(panelTransform.position, targetPos, ref velocity, smoothTime);
-                targetRot = ComputeTargetRotation();
-                panelTransform.rotation = Quaternion.Slerp(panelTransform.rotation, targetRot, rotationSpeed * Time.deltaTime);
-
-                if (Vector3.Distance(panelTransform.position, targetPos) < 0.01f &&
-                    Quaternion.Angle(panelTransform.rotation, targetRot) < 0.5f)
+                Vector3 targetPos = ComputeOptimalHUDPosition();
+                
+                // --- Raycast Avoidance ---
+                // Cast from eyes to the desired HUD position
+                Vector3 direction = (targetPos - camTransform.position).normalized;
+                float maxDist = Vector3.Distance(camTransform.position, targetPos);
+                
+                if (Physics.Raycast(camTransform.position, direction, out RaycastHit hit, maxDist))
                 {
-                    isFollowing = false;
-                    panelTransform.position = targetPos;
-                    panelTransform.rotation = targetRot;
+                    // If we hit an object (VR training part, etc), place UI in front of it
+                    targetPos = hit.point - (direction * collisionOffset);
+                }
+
+                panelTransform.position = Vector3.SmoothDamp(panelTransform.position, targetPos, ref velocity, smoothTime);
+
+                // Stop catching up when we are close and visible again
+                if (Vector3.Distance(panelTransform.position, targetPos) < 0.05f && isVisible)
+                {
+                    isCatchingUp = false;
                 }
             }
+
+            // 4. Always rotate to face the user (Billboard effect)
+            panelTransform.rotation = Quaternion.Slerp(panelTransform.rotation, ComputeTargetRotation(), rotationSpeed * Time.deltaTime);
         }
 
-        private Vector3 ComputeTargetPosition()
+        private Vector3 ComputeOptimalHUDPosition()
         {
+            // Positioned relative to the camera view
             return camTransform.position
                    + camTransform.forward * forwardDistance
                    + camTransform.right * rightOffset
-                   + Vector3.up * verticalOffset;
+                   + camTransform.up * verticalOffset;
         }
 
         private Quaternion ComputeTargetRotation()
         {
+            // Rotate to face the camera directly
             Vector3 toCam = camTransform.position - panelTransform.position;
+            if (toCam == Vector3.zero) return Quaternion.identity;
             return Quaternion.LookRotation(-toCam, Vector3.up);
         }
 

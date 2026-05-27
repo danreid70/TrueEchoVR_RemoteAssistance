@@ -137,11 +137,17 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 3e61fa72eb408d54a8e7224dab71d8ed, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::TrueEchoVR.QRAnchor
+  qrRoomAnchorLabel: RoomAnchor
   positionThreshold: 0.05
   rotationThreshold: 0.05
   payloadIdentifierMaxLength: 20
   payloadActions:
-  - matchString: http
+  - matchString: RoomAnchor
+    customPrefab: {fileID: 6762319794414368924, guid: 88ded265eacc5cf4ba4667328d754d26, type: 3}
+    onPayloadMatched:
+      m_PersistentCalls:
+        m_Calls: []
+  - matchString: TrueEchoVR
     customPrefab: {fileID: 6762319794414368924, guid: 88ded265eacc5cf4ba4667328d754d26, type: 3}
     onPayloadMatched:
       m_PersistentCalls:
