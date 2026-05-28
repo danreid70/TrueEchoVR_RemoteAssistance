@@ -59,6 +59,11 @@ namespace TEVR
             {
                 Debug.LogWarning("[VrHudController] No main camera found at Start. This is common in VR/MR setups; will attempt to find camera during updates.");
             }
+            else
+            {
+                _lastCameraPos = _camTransform.position;
+                _lastCameraRot = _camTransform.rotation;
+            }
 
             if (hudPanel == null)
             {
@@ -82,13 +87,21 @@ namespace TEVR
             if (completionText != null) completionText.gameObject.SetActive(false);
             if (pointerArrow != null) pointerArrow.SetActive(false);
             
-            // Do not hide the panel if we are in the middle of a persistent message (e.g. from Init)
-            if (!_isPersistent)
-                hudPanel.SetActive(false);
+            // If the camera is found, jump to it immediately
+            if (_camTransform != null)
+            {
+                Vector3 startPos = ComputeTargetPosition();
+                Quaternion startRot = GetFaceCameraRotation();
+                _panelTransform.SetPositionAndRotation(startPos, startRot);
+                _lastCameraPos = _camTransform.position;
+                _lastCameraRot = _camTransform.rotation;
+            }
 
-            _lastCameraPos = Vector3.zero;
-            _lastCameraRot = Quaternion.identity;
-            
+            // Do not hide the panel if we are in the middle of a persistent message (e.g. from Init)
+            // Or force it active for now to ensure visibility
+            hudPanel.SetActive(true);
+            _canvasGroup.alpha = 1f;
+
             _isFollowing = true;
             _uiManager = Object.FindAnyObjectByType<SessionUiController>();
         }

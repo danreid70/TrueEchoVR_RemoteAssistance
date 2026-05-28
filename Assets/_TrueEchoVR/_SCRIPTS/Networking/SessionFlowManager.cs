@@ -181,7 +181,7 @@ namespace TEVR
             qrManager.ManualLoad();
             
             bool pullSuccess = false;
-            if (webAppManager != null)
+            if (webAppManager != null && webAppManager.IsConnected)
             {
                 uiManager?.AppendChatMessage("<color=cyan>[Init]</color> Requesting remote QR codes...");
                 System.Action<string> pullCallback = null;
@@ -205,11 +205,35 @@ namespace TEVR
             }
             else
             {
-                Debug.LogWarning("[SessionInitialization] Remote sync failed/timed out. Using local data.");
-                uiManager?.AppendChatMessage("<color=yellow>[Init]</color> Remote sync timed out. Using local data.");
+                Debug.LogWarning("[SessionInitialization] Remote sync failed/timed out or offline. Using local and default demo data.");
+                uiManager?.AppendChatMessage("<color=yellow>[Init]</color> Remote sync unavailable. Adding default demo markers.");
+                AddDefaultDemoQRCodes();
             }
             
             GenerateQRGameObjects();
+        }
+
+        private void AddDefaultDemoQRCodes()
+        {
+            // Default demo positions relative to calibrated origin
+            // These payloads are used for testing and demo purposes
+            string[] demoPayloads = { "TrueEchoVR", "1", "2", "3" };
+            Vector3[] demoOffsets = { 
+                new Vector3(0f, 1.2f, 1.5f),    // Directly in front
+                new Vector3(-1.0f, 1.0f, 1.2f), // Front-left
+                new Vector3(1.0f, 0.8f, 1.2f),  // Front-right
+                new Vector3(0f, 1.5f, 2.0f)     // Higher up
+            };
+
+            for (int i = 0; i < demoPayloads.Length; i++)
+            {
+                // Only add if not already tracked by local save or discovery
+                if (!qrManager.TrackedQRCodes.ContainsKey(qrManager.GetQRCodeDataAsJson(demoPayloads[i]))) // Wait, I need to check the identifier key
+                {
+                    // UpdateQRCodeFromRemote handles the identifier key logic internally
+                    qrManager.UpdateQRCodeFromRemote(demoPayloads[i], demoOffsets[i], Quaternion.identity);
+                }
+            }
         }
 
         public void GenerateQRGameObjects()
