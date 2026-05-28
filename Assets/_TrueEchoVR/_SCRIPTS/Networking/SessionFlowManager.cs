@@ -60,8 +60,29 @@ namespace TEVR
             StartCoroutine(InitializationPhase());
         }
 
-        private void OnRemotePointToReceived(string name, string payload, string pose)
+        private void Update()
         {
+            // Fallback for cases where QR is detected but event was missed or disk-loaded anchor is now seen
+            if (isInitializing && !InitializationComplete && qrManager != null)
+            {
+                foreach (var kvp in qrManager.TrackedQRCodes)
+                {
+                    if (kvp.Value.fullPayload.Contains(qrManager.qrRoomAnchorLabel))
+                    {
+                        // Anchor is tracked. If it has a visual object and we are still initializing, trigger discovery.
+                        if (kvp.Value.visualObject != null && isInitializing)
+                        {
+                            Debug.Log($"[SessionFlow] Fallback: Found RoomAnchor in tracked list: {kvp.Value.fullPayload}");
+                            OnRoomAnchorDiscovered(kvp.Value);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        private void OnRemotePointToReceived(string name, string payload, string pose)
+{
             // Use payload or name to find the right tracked QR
             foreach (var kvp in qrManager.TrackedQRCodes)
             {
@@ -166,14 +187,21 @@ namespace TEVR
             yield return StartCoroutine(LoadAndMergeQRCodes());
 
             InitializationComplete = true;
-            string readyMsg = "System Ready. You can now join a session.";
-            if (statusUI != null)
-                statusUI.ShowMessage("System Ready", "You can now join a session.");
+            string readyMsg = "System Ready.";
+            
+            if (Application.internetReachability == NetworkReachability.NotReachable)
+            {
+                readyMsg += " (Offline Mode)";
+                if (statusUI != null) statusUI.ShowMessage("System Ready", "Offline Mode.");
+                if (uiManager != null) uiManager.ShowSessionScreen(); // Go straight to session if offline
+            }
+            else
+            {
+                if (statusUI != null) statusUI.ShowMessage("System Ready", "You can now join a session.");
+                if (uiManager != null) uiManager.ShowJoinScreen();
+            }
             
             uiManager?.AppendChatMessage($"<color=green>[Init]</color> {readyMsg}");
-
-            if (uiManager != null)
-                uiManager.ShowJoinScreen();
 
             // NORMAL TRACKING EVENTS
             qrManager.OnQRCodeAdded += OnQRCodeAddedNormal;

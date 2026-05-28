@@ -55,11 +55,7 @@ namespace TEVR
         private void Start()
         {
             _camTransform = Camera.main?.transform;
-            if (_camTransform == null)
-            {
-                Debug.LogWarning("[VrHudController] No main camera found at Start. This is common in VR/MR setups; will attempt to find camera during updates.");
-            }
-            else
+            if (_camTransform != null)
             {
                 _lastCameraPos = _camTransform.position;
                 _lastCameraRot = _camTransform.rotation;
@@ -74,29 +70,21 @@ namespace TEVR
 
             _panelTransform = hudPanel.transform;
 
-            // Target the CanvasGroup on the panel itself for correct fading
             _canvasGroup = hudPanel.GetComponent<CanvasGroup>();
             if (_canvasGroup == null)
             {
                 _canvasGroup = hudPanel.AddComponent<CanvasGroup>();
             }
 
-            // Initialization state
-            // Keep text objects active if they have content set during initialization phase
             if (pointerArrow != null) pointerArrow.SetActive(false);
 
-            // If the camera is found, jump to it immediately
             if (_camTransform != null)
             {
                 Vector3 startPos = ComputeTargetPosition();
                 Quaternion startRot = GetFaceCameraRotation();
                 _panelTransform.SetPositionAndRotation(startPos, startRot);
-                _lastCameraPos = _camTransform.position;
-                _lastCameraRot = _camTransform.rotation;
             }
 
-            // Do not hide the panel if we are in the middle of a persistent message (e.g. from Init)
-            // Or force it active for now to ensure visibility
             hudPanel.SetActive(true);
             _canvasGroup.alpha = 1f;
 

@@ -173,8 +173,15 @@ webAppManager.OnQRCodesPulled += OnQRCodesPulled;
                 if (sessionUIPanel != null) sessionUIPanel.SetActive(false);
             }
 
+            // Load saved Location ID
+            if (locationIdInput != null)
+            {
+                string savedLocation = PlayerPrefs.GetString("SavedLocationID", "");
+                locationIdInput.text = savedLocation;
+            }
+
             AppendChatMessage("<color=green>[System]</color> Session UI Initialized.");
-            LogAllQRCodesToChat();
+LogAllQRCodesToChat();
 
             if (webAppManager != null)
             {
@@ -314,8 +321,15 @@ webAppManager.OnQRCodesPulled += OnQRCodesPulled;
             string code = roomCodeInput.text.ToUpper().Trim();
             string locationId = locationIdInput != null ? locationIdInput.text : "Unknown";
             
+            // Save Location ID
+            if (locationIdInput != null)
+            {
+                PlayerPrefs.SetString("SavedLocationID", locationId);
+                PlayerPrefs.Save();
+            }
+
             if (joinStatusText != null) joinStatusText.text = "Connecting to server...";
-            if (joinButtonText != null) joinButtonText.text = "Connecting...";
+if (joinButtonText != null) joinButtonText.text = "Connecting...";
             if (joinButton != null) joinButton.interactable = false;
 
             webAppManager?.Login(locationId, code);
@@ -435,6 +449,7 @@ webAppManager.OnQRCodesPulled += OnQRCodesPulled;
 
         public void ShowJoinScreen()
         {
+            if (sessionUIPanel != null) sessionUIPanel.SetActive(true);
             if (joinPanel != null) joinPanel.SetActive(true);
             if (sessionPanel != null) sessionPanel.SetActive(false);
             if (statusUI != null) statusUI.ClearHighlight();
@@ -447,6 +462,7 @@ webAppManager.OnQRCodesPulled += OnQRCodesPulled;
 
         public void ShowSessionScreen()
         {
+            if (sessionUIPanel != null) sessionUIPanel.SetActive(true);
             if (joinPanel != null) joinPanel.SetActive(false);
             if (sessionPanel != null) sessionPanel.SetActive(true);
         }

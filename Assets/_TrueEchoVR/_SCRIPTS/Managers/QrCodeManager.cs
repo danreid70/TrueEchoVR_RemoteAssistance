@@ -190,11 +190,14 @@ namespace TEVR
         /// </summary>
         public void OnTrackableAdded(MRUKTrackable trackable)
         {
+            Debug.Log($"[QrCodeManager] Trackable Added: {trackable?.name}, Type: {trackable?.TrackableType}");
             if (!IsDetecting || trackable == null || trackable.TrackableType != OVRAnchor.TrackableType.QRCode) return;
 
             string fullPayload = trackable.MarkerPayloadString ?? "";
             string identifierKey = GetIdentifierKey(fullPayload);
             bool isAnchorMarker = fullPayload.Contains(qrRoomAnchorLabel);
+            
+            Debug.Log($"[QrCodeManager] Detected QR: {fullPayload}, IsAnchor: {isAnchorMarker}, Pos: {trackable.transform.position}");
 
             // Allow updates for existing QR codes even if the anchor isn't set
             // This ensures stale disk data is corrected as soon as the marker is seen.
@@ -337,10 +340,11 @@ GameObject textObj = new GameObject("PayloadLabel");
             tmp.fontSize = 0.12f;
             tmp.alignment = TextAlignmentOptions.Center;
             tmp.color = Color.white;
-            tmp.rectTransform.sizeDelta = new Vector2(scale.x, scale.y);
+            tmp.rectTransform.sizeDelta = new Vector2(scale.x * 2.0f, scale.y * 2.0f); // Larger bounding box
             tmp.enableAutoSizing = true;
-            tmp.fontSizeMin = 0.01f;
-            tmp.fontSizeMax = 0.3f;
+            tmp.fontSizeMin = 0.05f;
+            tmp.fontSizeMax = 0.5f;
+            tmp.margin = new Vector4(0.01f, 0.01f, 0.01f, 0.01f);
         }
 
         private void CreateVisualBorder(Transform parent, Vector3 scale, Color color)
