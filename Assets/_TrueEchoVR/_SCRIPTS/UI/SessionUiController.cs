@@ -1,6 +1,7 @@
 using UnityEngine;
 using UnityEngine.UI;
 using TMPro;
+using System.Collections;
 using System.Collections.Generic;
 
 namespace TEVR
@@ -181,12 +182,35 @@ webAppManager.OnQRCodesPulled += OnQRCodesPulled;
             }
 
             AppendChatMessage("<color=green>[System]</color> Session UI Initialized.");
-LogAllQRCodesToChat();
+            LogAllQRCodesToChat();
+
+            // Setup VR Keyboard for Input Fields
+            SetupInputFieldKeyboard(roomCodeInput);
+            SetupInputFieldKeyboard(locationIdInput);
+            SetupInputFieldKeyboard(chatInputField);
 
             if (webAppManager != null)
             {
                 webAppManager.StartLocalPreview();
             }
+        }
+
+        private void SetupInputFieldKeyboard(TMP_InputField input)
+        {
+            if (input == null) return;
+            input.onSelect.AddListener((s) => StartCoroutine(OpenKeyboard(input)));
+        }
+
+        private IEnumerator OpenKeyboard(TMP_InputField input)
+        {
+            yield return new WaitForSeconds(0.1f);
+            TouchScreenKeyboard keyboard = TouchScreenKeyboard.Open(input.text, TouchScreenKeyboardType.Default);
+            while (keyboard != null && !keyboard.done && !keyboard.wasCanceled)
+            {
+                input.text = keyboard.text;
+                yield return null;
+            }
+            if (keyboard != null && keyboard.done) input.text = keyboard.text;
         }
 
         private string GetColoredPayload(QrCodeManager.QRCodeInstance qr)

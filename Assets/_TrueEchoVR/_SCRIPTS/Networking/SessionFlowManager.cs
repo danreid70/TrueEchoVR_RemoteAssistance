@@ -132,22 +132,44 @@ namespace TEVR
 
         private void CalibrateOriginToAnchor(QrCodeManager.QRCodeInstance anchor)
         {
-            if (xrOrigin == null) return;
+            if (xrOrigin == null || anchor.visualObject == null) return;
 
-            // Use the visual object's transform which represents the last seen QR pose in Unity World Space
+            // 1. Get the current world pose of the QR anchor (as seen by the eye/head)
             Vector3 qrWorldPos = anchor.visualObject.transform.position;
             Quaternion qrWorldRot = anchor.visualObject.transform.rotation;
 
-            // Shift Rig such that physical anchor maps to virtual (0,0,0)
-            xrOrigin.position -= qrWorldPos;
+            // 2. Identify the Head/Eye transform (usually Main Camera)
+            Transform cameraTransform = Camera.main != null ? Camera.main.transform : xrOrigin.GetComponentInChildren<Camera>()?.transform;
+            if (cameraTransform == null) return;
 
-            // Rotate Rig around virtual (0,0,0) to align physical forward with virtual Z-forward
+            // 3. We want the PHYSICAL QR to match the VIRTUAL (0,0,0, Identity)
+            // The Rig Root needs to be moved so that physical-relative-to-head matches virtual-relative-to-head.
+            
+            // To align QR (qrWorldPos/Rot) to (0,0,0/Identity):
+            // The translation we need to apply to the world root is the inverse of the anchor's world position.
+            // But we must rotate around the Y-axis specifically for VR comfort.
+
+            // Reset rig first to clear any previous calibrations (identity reference)
+            xrOrigin.SetPositionAndRotation(Vector3.zero, Quaternion.identity);
+
+            // Re-get pose after reset
+            qrWorldPos = anchor.visualObject.transform.position;
+            qrWorldRot = anchor.visualObject.transform.rotation;
+
+            // Target rotation: We want the QR forward (local -Z usually for markers) to match World +Z
+            // Assuming the QR's 'forward' is its normal.
             float yRotationOffset = -qrWorldRot.eulerAngles.y;
-            xrOrigin.RotateAround(Vector3.zero, Vector3.up, yRotationOffset);
+            
+            // Apply rotation around the anchor position to keep it stationary while rig rotates
+            xrOrigin.RotateAround(qrWorldPos, Vector3.up, yRotationOffset);
 
-            string calMsg = $"Rig aligned to anchor. QR is now at {anchor.visualObject.transform.position}";
+            // Apply translation so the anchor ends up at 0,0,0
+            Vector3 finalOffset = Vector3.zero - anchor.visualObject.transform.position;
+            xrOrigin.position += finalOffset;
+
+            string calMsg = $"Rig calibrated. Anchor is now at {anchor.visualObject.transform.position}. Rig at {xrOrigin.position}";
             Debug.Log($"[Calibration] {calMsg}");
-            uiManager?.AppendChatMessage($"<color=green>[Init]</color> {calMsg}");
+            uiManager?.AppendChatMessage($"<color=green>[System]</color> {calMsg}");
             
             uiManager?.LogAllQRCodesToChat();
         }
@@ -242,9 +264,10 @@ namespace TEVR
 
             for (int i = 0; i < demoPayloads.Length; i++)
             {
+                // Force status to Official for demo markers
                 qrManager.UpdateQRCodeFromRemote(demoPayloads[i], demoOffsets[i], Quaternion.identity);
             }
-        }
+}
 
         public void PointToQRCode(QrCodeManager.QRCodeInstance qr)
         {

@@ -405,7 +405,12 @@ namespace TEVR
         private void UpdateTextOnObject(GameObject obj, string newPayload)
         {
             var tmp = obj.GetComponentInChildren<TextMeshPro>();
-            if (tmp != null) tmp.text = newPayload;
+            if (tmp != null) 
+            {
+                bool isLegit = newPayload.Contains(qrRoomAnchorLabel) || newPayload.Contains("TrueEchoVR") || newPayload.Length <= 2; // Simple heuristic for demo
+                string prefix = isLegit ? "[Legit] " : "[Unknown] ";
+                tmp.text = $"{prefix}{newPayload}";
+            }
         }
 
         private class QRPulseEffect : MonoBehaviour
