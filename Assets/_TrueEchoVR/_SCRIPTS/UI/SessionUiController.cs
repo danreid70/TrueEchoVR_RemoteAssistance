@@ -406,9 +406,8 @@ if (joinButtonText != null) joinButtonText.text = "Connecting...";
             {
                 qrManager.ManualLoadFromJson(json);
                 AppendChatMessage("Successfully synced QR Codes from server.");
-                sessionInit.GenerateQRGameObjects();
                 RefreshQRCodeDropdown();
-            }
+}
             catch (System.Exception e)
             {
                 AppendChatMessage("Failed to sync QR Codes: " + e.Message);

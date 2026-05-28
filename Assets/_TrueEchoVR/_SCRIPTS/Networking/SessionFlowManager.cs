@@ -18,8 +18,6 @@ namespace TEVR
 
         public bool InitializationComplete { get; private set; } = false;
 
-        private GameObject roomAnchorObject;
-        private Dictionary<string, Transform> generatedQRTransforms = new Dictionary<string, Transform>();
         private bool isInitializing = true;
 
         private void Start()
@@ -34,12 +32,6 @@ namespace TEVR
                 Debug.LogError("[SessionInitialization] No XR Origin assigned!");
                 enabled = false;
                 return;
-            }
-
-            // Create a root for world-synced objects
-            if (roomAnchorObject == null)
-            {
-                roomAnchorObject = new GameObject("TEVR_RoomAnchor_Root");
             }
 
             // Remove CharacterController as locomotion is physical via Passthrough
@@ -82,7 +74,7 @@ namespace TEVR
         }
 
         private void OnRemotePointToReceived(string name, string payload, string pose)
-{
+        {
             // Use payload or name to find the right tracked QR
             foreach (var kvp in qrManager.TrackedQRCodes)
             {
@@ -114,11 +106,10 @@ namespace TEVR
             if (!isInitializing)
             {
                 // Drift/Movement detection for the Room Anchor
-                // We compare the QR's world position (updated by MRUK) to (0,0,0) (our calibrated origin)
+                // Thresholds: 2cm or 1 degree
                 float dist = Vector3.Distance(anchor.visualObject.transform.position, Vector3.zero);
                 float angle = Quaternion.Angle(anchor.visualObject.transform.rotation, Quaternion.identity);
 
-                // Re-calibrate if moved more than 2cm or 1 degree
                 if (dist > 0.02f || angle > 1.0f)
                 {
                     Debug.Log($"[System] Room Anchor move detected (Dist: {dist:F3}m, Angle: {angle:F1}°). Recalibrating Origin...");
@@ -147,12 +138,10 @@ namespace TEVR
             Vector3 qrWorldPos = anchor.visualObject.transform.position;
             Quaternion qrWorldRot = anchor.visualObject.transform.rotation;
 
-            // 1. Move the Rig so the QR code ends up at World (0,0,0)
-            // RigPosition_new = RigPosition_current - QR_WorldPos
+            // Shift Rig such that physical anchor maps to virtual (0,0,0)
             xrOrigin.position -= qrWorldPos;
 
-            // 2. Rotate the Rig around the World (0,0,0) point (where the QR now is)
-            // to align the QR's forward with World Z-forward.
+            // Rotate Rig around virtual (0,0,0) to align physical forward with virtual Z-forward
             float yRotationOffset = -qrWorldRot.eulerAngles.y;
             xrOrigin.RotateAround(Vector3.zero, Vector3.up, yRotationOffset);
 
@@ -160,7 +149,6 @@ namespace TEVR
             Debug.Log($"[Calibration] {calMsg}");
             uiManager?.AppendChatMessage($"<color=green>[Init]</color> {calMsg}");
             
-            // Fire event for UI logging
             uiManager?.LogAllQRCodesToChat();
         }
 
@@ -175,12 +163,10 @@ namespace TEVR
             
             uiManager?.AppendChatMessage($"<color=cyan>[Init]</color> {syncMsg}");
 
-            // Future-proofing: Sync startup data (dictionary + spatial)
             if (webAppManager != null)
             {
                 webAppManager.FetchStartupData((json) => {
                     Debug.Log("[SessionInitialization] Received startup data from server.");
-                    // Process startup data if needed (e.g. update dictionary)
                 });
             }
 
@@ -193,7 +179,7 @@ namespace TEVR
             {
                 readyMsg += " (Offline Mode)";
                 if (statusUI != null) statusUI.ShowMessage("System Ready", "Offline Mode.");
-                if (uiManager != null) uiManager.ShowSessionScreen(); // Go straight to session if offline
+                if (uiManager != null) uiManager.ShowSessionScreen();
             }
             else
             {
@@ -203,7 +189,6 @@ namespace TEVR
             
             uiManager?.AppendChatMessage($"<color=green>[Init]</color> {readyMsg}");
 
-            // NORMAL TRACKING EVENTS
             qrManager.OnQRCodeAdded += OnQRCodeAddedNormal;
             qrManager.OnQRCodeUpdated += OnQRCodeUpdatedNormal;
             qrManager.OnQRCodeRemoved += OnQRCodeRemovedNormal;
@@ -239,69 +224,32 @@ namespace TEVR
             }
             else
             {
-                Debug.LogWarning("[SessionInitialization] Remote sync failed/timed out or offline. Using local and default demo data.");
-                uiManager?.AppendChatMessage("<color=yellow>[Init]</color> Remote sync unavailable. Adding default demo markers.");
+                Debug.LogWarning("[SessionInitialization] Remote sync failed/timed out. Using local/demo.");
+                uiManager?.AppendChatMessage("<color=yellow>[Init]</color> Remote sync unavailable. Adding demo markers.");
                 AddDefaultDemoQRCodes();
             }
-            
-            GenerateQRGameObjects();
         }
 
         private void AddDefaultDemoQRCodes()
         {
-            // Default demo positions relative to calibrated origin
-            // These payloads are used for testing and demo purposes
             string[] demoPayloads = { "TrueEchoVR", "1", "2", "3" };
             Vector3[] demoOffsets = { 
-                new Vector3(0f, 1.2f, 1.5f),    // Directly in front
-                new Vector3(-1.0f, 1.0f, 1.2f), // Front-left
-                new Vector3(1.0f, 0.8f, 1.2f),  // Front-right
-                new Vector3(0f, 1.5f, 2.0f)     // Higher up
+                new Vector3(0f, 1.2f, 1.5f),
+                new Vector3(-1.0f, 1.0f, 1.2f),
+                new Vector3(1.0f, 0.8f, 1.2f),
+                new Vector3(0f, 1.5f, 2.0f)
             };
 
             for (int i = 0; i < demoPayloads.Length; i++)
             {
-                // Only add if not already tracked by local save or discovery
-                if (!qrManager.TrackedQRCodes.ContainsKey(qrManager.GetQRCodeDataAsJson(demoPayloads[i]))) // Wait, I need to check the identifier key
-                {
-                    // UpdateQRCodeFromRemote handles the identifier key logic internally
-                    qrManager.UpdateQRCodeFromRemote(demoPayloads[i], demoOffsets[i], Quaternion.identity);
-                }
+                qrManager.UpdateQRCodeFromRemote(demoPayloads[i], demoOffsets[i], Quaternion.identity);
             }
-        }
-
-        public void GenerateQRGameObjects()
-        {
-            if (roomAnchorObject == null) return;
-            foreach (var item in generatedQRTransforms.Values) if (item != null) Destroy(item.gameObject);
-            generatedQRTransforms.Clear();
-
-            foreach (var kvp in qrManager.TrackedQRCodes)
-            {
-                QrCodeManager.QRCodeInstance qr = kvp.Value;
-                if (qr.fullPayload.Contains(qrManager.qrRoomAnchorLabel)) continue;
-
-                GameObject qrObj = new GameObject($"QR_{qr.identifierKey}");
-                qrObj.transform.SetParent(roomAnchorObject.transform);
-                qrObj.transform.position = qr.lastPosition;
-                qrObj.transform.rotation = qr.lastRotation;
-                generatedQRTransforms[qr.identifierKey] = qrObj.transform;
-            }
-
-            if (uiManager != null) uiManager.RefreshQRCodeDropdown();
         }
 
         public void PointToQRCode(QrCodeManager.QRCodeInstance qr)
         {
-            // Allow pointing to ANY tracked QR, even during initialization for verification
-            if (generatedQRTransforms.TryGetValue(qr.identifierKey, out var target))
+            if (qr.visualObject != null)
             {
-                statusUI?.HighlightTarget(target);
-                statusUI?.ShowMessage($"Pointing to: {qr.identifierKey}", qr.fullPayload);
-            }
-            else if (qr.visualObject != null)
-            {
-                // Fallback to the visual object's transform if no generated transform yet
                 statusUI?.HighlightTarget(qr.visualObject.transform);
                 statusUI?.ShowMessage($"Pointing to: {qr.identifierKey}", qr.fullPayload);
             }
@@ -309,38 +257,18 @@ namespace TEVR
 
         private void OnQRCodeAddedNormal(QrCodeManager.QRCodeInstance qr)
         {
-            if (qr.fullPayload.Contains(qrManager.qrRoomAnchorLabel)) return;
-            if (roomAnchorObject != null)
-            {
-                GameObject qrObj = new GameObject($"QR_{qr.identifierKey}");
-                qrObj.transform.SetParent(roomAnchorObject.transform);
-                qrObj.transform.position = qr.lastPosition;
-                qrObj.transform.rotation = qr.lastRotation;
-                generatedQRTransforms[qr.identifierKey] = qrObj.transform;
-            }
             uiManager?.AddQRListItem(qr);
             uiManager?.RefreshQRCodeDropdown();
         }
 
         private void OnQRCodeUpdatedNormal(QrCodeManager.QRCodeInstance qr)
         {
-            if (qr.fullPayload.Contains(qrManager.qrRoomAnchorLabel)) return;
-            if (generatedQRTransforms.TryGetValue(qr.identifierKey, out var trans))
-            {
-                trans.position = qr.lastPosition;
-                trans.rotation = qr.lastRotation;
-            }
             uiManager?.UpdateQRListItem(qr);
             uiManager?.RefreshQRCodeDropdown();
         }
 
         private void OnQRCodeRemovedNormal(string identifierKey)
         {
-            if (generatedQRTransforms.TryGetValue(identifierKey, out var trans))
-            {
-                Destroy(trans.gameObject);
-                generatedQRTransforms.Remove(identifierKey);
-            }
             uiManager?.RemoveQRListItem(identifierKey);
             uiManager?.RefreshQRCodeDropdown();
         }

@@ -294,6 +294,9 @@ namespace TEVR
 
         private GameObject CreateVisualObject(string payload, Vector3 position, Quaternion rotation, QRStatus status, Vector3 scale)
         {
+            GameObject root = new GameObject($"QR_Instance_{payload.GetHashCode()}");
+            root.transform.SetPositionAndRotation(position, rotation);
+
             GameObject prefabToUse = null;
             foreach (var action in payloadActions)
             {
@@ -305,24 +308,23 @@ namespace TEVR
                 }
             }
 
-            GameObject root = new GameObject($"QR_Instance_{payload.GetHashCode()}");
-            root.transform.SetPositionAndRotation(position, rotation);
-
             if (prefabToUse != null)
             {
-                Instantiate(prefabToUse, root.transform);
+                var instantiated = Instantiate(prefabToUse, root.transform);
+                instantiated.transform.localPosition = Vector3.zero;
+                instantiated.transform.localRotation = Quaternion.identity;
             }
-            else
-            {
-                CreateDefaultVisualization(root, payload, status, scale);
-            }
+
+            // Always add the standard visualization (border, label, sphere) even if a prefab is used
+            CreateDefaultVisualization(root, payload, status, scale);
+            
             return root;
         }
 
         private void CreateDefaultVisualization(GameObject root, string payload, QRStatus status, Vector3 scale)
         {
             Color baseColor = status == QRStatus.Official ? Color.green : Color.yellow; // Official is green, Unknown is yellow
-            string labelPrefix = status == QRStatus.Official ? "" : "[Unknown] ";
+            string labelPrefix = status == QRStatus.Official ? "[Legit] " : "[Unknown] ";
 
             // Background Plane
             GameObject bg = GameObject.CreatePrimitive(PrimitiveType.Cube);
@@ -348,7 +350,7 @@ namespace TEVR
             GameObject sphere = GameObject.CreatePrimitive(PrimitiveType.Sphere);
             sphere.name = "DebugCenter";
             sphere.transform.SetParent(root.transform);
-            sphere.transform.localScale = new Vector3(0.02f, 0.02f, 0.02f);
+            sphere.transform.localScale = new Vector3(0.015f, 0.015f, 0.015f);
             sphere.transform.localPosition = Vector3.zero;
             if (sphere.TryGetComponent<Collider>(out var sCol)) Destroy(sphere.GetComponent<Collider>());
             var sRenderer = sphere.GetComponent<Renderer>();
@@ -357,20 +359,20 @@ namespace TEVR
 
             // Add Pulse Effect for visibility
             var pulse = bg.AddComponent<QRPulseEffect>();
-pulse.targetColor = baseColor;
+            pulse.targetColor = baseColor;
 
-            // Text Label
+            // Text Label - Correctly aligned with the QR code plane
             GameObject textObj = new GameObject("PayloadLabel");
             textObj.transform.SetParent(root.transform);
-            textObj.transform.localPosition = new Vector3(0, 0, -0.01f); // Offset forward to avoid Z-fighting
+            textObj.transform.localPosition = new Vector3(0, 0, -0.015f); // Offset forward to avoid Z-fighting
             textObj.transform.localRotation = Quaternion.identity;
 
             var tmp = textObj.AddComponent<TextMeshPro>();
             tmp.text = $"{labelPrefix}{payload}";
-            tmp.fontSize = 0.12f;
+            tmp.fontSize = 0.15f;
             tmp.alignment = TextAlignmentOptions.Center;
             tmp.color = Color.white;
-            tmp.rectTransform.sizeDelta = new Vector2(scale.x * 2.0f, scale.y * 2.0f); // Larger bounding box
+            tmp.rectTransform.sizeDelta = new Vector2(scale.x * 3.0f, scale.y * 3.0f); // Larger bounding box
             tmp.enableAutoSizing = true;
             tmp.fontSizeMin = 0.05f;
             tmp.fontSizeMax = 0.5f;
