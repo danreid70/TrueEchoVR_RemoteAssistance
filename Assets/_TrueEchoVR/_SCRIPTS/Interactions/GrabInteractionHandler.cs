@@ -2,11 +2,11 @@ using UnityEngine;
 using UnityEngine.XR.Interaction.Toolkit;
 using UnityEngine.XR.Interaction.Toolkit.Interactables;
 
-namespace TrueEchoVR
+namespace TEVR
 {
 
     [RequireComponent(typeof(XRBaseInteractable))]
-    public class GrabHandler : InteractionHandler
+    public class GrabInteractionHandler : BaseInteractionHandler
     {
         private XRBaseInteractable grabInteractable;
 

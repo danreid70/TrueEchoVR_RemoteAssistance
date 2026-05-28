@@ -2,11 +2,11 @@ using UnityEngine;
 using UnityEngine.XR.Interaction.Toolkit;
 using UnityEngine.XR.Interaction.Toolkit.Interactables;
 
-namespace TrueEchoVR
+namespace TEVR
 {
 
     [RequireComponent(typeof(XRSimpleInteractable))]
-    public class ButtonPressHandler : InteractionHandler
+    public class ButtonInteractionHandler : BaseInteractionHandler
     {
         private XRSimpleInteractable simpleInteractable;
 

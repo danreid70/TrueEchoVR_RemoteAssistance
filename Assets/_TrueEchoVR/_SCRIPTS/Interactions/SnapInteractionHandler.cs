@@ -2,11 +2,11 @@ using UnityEngine;
 using UnityEngine.XR.Interaction.Toolkit;
 using UnityEngine.XR.Interaction.Toolkit.Interactors;
 
-namespace TrueEchoVR
+namespace TEVR
 {
 
     [RequireComponent(typeof(XRSocketInteractor))]
-    public class SnapHandler : InteractionHandler
+    public class SnapInteractionHandler : BaseInteractionHandler
     {
         private XRSocketInteractor socketInteractor;
 

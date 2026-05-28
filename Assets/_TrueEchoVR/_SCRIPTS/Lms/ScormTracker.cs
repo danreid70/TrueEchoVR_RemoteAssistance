@@ -1,10 +1,10 @@
 using System.Runtime.InteropServices;
 using UnityEngine;
 
-namespace TrueEchoVR
+namespace TEVR
 {
 
-    public class ScormTracker : LmsTracker
+    public class ScormTracker : BaseLmsTracker
     {
         // SCORM JavaScript bridge (WebGL builds)
         #if UNITY_WEBGL && !UNITY_EDITOR

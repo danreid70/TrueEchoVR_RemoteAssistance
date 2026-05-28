@@ -1,6 +1,6 @@
 using UnityEngine;
 
-namespace TrueEchoVR
+namespace TEVR
 {
 
     /// <summary>
@@ -8,7 +8,7 @@ namespace TrueEchoVR
     /// Calls TaskManager.Current.TryCompleteWithObject(gameObject) by default.
     /// Also supports an optional linkedStepId for manual fallback.
     /// </summary>
-    public abstract class InteractionHandler : MonoBehaviour
+    public abstract class BaseInteractionHandler : MonoBehaviour
     {
         [Tooltip("Optional: fallback step ID. Leave empty to use the object itself as the target match.")]
         [SerializeField] protected string linkedStepId;

@@ -3,9 +3,9 @@ using UnityEngine.UI;
 using TMPro;
 using System.Collections.Generic;
 
-namespace TrueEchoVR
+namespace TEVR
 {
-    public class TroubleshootingSessionUIManager : MonoBehaviour
+    public class SessionUiController : MonoBehaviour
     {
         [Header("UI References (assign in Inspector)")]
         public GameObject sessionUIPanel;
@@ -14,11 +14,14 @@ namespace TrueEchoVR
 
         public TMP_InputField roomCodeInput;
         public Button joinButton;
-        public TMP_Text joinStatusText;
+        public TMP_Text joinButtonText; // Reference to button's label
+        public TMP_Text joinStatusText; // Status message in Join Panel
+        public TMP_Text sessionStatusText; // Status message in Session Panel
 
         public TMP_Text connectionStatusText;
+        public TMP_Text latencyText;
         public RawImage localVideoImage;
-        public RawImage remoteVideoImage;
+public RawImage remoteVideoImage;
         public Button toggleDetectionButton;
         public TMP_Text toggleDetectionButtonText;
         public Button pushQRButton;
@@ -37,8 +40,11 @@ namespace TrueEchoVR
         public Button sendButton;
         public Button leaveButton;
 
+        [Header("Stream Placeholders")]
+        public Texture2D noSignalTexture;
+
         [Header("Positioning (Tag-along)")]
-        [SerializeField] private float forwardDistance = 1.2f;
+[SerializeField] private float forwardDistance = 1.2f;
         [SerializeField] private float rightOffset = 0.4f;
         [SerializeField] private float verticalOffset = 0.15f;
         [SerializeField] private float smoothTime = 0.25f;
@@ -46,37 +52,37 @@ namespace TrueEchoVR
         [SerializeField] private float viewportMargin = 0.15f; 
         [SerializeField] private float collisionOffset = 0.1f;
 
-        public TroubleshootingStreamingManager streamingManager;
-        public QRCodeManager qrManager;
-        public MainVRHUDUI statusUI;
-        public TroubleshootingSessionInitialization sessionInit;
+        public SignalingManager webAppManager;
+        public QrCodeManager qrManager;
+        public VrHudController statusUI;
+        public SessionFlowManager sessionInit;
 
         private Transform camTransform;
         private Vector3 velocity = Vector3.zero;
         private bool isCatchingUp = false;
         private string chatHistory = "";
         private Dictionary<string, GameObject> qrListItems = new Dictionary<string, GameObject>();
-        private List<QRCodeManager.QRCodeInstance> qrCodeList = new List<QRCodeManager.QRCodeInstance>();
+        private List<QrCodeManager.QRCodeInstance> qrCodeList = new List<QrCodeManager.QRCodeInstance>();
         private Transform panelTransform;
 
         private void Start()
         {
-            if (streamingManager == null) streamingManager = GetComponent<TroubleshootingStreamingManager>();
-            if (qrManager == null) qrManager = GetComponent<QRCodeManager>();
-            if (statusUI == null) statusUI = GetComponent<MainVRHUDUI>();
-            if (sessionInit == null) sessionInit = GetComponent<TroubleshootingSessionInitialization>();
+            if (webAppManager == null) webAppManager = SignalingManager.Instance;
+            if (qrManager == null) qrManager = GetComponent<QrCodeManager>();
+            if (statusUI == null) statusUI = GetComponent<VrHudController>();
+            if (sessionInit == null) sessionInit = GetComponent<SessionFlowManager>();
 
             camTransform = Camera.main?.transform;
             if (camTransform == null)
             {
-                Debug.LogError("[TroubleshootingSessionUIManager] No main camera found.");
+                Debug.LogError("[SessionUiController] No main camera found.");
                 enabled = false;
                 return;
             }
 
             if (sessionUIPanel == null)
             {
-                Debug.LogError("[TroubleshootingSessionUIManager] No sessionUIPanel assigned.");
+                Debug.LogError("[SessionUiController] No sessionUIPanel assigned.");
                 enabled = false;
                 return;
             }
@@ -92,37 +98,90 @@ namespace TrueEchoVR
             if (pullQRButton != null) pullQRButton.onClick.AddListener(OnPullQRPressed);
             if (qrCodeDropdown != null) qrCodeDropdown.onValueChanged.AddListener(OnQRCodeSelected);
 
-            if (streamingManager != null)
+            // Set placeholders
+            if (noSignalTexture != null)
             {
-                streamingManager.OnConnected += OnConnected;
-                streamingManager.OnDisconnected += OnDisconnected;
-                streamingManager.OnChatMessageReceived += OnChatReceived;
-                streamingManager.OnRemoteStreamStarted += (tex) => { 
+                if (localVideoImage != null) localVideoImage.texture = noSignalTexture;
+                if (remoteVideoImage != null) remoteVideoImage.texture = noSignalTexture;
+            }
+
+            if (webAppManager != null)
+            {
+                webAppManager.OnConnected += OnConnected;
+webAppManager.OnDisconnected += OnDisconnected;
+                webAppManager.OnChatMessageReceived += OnChatReceived;
+                webAppManager.OnRemoteStreamStarted += (tex) => { 
                     if (remoteVideoImage != null) {
                         remoteVideoImage.texture = tex;
                     }
                 };
-                streamingManager.OnLocalStreamStarted += (tex) => { if (localVideoImage != null) localVideoImage.texture = tex; };
-                streamingManager.OnQRCodesPulled += OnQRCodesPulled;
-                streamingManager.OnConnectionError += (err) => AppendChatMessage($"<color=red>Error: {err}</color>");
+                webAppManager.OnLocalStreamStarted += (tex) => { 
+                    if (localVideoImage != null) {
+                        localVideoImage.texture = tex;
+                        localVideoImage.color = Color.white; // Ensure visibility
+                    }
+                };
+webAppManager.OnQRCodesPulled += OnQRCodesPulled;
+                webAppManager.OnConnectionError += (err) => {
+                    if (joinStatusText != null) joinStatusText.text = $"<color=red>Error: {err}</color>";
+                    if (joinButtonText != null) joinButtonText.text = "Try Again";
+                    if (joinButton != null) joinButton.interactable = true;
+                    AppendChatMessage($"<color=red>Error: {err}</color>");
+                };
             }
 
             if (qrManager != null)
             {
-                qrManager.OnQRCodeAdded += (qr) => AppendChatMessage($"[QR Added] {GetColoredPayload(qr)}");
+                qrManager.OnQRCodeAdded += (qr) => {
+                    AppendChatMessage($"[QR Added] {GetColoredPayload(qr)}");
+                    RefreshQRCodeDropdown();
+                };
                 qrManager.OnQRCodeUpdated += (qr) => AppendChatMessage($"[QR Updated] {GetColoredPayload(qr)}");
-                qrManager.OnQRCodeRemoved += (key) => AppendChatMessage($"[QR Removed] {key}");
-                qrManager.OnRoomAnchorDiscovered += (qr) => AppendChatMessage($"[Anchor Discovered] <color=green>{qr.fullPayload}</color>");
+                qrManager.OnQRCodeRemoved += (key) => {
+                    AppendChatMessage($"[QR Removed] {key}");
+                    RefreshQRCodeDropdown();
+                };
+                qrManager.OnRoomAnchorDiscovered += (qr) => {
+                    AppendChatMessage($"[Anchor Discovered] <color=green>{qr.fullPayload}</color>");
+                    // If we were waiting for calibration, reset the join button
+                    if (joinButtonText != null && joinButtonText.text.Contains("Calibration"))
+                    {
+                        joinButtonText.text = "Connect";
+                        if (joinButton != null) joinButton.interactable = true;
+                    }
+                };
             }
 
-            // Initial placement
             panelTransform.position = ComputeOptimalHUDPosition();
             panelTransform.rotation = ComputeTargetRotation();
+
+            // Clear the placeholder [xxx] text
+            if (joinStatusText != null) joinStatusText.text = "";
+            if (sessionStatusText != null) sessionStatusText.text = "";
+
+            // Ensure video images are black if no texture is assigned
+            if (localVideoImage != null && localVideoImage.texture == null) localVideoImage.color = Color.black;
+            if (remoteVideoImage != null && remoteVideoImage.texture == null) remoteVideoImage.color = Color.black;
+
+            // Check initial calibration state
+            if (sessionInit != null && !sessionInit.InitializationComplete)
+            {
+                if (joinButtonText != null) joinButtonText.text = "Waiting for Calibration...";
+                if (joinButton != null) joinButton.interactable = false;
+            }
+
+            AppendChatMessage("<color=green>[System]</color> Session UI Initialized.");
+            LogAllQRCodesToChat();
+
+            if (webAppManager != null)
+            {
+                webAppManager.StartLocalPreview();
+            }
         }
 
-        private string GetColoredPayload(QRCodeManager.QRCodeInstance qr)
+        private string GetColoredPayload(QrCodeManager.QRCodeInstance qr)
         {
-            string color = qr.status == QRCodeManager.QRStatus.Official ? "#00FF00" : "#FF0000";
+            string color = qr.status == QrCodeManager.QRStatus.Official ? "#00FF00" : "#FF0000";
             return $"<color={color}>{qr.fullPayload}</color>";
         }
 
@@ -141,85 +200,135 @@ namespace TrueEchoVR
         {
             if (camTransform == null || sessionUIPanel == null || sessionInit == null) return;
             
-            // 1. Check if UI is currently in a visible "Safe Zone" in the viewport
+            // Check if the current camera is still valid
+            if (Camera.main != null && camTransform != Camera.main.transform)
+            {
+                camTransform = Camera.main.transform;
+            }
+
             Vector3 viewportPos = Camera.main.WorldToViewportPoint(panelTransform.position);
             bool isVisible = viewportPos.z > 0 && 
                              viewportPos.x > viewportMargin && viewportPos.x < (1 - viewportMargin) && 
                              viewportPos.y > viewportMargin && viewportPos.y < (1 - viewportMargin);
 
-            // 2. Trigger catch-up if not visible
             if (!isVisible) isCatchingUp = true;
 
-            // 3. Move UI toward the optimal HUD spot
             if (isCatchingUp)
             {
                 Vector3 targetPos = ComputeOptimalHUDPosition();
                 
-                // --- Raycast Avoidance ---
-                // Cast from eyes to the desired HUD position
+                // Safety check for NaN or Infinity
+                if (!float.IsFinite(targetPos.x) || !float.IsFinite(targetPos.y) || !float.IsFinite(targetPos.z))
+                {
+                    return;
+                }
+
                 Vector3 direction = (targetPos - camTransform.position).normalized;
                 float maxDist = Vector3.Distance(camTransform.position, targetPos);
                 
-                if (Physics.Raycast(camTransform.position, direction, out RaycastHit hit, maxDist))
+                if (direction.sqrMagnitude > 0.001f && Physics.Raycast(camTransform.position, direction, out RaycastHit hit, maxDist))
                 {
-                    // If we hit an object (VR training part, etc), place UI in front of it
                     targetPos = hit.point - (direction * collisionOffset);
                 }
 
                 panelTransform.position = Vector3.SmoothDamp(panelTransform.position, targetPos, ref velocity, smoothTime);
 
-                // Stop catching up when we are close and visible again
                 if (Vector3.Distance(panelTransform.position, targetPos) < 0.05f && isVisible)
                 {
                     isCatchingUp = false;
                 }
             }
 
-            // 4. Always rotate to face the user (Billboard effect)
-            panelTransform.rotation = Quaternion.Slerp(panelTransform.rotation, ComputeTargetRotation(), rotationSpeed * Time.deltaTime);
+            // Fixed Rotation: Lock to Yaw (Y-axis) only to prevent twisting
+            Quaternion targetRot = ComputeTargetRotation();
+            if (float.IsFinite(targetRot.x))
+            {
+                panelTransform.rotation = Quaternion.Slerp(panelTransform.rotation, targetRot, rotationSpeed * Time.deltaTime);
+            }
+
+            // Update Latency Display
+            if (webAppManager != null && webAppManager.IsConnected)
+            {
+                if (latencyText != null)
+                {
+                    float lat = webAppManager.currentLatency;
+                    string color = lat < 100 ? "#00FF00" : (lat < 250 ? "#FFFF00" : "#FF0000");
+                    latencyText.text = $"Ping: <color={color}>{lat:F0}ms</color>";
+                }
+            }
+            else if (latencyText != null)
+            {
+                latencyText.text = "";
+            }
         }
 
         private Vector3 ComputeOptimalHUDPosition()
         {
-            // Positioned relative to the camera view
+            // Calculate flattened forward/right to prevent the panel from 'pitching' or 'rolling' with the head
+            Vector3 flatForward = camTransform.forward;
+            flatForward.y = 0;
+            if (flatForward.sqrMagnitude < 0.001f) flatForward = Vector3.ProjectOnPlane(camTransform.up, Vector3.up).normalized;
+            else flatForward.Normalize();
+
+            Vector3 flatRight = Vector3.Cross(Vector3.up, flatForward);
+            
             return camTransform.position
-                   + camTransform.forward * forwardDistance
-                   + camTransform.right * rightOffset
-                   + camTransform.up * verticalOffset;
+                   + flatForward * forwardDistance
+                   + flatRight * rightOffset
+                   + Vector3.up * verticalOffset;
         }
 
         private Quaternion ComputeTargetRotation()
         {
-            // Rotate to face the camera directly
-            Vector3 toCam = camTransform.position - panelTransform.position;
-            if (toCam == Vector3.zero) return Quaternion.identity;
-            return Quaternion.LookRotation(-toCam, Vector3.up);
+            // Calculate a Yaw-only look rotation (looking at the user's horizontal position)
+            Vector3 directionToCamera = camTransform.position - panelTransform.position;
+            directionToCamera.y = 0;
+            
+            if (directionToCamera.sqrMagnitude < 0.001f)
+            {
+                // Fallback: face in the same direction as the camera's flattened forward
+                Vector3 camForward = camTransform.forward;
+                camForward.y = 0;
+                if (camForward.sqrMagnitude < 0.001f) return panelTransform.rotation;
+                return Quaternion.LookRotation(camForward, Vector3.up);
+            }
+            
+            // We want the panel to FACE the camera, so we use -directionToCamera
+            return Quaternion.LookRotation(-directionToCamera, Vector3.up);
         }
 
         private void OnJoinPressed()
         {
             if (!sessionInit.InitializationComplete)
             {
-                if (joinStatusText != null) joinStatusText.text = "Initialization in progress...";
+                if (joinStatusText != null) joinStatusText.text = "<color=yellow>Calibration required. Look at Room Anchor.</color>";
+                if (joinButtonText != null) joinButtonText.text = "Waiting for Calibration...";
+                if (joinButton != null) joinButton.interactable = false;
                 return;
             }
+
             if (string.IsNullOrEmpty(roomCodeInput?.text)) return;
             string code = roomCodeInput.text.ToUpper().Trim();
-            streamingManager?.StartSession(code);
-            ShowSessionScreen();
+            string locationId = locationIdInput != null ? locationIdInput.text : "Unknown";
+            
+            if (joinStatusText != null) joinStatusText.text = "Connecting to server...";
+            if (joinButtonText != null) joinButtonText.text = "Connecting...";
+            if (joinButton != null) joinButton.interactable = false;
+
+            webAppManager?.Login(locationId, code);
         }
 
         private void OnSendChat()
         {
             if (string.IsNullOrEmpty(chatInputField?.text)) return;
-            streamingManager?.SendChatMessage(chatInputField.text);
+            webAppManager?.SendChatMessage(chatInputField.text);
             AppendChatMessage($"You: {chatInputField.text}");
             chatInputField.text = "";
         }
 
         private void OnLeaveSession()
         {
-            streamingManager?.Disconnect();
+            webAppManager?.Disconnect();
             ShowJoinScreen();
         }
 
@@ -227,6 +336,7 @@ namespace TrueEchoVR
         {
             if (connectionStatusText != null) connectionStatusText.text = "Status: LIVE";
             AppendChatMessage("--- Connected ---");
+            ShowSessionScreen();
         }
 
         private void OnDisconnected()
@@ -255,19 +365,20 @@ namespace TrueEchoVR
         {
             qrManager?.ClearQRCodes();
             AppendChatMessage("<color=orange>Cleared all local QR Codes.</color>");
+            RefreshQRCodeDropdown();
         }
 
         private void OnPushQRPressed()
         {
-            if (qrManager == null || streamingManager == null) return;
-            string json = qrManager.GetQRCodeDataAsJson();
-            streamingManager.PushQRCodes(json);
+            if (qrManager == null || webAppManager == null) return;
+            string json = qrManager.GetQRCodeDataAsJson(webAppManager.headsetId);
+            webAppManager.PushQRCodes(json);
             AppendChatMessage("<color=yellow>Pushed local QR Codes to server.</color>");
         }
 
         private void OnPullQRPressed()
         {
-            streamingManager?.PullQRCodes();
+            webAppManager?.PullQRCodes();
             AppendChatMessage("<color=yellow>Requested QR Codes from server.</color>");
         }
 
@@ -279,6 +390,7 @@ namespace TrueEchoVR
                 qrManager.ManualLoadFromJson(json);
                 AppendChatMessage("Successfully synced QR Codes from server.");
                 sessionInit.GenerateQRGameObjects();
+                RefreshQRCodeDropdown();
             }
             catch (System.Exception e)
             {
@@ -289,17 +401,25 @@ namespace TrueEchoVR
         private void OnQRCodeSelected(int index)
         {
             if (!sessionInit.InitializationComplete) return;
-            if (index < 0 || index >= qrCodeList.Count) return;
-            var selectedQR = qrCodeList[index];
+            
+            if (index == 0)
+            {
+                statusUI?.ClearHighlight();
+                statusUI?.ShowMessage("", ""); // Clear HUD message
+                return;
+            }
+
+            int qrIndex = index - 1;
+            if (qrIndex < 0 || qrIndex >= qrCodeList.Count) return;
+            
+            var selectedQR = qrCodeList[qrIndex];
             if (selectedQR != null)
             {
-                string displayName = !string.IsNullOrEmpty(selectedQR.identifierKey) ? selectedQR.identifierKey : selectedQR.fullPayload;
-                statusUI?.ShowMessage($"Selected QR: {displayName}", $"Payload: {selectedQR.fullPayload}");
                 sessionInit.PointToQRCode(selectedQR);
             }
         }
 
-        private void AppendChatMessage(string msg)
+        public void AppendChatMessage(string msg)
         {
             chatHistory += $"{msg}\n";
             if (chatDisplayText != null) chatDisplayText.text = chatHistory;
@@ -315,6 +435,11 @@ namespace TrueEchoVR
             if (joinPanel != null) joinPanel.SetActive(true);
             if (sessionPanel != null) sessionPanel.SetActive(false);
             if (statusUI != null) statusUI.ClearHighlight();
+
+            // Reset Join Screen state
+            if (joinButtonText != null) joinButtonText.text = "Connect";
+            if (joinButton != null) joinButton.interactable = true;
+            if (joinStatusText != null) joinStatusText.text = "";
         }
 
         public void ShowSessionScreen()
@@ -327,12 +452,15 @@ namespace TrueEchoVR
         {
             if (qrCodeDropdown == null) return;
             qrCodeDropdown.ClearOptions();
+            
             List<TMP_Dropdown.OptionData> options = new List<TMP_Dropdown.OptionData>();
+            options.Add(new TMP_Dropdown.OptionData("Stop Pointing"));
+            
             qrCodeList.Clear();
             foreach (var kvp in qrManager.TrackedQRCodes)
             {
                 if (kvp.Value.fullPayload.Contains("RoomAnchor")) continue;
-                QRCodeManager.QRCodeInstance qr = kvp.Value;
+                QrCodeManager.QRCodeInstance qr = kvp.Value;
                 qrCodeList.Add(qr);
                 string displayName = !string.IsNullOrEmpty(qr.identifierKey) ? qr.identifierKey : qr.fullPayload;
                 if (displayName.Length > 30) displayName = displayName.Substring(0, 27) + "...";
@@ -341,7 +469,7 @@ namespace TrueEchoVR
             qrCodeDropdown.AddOptions(options);
         }
 
-        public void AddQRListItem(QRCodeManager.QRCodeInstance qr)
+        public void AddQRListItem(QrCodeManager.QRCodeInstance qr)
         {
             if (qrListContent == null || qrListItemPrefab == null) return;
             if (qrListItems.ContainsKey(qr.identifierKey)) return;
@@ -353,7 +481,7 @@ namespace TrueEchoVR
             qrListItems[qr.identifierKey] = item;
         }
 
-        public void UpdateQRListItem(QRCodeManager.QRCodeInstance qr)
+        public void UpdateQRListItem(QrCodeManager.QRCodeInstance qr)
         {
             if (qrListItems.TryGetValue(qr.identifierKey, out var item))
             {
@@ -374,12 +502,12 @@ namespace TrueEchoVR
 
         private void OnDestroy()
         {
-            if (streamingManager != null)
+            if (webAppManager != null)
             {
-                streamingManager.OnConnected -= OnConnected;
-                streamingManager.OnDisconnected -= OnDisconnected;
-                streamingManager.OnChatMessageReceived -= OnChatReceived;
-                streamingManager.OnQRCodesPulled -= OnQRCodesPulled;
+                webAppManager.OnConnected -= OnConnected;
+                webAppManager.OnDisconnected -= OnDisconnected;
+                webAppManager.OnChatMessageReceived -= OnChatReceived;
+                webAppManager.OnQRCodesPulled -= OnQRCodesPulled;
             }
         }
     }

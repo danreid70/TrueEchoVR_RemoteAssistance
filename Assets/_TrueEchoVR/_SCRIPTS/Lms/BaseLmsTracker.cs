@@ -1,9 +1,9 @@
 using UnityEngine;
 
-namespace TrueEchoVR
+namespace TEVR
 {
 
-    public abstract class LmsTracker : MonoBehaviour
+    public abstract class BaseLmsTracker : MonoBehaviour
     {
         public abstract void Initialize();
         public abstract void LogProgress(string stepId, bool completed, float timestamp);

@@ -2,9 +2,9 @@ using System.Collections;
 using UnityEngine;
 using UnityEngine.Networking;
 
-namespace TrueEchoVR
+namespace TEVR
 {
-    public class XApiTracker : LmsTracker
+    public class XApiTracker : BaseLmsTracker
     {
         [SerializeField] private string lrsEndpoint = "https://lrs.example.com/data/xAPI";
         [SerializeField] private string authToken = "";

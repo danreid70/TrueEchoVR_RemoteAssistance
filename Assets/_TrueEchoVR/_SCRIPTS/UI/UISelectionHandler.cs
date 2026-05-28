@@ -1,11 +1,11 @@
 using UnityEngine;
 using UnityEngine.UI;
 
-namespace TrueEchoVR
+namespace TEVR
 {
 
     [RequireComponent(typeof(Button))]
-    public class UISelectionHandler : InteractionHandler
+    public class UiSelectionHandler : BaseInteractionHandler
     {
         private Button uiButton;
 

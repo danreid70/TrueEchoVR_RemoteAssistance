@@ -1,7 +1,7 @@
 using System.Collections.Generic;
 using UnityEngine;
 
-namespace TrueEchoVR
+namespace TEVR
 {
 
     [CreateAssetMenu(fileName = "NewGameEvent", menuName = "Training/Game Event")]

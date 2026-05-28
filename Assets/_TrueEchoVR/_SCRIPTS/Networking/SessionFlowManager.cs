@@ -2,16 +2,16 @@ using UnityEngine;
 using System.Collections;
 using System.Collections.Generic;
 
-namespace TrueEchoVR
+namespace TEVR
 {
-    public class TroubleshootingSessionInitialization : MonoBehaviour
+    public class SessionFlowManager : MonoBehaviour
     {
         [Header("References (assign manually)")]
         public Transform xrOrigin;
-        public QRCodeManager qrManager;
-        public MainVRHUDUI statusUI;
-        public TroubleshootingSessionUIManager uiManager;
-        public TroubleshootingStreamingManager streamingManager;
+        public QrCodeManager qrManager;
+        public VrHudController statusUI;
+        public SessionUiController uiManager;
+        public SignalingManager webAppManager;
 
         [Header("Settings")]
         public float pullTimeoutSeconds = 5f;
@@ -24,10 +24,10 @@ namespace TrueEchoVR
 
         private void Start()
         {
-            if (qrManager == null) qrManager = GetComponent<QRCodeManager>();
-            if (statusUI == null) statusUI = GetComponent<MainVRHUDUI>();
-            if (uiManager == null) uiManager = GetComponent<TroubleshootingSessionUIManager>();
-            if (streamingManager == null) streamingManager = GetComponent<TroubleshootingStreamingManager>();
+            if (qrManager == null) qrManager = GetComponent<QrCodeManager>();
+            if (statusUI == null) statusUI = GetComponent<VrHudController>();
+            if (uiManager == null) uiManager = GetComponent<SessionUiController>();
+            if (webAppManager == null) webAppManager = SignalingManager.Instance;
             
             if (xrOrigin == null)
             {
@@ -36,15 +36,25 @@ namespace TrueEchoVR
                 return;
             }
 
+            // Create a root for world-synced objects
+            if (roomAnchorObject == null)
+            {
+                roomAnchorObject = new GameObject("TEVR_RoomAnchor_Root");
+            }
+
+            // Remove CharacterController as locomotion is physical via Passthrough
+            CharacterController cc = xrOrigin.GetComponent<CharacterController>();
+            if (cc != null) Destroy(cc);
+
             if (qrManager != null)
             {
                 qrManager.SetAnchorEstablished(false);
                 qrManager.OnRoomAnchorDiscovered += OnRoomAnchorDiscovered;
             }
 
-            if (streamingManager != null)
+            if (webAppManager != null)
             {
-                streamingManager.OnPointToReceived += OnRemotePointToReceived;
+                webAppManager.OnPointToReceived += OnRemotePointToReceived;
             }
 
             StartCoroutine(InitializationPhase());
@@ -68,14 +78,17 @@ namespace TrueEchoVR
             isInitializing = true;
             InitializationComplete = false;
 
+            string initMsg = "Look at the Room Anchor marker in the room to begin.";
             if (statusUI != null)
-                statusUI.ShowMessage($"To begin, please look at the '{qrManager.qrRoomAnchorLabel}' QR code.", "Calibration required.");
+                statusUI.ShowMessage(initMsg, "Calibration required.", true);
+            
+            uiManager?.AppendChatMessage($"<color=cyan>[Init]</color> {initMsg}");
 
             while (isInitializing)
                 yield return null;
         }
 
-        private void OnRoomAnchorDiscovered(QRCodeManager.QRCodeInstance anchor)
+        private void OnRoomAnchorDiscovered(QrCodeManager.QRCodeInstance anchor)
         {
             if (!isInitializing)
             {
@@ -89,11 +102,17 @@ namespace TrueEchoVR
             }
 
             Debug.Log($"[SessionInitialization] RoomAnchor detected: {anchor.fullPayload}");
+            uiManager?.AppendChatMessage($"<color=green>[Init]</color> RoomAnchor detected: {anchor.fullPayload}");
+            
+            // Clear the persistent "Look at Room Anchor" message immediately
+            if (statusUI != null)
+                statusUI.ShowMessage("", ""); 
+
             CalibrateOriginToAnchor(anchor);
             StartCoroutine(CompleteInitializationAfterAnchor());
         }
 
-        private void CalibrateOriginToAnchor(QRCodeManager.QRCodeInstance anchor)
+        private void CalibrateOriginToAnchor(QrCodeManager.QRCodeInstance anchor)
         {
             if (xrOrigin == null) return;
 
@@ -110,7 +129,9 @@ namespace TrueEchoVR
             float yRotationOffset = -qrWorldRot.eulerAngles.y;
             xrOrigin.RotateAround(Vector3.zero, Vector3.up, yRotationOffset);
 
-            Debug.Log($"[Calibration] Rig aligned to anchor. QR is now at {anchor.visualObject.transform.position}");
+            string calMsg = $"Rig aligned to anchor. QR is now at {anchor.visualObject.transform.position}";
+            Debug.Log($"[Calibration] {calMsg}");
+            uiManager?.AppendChatMessage($"<color=green>[Init]</color> {calMsg}");
             
             // Fire event for UI logging
             uiManager?.LogAllQRCodesToChat();
@@ -121,15 +142,30 @@ namespace TrueEchoVR
             isInitializing = false;
             qrManager.SetAnchorEstablished(true);
 
+            string syncMsg = "Anchor established. Syncing with cloud...";
             if (statusUI != null)
-                statusUI.ShowMessage("Anchor established. Syncing with cloud...", "Please wait.");
+                statusUI.ShowMessage(syncMsg, "Please wait.");
+            
+            uiManager?.AppendChatMessage($"<color=cyan>[Init]</color> {syncMsg}");
+
+            // Future-proofing: Sync startup data (dictionary + spatial)
+            if (webAppManager != null)
+            {
+                webAppManager.FetchStartupData((json) => {
+                    Debug.Log("[SessionInitialization] Received startup data from server.");
+                    // Process startup data if needed (e.g. update dictionary)
+                });
+            }
 
             yield return StartCoroutine(LoadAndMergeQRCodes());
 
             InitializationComplete = true;
+            string readyMsg = "System Ready. You can now join a session.";
             if (statusUI != null)
                 statusUI.ShowMessage("System Ready", "You can now join a session.");
             
+            uiManager?.AppendChatMessage($"<color=green>[Init]</color> {readyMsg}");
+
             if (uiManager != null)
                 uiManager.ShowJoinScreen();
 
@@ -141,19 +177,21 @@ namespace TrueEchoVR
 
         private IEnumerator LoadAndMergeQRCodes()
         {
+            uiManager?.AppendChatMessage("<color=cyan>[Init]</color> Loading local QR codes...");
             qrManager.ManualLoad();
             
             bool pullSuccess = false;
-            if (streamingManager != null)
+            if (webAppManager != null)
             {
+                uiManager?.AppendChatMessage("<color=cyan>[Init]</color> Requesting remote QR codes...");
                 System.Action<string> pullCallback = null;
                 pullCallback = (json) => {
                     qrManager.ManualLoadFromJson(json);
                     pullSuccess = true;
-                    streamingManager.OnQRCodesPulled -= pullCallback;
+                    webAppManager.OnQRCodesPulled -= pullCallback;
                 };
-                streamingManager.OnQRCodesPulled += pullCallback;
-                streamingManager.PullQRCodes();
+                webAppManager.OnQRCodesPulled += pullCallback;
+                webAppManager.PullQRCodes();
 
                 float start = Time.time;
                 while (!pullSuccess && Time.time - start < pullTimeoutSeconds)
@@ -161,9 +199,15 @@ namespace TrueEchoVR
             }
 
             if (pullSuccess)
+            {
                 Debug.Log("[SessionInitialization] Remote sync complete.");
+                uiManager?.AppendChatMessage("<color=green>[Init]</color> Remote sync complete.");
+            }
             else
+            {
                 Debug.LogWarning("[SessionInitialization] Remote sync failed/timed out. Using local data.");
+                uiManager?.AppendChatMessage("<color=yellow>[Init]</color> Remote sync timed out. Using local data.");
+            }
             
             GenerateQRGameObjects();
         }
@@ -176,7 +220,7 @@ namespace TrueEchoVR
 
             foreach (var kvp in qrManager.TrackedQRCodes)
             {
-                QRCodeManager.QRCodeInstance qr = kvp.Value;
+                QrCodeManager.QRCodeInstance qr = kvp.Value;
                 if (qr.fullPayload.Contains(qrManager.qrRoomAnchorLabel)) continue;
 
                 GameObject qrObj = new GameObject($"QR_{qr.identifierKey}");
@@ -189,7 +233,7 @@ namespace TrueEchoVR
             if (uiManager != null) uiManager.RefreshQRCodeDropdown();
         }
 
-        public void PointToQRCode(QRCodeManager.QRCodeInstance qr)
+        public void PointToQRCode(QrCodeManager.QRCodeInstance qr)
         {
             if (!InitializationComplete) return;
             if (generatedQRTransforms.TryGetValue(qr.identifierKey, out var target))
@@ -199,7 +243,7 @@ namespace TrueEchoVR
             }
         }
 
-        private void OnQRCodeAddedNormal(QRCodeManager.QRCodeInstance qr)
+        private void OnQRCodeAddedNormal(QrCodeManager.QRCodeInstance qr)
         {
             if (qr.fullPayload.Contains(qrManager.qrRoomAnchorLabel)) return;
             if (roomAnchorObject != null)
@@ -214,7 +258,7 @@ namespace TrueEchoVR
             uiManager?.RefreshQRCodeDropdown();
         }
 
-        private void OnQRCodeUpdatedNormal(QRCodeManager.QRCodeInstance qr)
+        private void OnQRCodeUpdatedNormal(QrCodeManager.QRCodeInstance qr)
         {
             if (qr.fullPayload.Contains(qrManager.qrRoomAnchorLabel)) return;
             if (generatedQRTransforms.TryGetValue(qr.identifierKey, out var trans))
