@@ -134,42 +134,30 @@ namespace TEVR
         {
             if (xrOrigin == null || anchor.visualObject == null) return;
 
-            // 1. Get the current world pose of the QR anchor (as seen by the eye/head)
-            Vector3 qrWorldPos = anchor.visualObject.transform.position;
-            Quaternion qrWorldRot = anchor.visualObject.transform.rotation;
+            // 1. Capture the Physical Pose relative to current Rig
+            Vector3 wPos = anchor.visualObject.transform.position;
+            Quaternion wRot = anchor.visualObject.transform.rotation;
 
-            // 2. Identify the Head/Eye transform (usually Main Camera)
-            Transform cameraTransform = Camera.main != null ? Camera.main.transform : xrOrigin.GetComponentInChildren<Camera>()?.transform;
-            if (cameraTransform == null) return;
+            // Convert to Tracking Space (Rig-Local)
+            Vector3 pPos = xrOrigin.InverseTransformPoint(wPos);
+            Quaternion pRot = Quaternion.Inverse(xrOrigin.rotation) * wRot;
 
-            // 3. We want the PHYSICAL QR to match the VIRTUAL (0,0,0, Identity)
-            // The Rig Root needs to be moved so that physical-relative-to-head matches virtual-relative-to-head.
+            // 2. We want Physical Anchor (pPos, pRot) to align with Virtual origin (0,0,0, Identity)
+            // RigWorldTransform = Identity * Inverse(PhysicalPoseInRigSpace)
             
-            // To align QR (qrWorldPos/Rot) to (0,0,0/Identity):
-            // The translation we need to apply to the world root is the inverse of the anchor's world position.
-            // But we must rotate around the Y-axis specifically for VR comfort.
-
-            // Reset rig first to clear any previous calibrations (identity reference)
-            xrOrigin.SetPositionAndRotation(Vector3.zero, Quaternion.identity);
-
-            // Re-get pose after reset
-            qrWorldPos = anchor.visualObject.transform.position;
-            qrWorldRot = anchor.visualObject.transform.rotation;
-
-            // Target rotation: We want the QR forward (local -Z usually for markers) to match World +Z
-            // Assuming the QR's 'forward' is its normal.
-            float yRotationOffset = -qrWorldRot.eulerAngles.y;
+            // Extract Y-yaw only for comfort
+            float pYaw = pRot.eulerAngles.y;
+            Quaternion targetRigRot = Quaternion.Euler(0, -pYaw, 0);
             
-            // Apply rotation around the anchor position to keep it stationary while rig rotates
-            xrOrigin.RotateAround(qrWorldPos, Vector3.up, yRotationOffset);
+            // Translation: Move Rig so that pPos (rotated by rig) lands at Vector3.zero
+            Vector3 targetRigPos = -(targetRigRot * pPos);
 
-            // Apply translation so the anchor ends up at 0,0,0
-            Vector3 finalOffset = Vector3.zero - anchor.visualObject.transform.position;
-            xrOrigin.position += finalOffset;
+            // 3. Apply
+            xrOrigin.SetPositionAndRotation(targetRigPos, targetRigRot);
 
-            string calMsg = $"Rig calibrated. Anchor is now at {anchor.visualObject.transform.position}. Rig at {xrOrigin.position}";
-            Debug.Log($"[Calibration] {calMsg}");
-            uiManager?.AppendChatMessage($"<color=green>[System]</color> {calMsg}");
+            string calMsg = $"Rig calibrated. physical anchor is now at virtual zero. Rig pos: {targetRigPos}";
+            Debug.Log("[Calibration] " + calMsg);
+            uiManager?.AppendChatMessage("<color=green>[System]</color> " + calMsg);
             
             uiManager?.LogAllQRCodesToChat();
         }
