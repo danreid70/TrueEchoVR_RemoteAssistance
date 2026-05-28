@@ -16,8 +16,7 @@ namespace TEVR
         public static SignalingManager Instance { get; private set; }
 
         [Header("Backend Configuration")]
-        public string serverBaseUrl = "https://live-troubleshooting-app.replit.app";
-        public string apiPath = "/api";
+        public BackendConfig config;
         
         [Header("Session Info")]
         public string currentLocationId;
@@ -119,7 +118,8 @@ private RTCPeerConnection _pc;
             if (_ws != null) await _ws.Close();
 
             // Socket.io standard connection path
-            string wsUrl = serverBaseUrl.Replace("https://", "wss://").Replace("http://", "ws://") + "/socket.io/?EIO=4&transport=websocket";
+            string baseUrl = config != null ? config.serverBaseUrl : "https://live-troubleshooting-app.replit.app";
+            string wsUrl = baseUrl.Replace("https://", "wss://").Replace("http://", "ws://") + "/socket.io/?EIO=4&transport=websocket";
             _ws = new WebSocket(wsUrl);
 
             _ws.OnOpen += () => {
@@ -240,9 +240,9 @@ private RTCPeerConnection _pc;
                     break;
                 case "chat-message":
                     var chat = JsonUtility.FromJson<ChatPayload>(payload);
-                    OnChatMessageReceived?.Invoke(chat.text);
+                    OnChatMessageReceived?.Invoke(chat.message);
                     break;
-                case "point-to":
+case "point-to":
                     var pt = JsonUtility.FromJson<PointToPayload>(payload);
                     OnPointToReceived?.Invoke(pt.name, pt.qrCode, pt.pose);
                     break;
@@ -258,7 +258,11 @@ private RTCPeerConnection _pc;
 
         public void SendChatMessage(string message)
         {
-            SendSocketEvent("chat-message", new ChatPayload { text = message });
+            SendSocketEvent("chat-message", new ChatPayload { 
+                roomCode = currentRoomCode, 
+                message = message, 
+                senderRole = "headset" 
+            });
         }
 
         public void PushQRCodes(string qrDataJson)
@@ -300,9 +304,11 @@ private RTCPeerConnection _pc;
 
         private IEnumerator SendRequest(string endpoint, string method, string json, Action<string> onSuccess, Action<string> onError)
         {
-            string url = $"{serverBaseUrl}{apiPath}/{endpoint.TrimStart('/')}";
+            string baseUrl = config != null ? config.serverBaseUrl : "https://live-troubleshooting-app.replit.app";
+            string apiP = config != null ? config.apiPath : "/api";
+            string url = $"{baseUrl}{apiP}/{endpoint.TrimStart('/')}";
             using (UnityWebRequest request = new UnityWebRequest(url, method))
-            {
+{
                 if (json != null)
                 {
                     byte[] bodyRaw = System.Text.Encoding.UTF8.GetBytes(json);
@@ -378,15 +384,20 @@ private RTCPeerConnection _pc;
                         camObj.transform.SetParent(captureCamera.transform, false);
                         camObj.transform.localPosition = Vector3.zero;
                         camObj.transform.localRotation = Quaternion.identity;
-                        _internalCaptureCamera.clearFlags = CameraClearFlags.Skybox;
-                        if (captureCamera.clearFlags == CameraClearFlags.SolidColor)
+                        
+                        // Support passthrough in stream: Set background to transparent
+                        _internalCaptureCamera.clearFlags = CameraClearFlags.SolidColor;
+                        _internalCaptureCamera.backgroundColor = new Color(0, 0, 0, 0);
+                        
+                        if (captureCamera.clearFlags == CameraClearFlags.Skybox)
                         {
-                            _internalCaptureCamera.clearFlags = CameraClearFlags.SolidColor;
-                            _internalCaptureCamera.backgroundColor = captureCamera.backgroundColor;
+                            // If we really want the skybox, we'd keep it, but for MR training
+                            // we usually want the passthrough to show through in the stream.
+                            // Note: Raw passthrough capture requires specific Meta hardware permissions.
                         }
 
                         _captureRT = new RenderTexture(captureResolution.x, captureResolution.y, 16, UnityEngine.Experimental.Rendering.GraphicsFormat.B8G8R8A8_SRGB);
-                        _captureRT.Create();
+_captureRT.Create();
 _internalCaptureCamera.targetTexture = _captureRT;
                     }
                     _videoTrack = new VideoStreamTrack(_captureRT);
@@ -413,9 +424,12 @@ _internalCaptureCamera.targetTexture = _captureRT;
 
             _pc.OnIceCandidate = (candidate) => {
                 SendSocketEvent("ice-candidate", new IceCandidatePayload { 
-                    candidate = candidate.Candidate,
-                    sdpMid = candidate.SdpMid,
-                    sdpMLineIndex = candidate.SdpMLineIndex ?? 0,
+                    roomCode = currentRoomCode,
+                    candidate = new IceCandidateData {
+                        candidate = candidate.Candidate,
+                        sdpMid = candidate.SdpMid,
+                        sdpMLineIndex = candidate.SdpMLineIndex ?? 0
+                    },
                     targetSocketId = _remoteSocketId
                 });
             };
@@ -444,12 +458,12 @@ _internalCaptureCamera.targetTexture = _captureRT;
             var setLocalOp = _pc.SetLocalDescription(ref answerDesc);
             yield return setLocalOp;
 
-            SendSocketEvent("answer", new OfferPayload { 
-                offer = answerDesc, 
-                fromSocketId = "", // Not needed for outgoing answer
+            SendSocketEvent("answer", new AnswerPayload { 
+                roomCode = currentRoomCode,
+                answer = answerDesc, 
                 targetSocketId = _remoteSocketId 
             });
-        }
+}
 
         #endregion
 
@@ -458,11 +472,13 @@ _internalCaptureCamera.targetTexture = _captureRT;
         private void OnDestroy() { Disconnect(); }
 
         [Serializable] public class JoinRoomPayload { public string role; public string roomCode; public string locationId; }
-        [Serializable] public class ChatPayload { public string text; }
+        [Serializable] public class ChatPayload { public string roomCode; public string message; public string senderRole; }
         [Serializable] public class OfferPayload { public RTCSessionDescription offer; public string fromSocketId; public string targetSocketId; }
-        [Serializable] public class IceCandidatePayload { public string candidate; public string sdpMid; public int sdpMLineIndex; public string targetSocketId; }
+        [Serializable] public class AnswerPayload { public string roomCode; public RTCSessionDescription answer; public string targetSocketId; }
+        [Serializable] public class IceCandidatePayload { public string roomCode; public IceCandidateData candidate; public string targetSocketId; }
+        [Serializable] public class IceCandidateData { public string candidate; public string sdpMid; public int sdpMLineIndex; }
         [Serializable] public class PeerJoinedPayload { public string role; public string socketId; }
         [Serializable] public class PointToPayload { public string name; public string qrCode; public string pose; }
-        #endregion
+#endregion
     }
 }
