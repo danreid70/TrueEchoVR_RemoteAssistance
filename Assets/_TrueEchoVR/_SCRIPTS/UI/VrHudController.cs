@@ -82,11 +82,9 @@ namespace TEVR
             }
 
             // Initialization state
-            if (statusText != null) statusText.gameObject.SetActive(false);
-            if (hintText != null) hintText.gameObject.SetActive(false);
-            if (completionText != null) completionText.gameObject.SetActive(false);
+            // Keep text objects active if they have content set during initialization phase
             if (pointerArrow != null) pointerArrow.SetActive(false);
-            
+
             // If the camera is found, jump to it immediately
             if (_camTransform != null)
             {

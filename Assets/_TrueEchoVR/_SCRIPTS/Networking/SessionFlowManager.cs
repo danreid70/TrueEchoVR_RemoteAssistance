@@ -92,10 +92,16 @@ namespace TEVR
         {
             if (!isInitializing)
             {
-                // Drift correction if the anchor is seen again
-                if (Vector3.Distance(anchor.visualObject.transform.position, Vector3.zero) > 0.02f ||
-                    Quaternion.Angle(anchor.visualObject.transform.rotation, Quaternion.identity) > 1.0f)
+                // Drift/Movement detection for the Room Anchor
+                // We compare the QR's world position (updated by MRUK) to (0,0,0) (our calibrated origin)
+                float dist = Vector3.Distance(anchor.visualObject.transform.position, Vector3.zero);
+                float angle = Quaternion.Angle(anchor.visualObject.transform.rotation, Quaternion.identity);
+
+                // Re-calibrate if moved more than 2cm or 1 degree
+                if (dist > 0.02f || angle > 1.0f)
                 {
+                    Debug.Log($"[System] Room Anchor move detected (Dist: {dist:F3}m, Angle: {angle:F1}°). Recalibrating Origin...");
+                    uiManager?.AppendChatMessage($"<color=yellow>[System]</color> Room Anchor moved. Recalibrating...");
                     CalibrateOriginToAnchor(anchor);
                 }
                 return;
@@ -104,7 +110,7 @@ namespace TEVR
             Debug.Log($"[SessionInitialization] RoomAnchor detected: {anchor.fullPayload}");
             uiManager?.AppendChatMessage($"<color=green>[Init]</color> RoomAnchor detected: {anchor.fullPayload}");
             
-            // Clear the persistent "Look at Room Anchor" message immediately
+            // Clear the persistent "Look at Room Anchor" message
             if (statusUI != null)
                 statusUI.ShowMessage("", ""); 
 
