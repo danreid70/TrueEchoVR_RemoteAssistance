@@ -975,30 +975,6 @@ PrefabInstance:
     m_AddedGameObjects: []
     m_AddedComponents: []
   m_SourcePrefab: {fileID: 100100000, guid: 18ddb545287c546e19cc77dc9fbb2189, type: 3}
---- !u!1 &1463278250 stripped
-GameObject:
-  m_CorrespondingSourceObject: {fileID: 4966531787352916713, guid: 210c4e7d75a89f8408d439d9c40794a7, type: 3}
-  m_PrefabInstance: {fileID: 427870497746368196}
-  m_PrefabAsset: {fileID: 0}
---- !u!114 &1463278257
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1463278250}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 7951c64acb0fa62458bf30a60089fe2d, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Unity.XR.Interaction.Toolkit::UnityEngine.XR.Interaction.Toolkit.UI.TrackedDeviceGraphicRaycaster
-  m_IgnoreReversedGraphics: 0
-  m_CheckFor2DOcclusion: 0
-  m_CheckFor3DOcclusion: 0
-  m_BlockingMask:
-    serializedVersion: 2
-    m_Bits: 4294967295
-  m_RaycastTriggerInteraction: 1
 --- !u!1 &1573075678
 GameObject:
   m_ObjectHideFlags: 0
@@ -1772,6 +1748,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     m_RemovedComponents:
     - {fileID: 6864292489362575824, guid: 210c4e7d75a89f8408d439d9c40794a7, type: 3}
+    - {fileID: 3703035268003027138, guid: 210c4e7d75a89f8408d439d9c40794a7, type: 3}
     m_RemovedGameObjects: []
     m_AddedGameObjects: []
     m_AddedComponents:
@@ -1781,9 +1758,6 @@ PrefabInstance:
     - targetCorrespondingSourceObject: {fileID: 1875674545449024758, guid: 210c4e7d75a89f8408d439d9c40794a7, type: 3}
       insertIndex: -1
       addedObject: {fileID: 1260071907}
-    - targetCorrespondingSourceObject: {fileID: 4966531787352916713, guid: 210c4e7d75a89f8408d439d9c40794a7, type: 3}
-      insertIndex: -1
-      addedObject: {fileID: 1463278257}
     - targetCorrespondingSourceObject: {fileID: 6508498656446036188, guid: 210c4e7d75a89f8408d439d9c40794a7, type: 3}
       insertIndex: -1
       addedObject: {fileID: 981532131}
@@ -2223,7 +2197,7 @@ MonoBehaviour:
   virtualGreenScreenApplyDepthCulling: 0
   virtualGreenScreenDepthTolerance: 0.2
   mrcActivationMode: 0
-  launchSimultaneousHandsControllersOnStartup: 0
+  launchSimultaneousHandsControllersOnStartup: 1
   isInsightPassthroughEnabled: 1
   shouldBoundaryVisibilityBeSuppressed: 0
   requestBodyTrackingPermissionOnStartup: 0

@@ -417,8 +417,6 @@ if (joinButtonText != null) joinButtonText.text = "Connecting...";
 
         private void OnQRCodeSelected(int index)
         {
-            if (!sessionInit.InitializationComplete) return;
-            
             if (index == 0)
             {
                 statusUI?.ClearHighlight();
@@ -432,6 +430,7 @@ if (joinButtonText != null) joinButtonText.text = "Connecting...";
             var selectedQR = qrCodeList[qrIndex];
             if (selectedQR != null)
             {
+                Debug.Log($"[SessionUI] Selected QR from dropdown: {selectedQR.fullPayload}");
                 sessionInit.PointToQRCode(selectedQR);
             }
         }

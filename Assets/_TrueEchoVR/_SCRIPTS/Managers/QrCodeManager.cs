@@ -199,8 +199,11 @@ namespace TEVR
             
             Debug.Log($"[QrCodeManager] Detected QR: {fullPayload}, IsAnchor: {isAnchorMarker}, Pos: {trackable.transform.position}");
 
+            // Verification log in headset
+            SignalingManager.Instance?.gameObject.GetComponentInChildren<SessionUiController>()?.AppendChatMessage($"<color=white>[Detection]</color> Seen: {fullPayload}");
+
             // Allow updates for existing QR codes even if the anchor isn't set
-            // This ensures stale disk data is corrected as soon as the marker is seen.
+// This ensures stale disk data is corrected as soon as the marker is seen.
             if (_trackedQRCodes.TryGetValue(identifierKey, out QRCodeInstance existing))
             {
                 Vector3 newPos = trackable.transform.position;
@@ -220,9 +223,7 @@ namespace TEVR
                 return;
             }
 
-            // Ignore NEW peripheral QR codes until the room anchor is established
-            if (!_isAnchorSet && !isAnchorMarker) return;
-
+            // Allow all detections but mark them as Unknown if anchor is not set or not a verified marker
             QRCodeInstance instance = CreateAndAddInstance(fullPayload, trackable.transform.position, trackable.transform.rotation, 
                 isAnchorMarker ? QRStatus.Official : QRStatus.Unknown, trackable.transform.localScale, true);
             
@@ -233,12 +234,28 @@ namespace TEVR
 
         private QRCodeInstance CreateAndAddInstance(string payload, Vector3 pos, Quaternion rot, QRStatus status, Vector3 scale, bool createVisual)
         {
+            // Avoid duplicate additions
+            string identifierKey = GetIdentifierKey(payload);
+            if (_trackedQRCodes.TryGetValue(identifierKey, out var existing))
+            {
+                // Update instead of add if already tracked
+                existing.status = status;
+                existing.lastPosition = pos;
+                existing.lastRotation = rot;
+                if (existing.visualObject != null)
+                {
+                    existing.visualObject.transform.SetPositionAndRotation(pos, rot);
+                    UpdateTextOnObject(existing.visualObject, payload);
+                }
+                return existing;
+            }
+
             GameObject visualObj = createVisual ? CreateVisualObject(payload, pos, rot, status, scale) : null;
             var instance = new QRCodeInstance
             {
                 visualObject = visualObj,
                 fullPayload = payload,
-                identifierKey = GetIdentifierKey(payload),
+                identifierKey = identifierKey,
                 lastPosition = pos,
                 lastRotation = rot,
                 status = status
@@ -304,7 +321,8 @@ namespace TEVR
 
         private void CreateDefaultVisualization(GameObject root, string payload, QRStatus status, Vector3 scale)
         {
-            Color baseColor = status == QRStatus.Official ? Color.green : Color.red;
+            Color baseColor = status == QRStatus.Official ? Color.green : Color.yellow; // Official is green, Unknown is yellow
+            string labelPrefix = status == QRStatus.Official ? "" : "[Unknown] ";
 
             // Background Plane
             GameObject bg = GameObject.CreatePrimitive(PrimitiveType.Cube);
@@ -316,27 +334,39 @@ namespace TEVR
             if (bg.TryGetComponent<BoxCollider>(out var col)) Destroy(col);
 
             var renderer = bg.GetComponent<Renderer>();
-            renderer.material = new Material(Shader.Find("Transparent/Diffuse"));
-            renderer.material.color = new Color(baseColor.r, baseColor.g, baseColor.b, 0.25f);
+            renderer.material = new Material(Shader.Find("Universal Render Pipeline/Unlit"));
+            renderer.material.color = new Color(baseColor.r, baseColor.g, baseColor.b, 0.3f);
+            // Set for transparency in URP
+            renderer.material.SetInt("_Surface", 1); // 1 is Transparent
+            renderer.material.SetInt("_ZWrite", 0);
+            renderer.material.renderQueue = 3000;
 
             // Borders
             CreateVisualBorder(root.transform, scale, baseColor);
 
+            // Center Debug Sphere (Ensures it's visible even if looking from side)
+            GameObject sphere = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+            sphere.name = "DebugCenter";
+            sphere.transform.SetParent(root.transform);
+            sphere.transform.localScale = new Vector3(0.02f, 0.02f, 0.02f);
+            sphere.transform.localPosition = Vector3.zero;
+            if (sphere.TryGetComponent<Collider>(out var sCol)) Destroy(sphere.GetComponent<Collider>());
+            var sRenderer = sphere.GetComponent<Renderer>();
+            sRenderer.material = new Material(Shader.Find("Universal Render Pipeline/Unlit"));
+            sRenderer.material.color = baseColor;
+
             // Add Pulse Effect for visibility
-            if (status == QRStatus.Official)
-            {
-                var pulse = bg.AddComponent<QRPulseEffect>();
-                pulse.targetColor = baseColor;
-            }
+            var pulse = bg.AddComponent<QRPulseEffect>();
+pulse.targetColor = baseColor;
 
             // Text Label
-GameObject textObj = new GameObject("PayloadLabel");
+            GameObject textObj = new GameObject("PayloadLabel");
             textObj.transform.SetParent(root.transform);
-            textObj.transform.localPosition = new Vector3(0, 0, -0.005f);
+            textObj.transform.localPosition = new Vector3(0, 0, -0.01f); // Offset forward to avoid Z-fighting
             textObj.transform.localRotation = Quaternion.identity;
 
             var tmp = textObj.AddComponent<TextMeshPro>();
-            tmp.text = payload;
+            tmp.text = $"{labelPrefix}{payload}";
             tmp.fontSize = 0.12f;
             tmp.alignment = TextAlignmentOptions.Center;
             tmp.color = Color.white;
@@ -349,7 +379,7 @@ GameObject textObj = new GameObject("PayloadLabel");
 
         private void CreateVisualBorder(Transform parent, Vector3 scale, Color color)
         {
-            float thickness = 0.006f;
+            float thickness = 0.008f; // Slightly thicker
             CreateBorderBar(parent, new Vector3(0, scale.y / 2, 0), new Vector3(scale.x + thickness, thickness, thickness), color);
             CreateBorderBar(parent, new Vector3(0, -scale.y / 2, 0), new Vector3(scale.x + thickness, thickness, thickness), color);
             CreateBorderBar(parent, new Vector3(-scale.x / 2, 0, 0), new Vector3(thickness, scale.y + thickness, thickness), color);
@@ -366,7 +396,7 @@ GameObject textObj = new GameObject("PayloadLabel");
             if (bar.TryGetComponent<BoxCollider>(out var col)) Destroy(col);
             
             var r = bar.GetComponent<Renderer>();
-            r.material = new Material(Shader.Find("Unlit/Color"));
+            r.material = new Material(Shader.Find("Universal Render Pipeline/Unlit"));
             r.material.color = color;
         }
 

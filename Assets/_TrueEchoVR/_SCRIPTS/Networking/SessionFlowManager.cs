@@ -293,10 +293,16 @@ namespace TEVR
 
         public void PointToQRCode(QrCodeManager.QRCodeInstance qr)
         {
-            if (!InitializationComplete) return;
+            // Allow pointing to ANY tracked QR, even during initialization for verification
             if (generatedQRTransforms.TryGetValue(qr.identifierKey, out var target))
             {
                 statusUI?.HighlightTarget(target);
+                statusUI?.ShowMessage($"Pointing to: {qr.identifierKey}", qr.fullPayload);
+            }
+            else if (qr.visualObject != null)
+            {
+                // Fallback to the visual object's transform if no generated transform yet
+                statusUI?.HighlightTarget(qr.visualObject.transform);
                 statusUI?.ShowMessage($"Pointing to: {qr.identifierKey}", qr.fullPayload);
             }
         }
