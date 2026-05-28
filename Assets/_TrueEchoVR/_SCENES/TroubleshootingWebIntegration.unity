@@ -428,6 +428,48 @@ GameObject:
   m_CorrespondingSourceObject: {fileID: 7243407822387126981, guid: 8cd1b957775c83d419a50ca0dd170690, type: 3}
   m_PrefabInstance: {fileID: 4876439885971092207}
   m_PrefabAsset: {fileID: 0}
+--- !u!1 &981532125 stripped
+GameObject:
+  m_CorrespondingSourceObject: {fileID: 6508498656446036188, guid: 210c4e7d75a89f8408d439d9c40794a7, type: 3}
+  m_PrefabInstance: {fileID: 427870497746368196}
+  m_PrefabAsset: {fileID: 0}
+--- !u!114 &981532130
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 981532125}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: bb86ba9d4c5126e48bfef9b0c9550e9d, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Oculus.Interaction::Oculus.Interaction.RayInteractable
+  _interactorFilters: []
+  _maxInteractors: -1
+  _maxSelectingInteractors: -1
+  _data: {fileID: 0}
+  _pointableElement: {fileID: 0}
+  _surface: {fileID: 0}
+  _selectSurface: {fileID: 0}
+  _movementProvider: {fileID: 0}
+  _tiebreakerScore: 0
+--- !u!114 &981532131
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 981532125}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 3ffe41fe81087fa41a2062cc69b99615, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Oculus.Interaction::Oculus.Interaction.PointableCanvas
+  _transferOnSecondSelection: 0
+  _addNewPointsToFront: 0
+  _forwardElement: {fileID: 0}
+  _canvas: {fileID: 0}
 --- !u!1 &1058992261
 GameObject:
   m_ObjectHideFlags: 0
@@ -877,6 +919,30 @@ PrefabInstance:
     m_AddedGameObjects: []
     m_AddedComponents: []
   m_SourcePrefab: {fileID: 100100000, guid: 18ddb545287c546e19cc77dc9fbb2189, type: 3}
+--- !u!1 &1463278250 stripped
+GameObject:
+  m_CorrespondingSourceObject: {fileID: 4966531787352916713, guid: 210c4e7d75a89f8408d439d9c40794a7, type: 3}
+  m_PrefabInstance: {fileID: 427870497746368196}
+  m_PrefabAsset: {fileID: 0}
+--- !u!114 &1463278257
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1463278250}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 7951c64acb0fa62458bf30a60089fe2d, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Unity.XR.Interaction.Toolkit::UnityEngine.XR.Interaction.Toolkit.UI.TrackedDeviceGraphicRaycaster
+  m_IgnoreReversedGraphics: 0
+  m_CheckFor2DOcclusion: 0
+  m_CheckFor3DOcclusion: 0
+  m_BlockingMask:
+    serializedVersion: 2
+    m_Bits: 4294967295
+  m_RaycastTriggerInteraction: 1
 --- !u!1 &1573075678
 GameObject:
   m_ObjectHideFlags: 0
@@ -1168,6 +1234,14 @@ PrefabInstance:
       propertyPath: m_SizeDelta.y
       value: 0
       objectReference: {fileID: 0}
+    - target: {fileID: 2924148121309863062, guid: 210c4e7d75a89f8408d439d9c40794a7, type: 3}
+      propertyPath: m_Size
+      value: 0.27963334
+      objectReference: {fileID: 0}
+    - target: {fileID: 2924148121309863062, guid: 210c4e7d75a89f8408d439d9c40794a7, type: 3}
+      propertyPath: m_Value
+      value: 1.0000005
+      objectReference: {fileID: 0}
     - target: {fileID: 3208827152620655422, guid: 210c4e7d75a89f8408d439d9c40794a7, type: 3}
       propertyPath: m_text
       value: 
@@ -1199,6 +1273,14 @@ PrefabInstance:
     - target: {fileID: 4687293714730817466, guid: 210c4e7d75a89f8408d439d9c40794a7, type: 3}
       propertyPath: m_SizeDelta.y
       value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 4971645046568749153, guid: 210c4e7d75a89f8408d439d9c40794a7, type: 3}
+      propertyPath: m_Size
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 4971645046568749153, guid: 210c4e7d75a89f8408d439d9c40794a7, type: 3}
+      propertyPath: m_Value
+      value: 1
       objectReference: {fileID: 0}
     - target: {fileID: 5003421245050620899, guid: 210c4e7d75a89f8408d439d9c40794a7, type: 3}
       propertyPath: m_LocalPosition.x
@@ -1284,10 +1366,20 @@ PrefabInstance:
       propertyPath: m_AnchorMax.y
       value: 0
       objectReference: {fileID: 0}
-    m_RemovedComponents: []
+    m_RemovedComponents:
+    - {fileID: 6864292489362575824, guid: 210c4e7d75a89f8408d439d9c40794a7, type: 3}
     m_RemovedGameObjects: []
     m_AddedGameObjects: []
-    m_AddedComponents: []
+    m_AddedComponents:
+    - targetCorrespondingSourceObject: {fileID: 4966531787352916713, guid: 210c4e7d75a89f8408d439d9c40794a7, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 1463278257}
+    - targetCorrespondingSourceObject: {fileID: 6508498656446036188, guid: 210c4e7d75a89f8408d439d9c40794a7, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 981532131}
+    - targetCorrespondingSourceObject: {fileID: 6508498656446036188, guid: 210c4e7d75a89f8408d439d9c40794a7, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 981532130}
   m_SourcePrefab: {fileID: 100100000, guid: 210c4e7d75a89f8408d439d9c40794a7, type: 3}
 --- !u!114 &3127728407676174906
 MonoBehaviour:
@@ -1488,6 +1580,22 @@ PrefabInstance:
     serializedVersion: 3
     m_TransformParent: {fileID: 0}
     m_Modifications:
+    - target: {fileID: 3230963959281057557, guid: 8cd1b957775c83d419a50ca0dd170690, type: 3}
+      propertyPath: m_Enabled
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 4100687482706922510, guid: 8cd1b957775c83d419a50ca0dd170690, type: 3}
+      propertyPath: m_Enabled
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 5986502643206258970, guid: 8cd1b957775c83d419a50ca0dd170690, type: 3}
+      propertyPath: m_Enabled
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 6482949478191993489, guid: 8cd1b957775c83d419a50ca0dd170690, type: 3}
+      propertyPath: m_Enabled
+      value: 0
+      objectReference: {fileID: 0}
     - target: {fileID: 7243407822387126981, guid: 8cd1b957775c83d419a50ca0dd170690, type: 3}
       propertyPath: m_Name
       value: XR Origin Hands (XR Rig)

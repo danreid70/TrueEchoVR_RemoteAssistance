@@ -168,6 +168,9 @@ webAppManager.OnQRCodesPulled += OnQRCodesPulled;
             {
                 if (joinButtonText != null) joinButtonText.text = "Waiting for Calibration...";
                 if (joinButton != null) joinButton.interactable = false;
+                
+                // Hide the main session UI panel until calibration is done
+                if (sessionUIPanel != null) sessionUIPanel.SetActive(false);
             }
 
             AppendChatMessage("<color=green>[System]</color> Session UI Initialized.");
