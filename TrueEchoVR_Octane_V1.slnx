@@ -202,6 +202,7 @@
   <Project Path="Unity.AI.Navigation.Editor.ConversionSystem.csproj" />
   <Project Path="Unity.AppUI.Redux.Editor.csproj" />
   <Project Path="Unity.AI.Pbr.Srp.csproj" />
+  <Project Path="Assembly-CSharp-Editor.csproj" />
   <Project Path="Oculus.Platform.Editor.csproj" />
   <Project Path="glTFast.Editor.csproj" />
   <Project Path="Meta.XR.EnvironmentDepth.Editor.csproj" />
@@ -262,7 +263,6 @@
   <Project Path="Meta.WitAi.TTS.Editor.csproj" />
   <Project Path="Unity.XR.Interaction.Toolkit.Samples.InteractionSimulator.csproj" />
   <Project Path="Flexalon.Samples.csproj" />
-  <Project Path="Assembly-CSharp-Editor.csproj" />
   <Project Path="Unity.AI.Tracing.csproj" />
   <Project Path="Unity.AI.Toolkit.GenerationContextMenu.csproj" />
   <Project Path="Unity.XR.Interaction.Toolkit.Samples.ARStarterAssets.csproj" />

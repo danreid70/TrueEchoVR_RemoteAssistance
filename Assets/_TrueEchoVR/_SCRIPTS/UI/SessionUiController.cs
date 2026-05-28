@@ -341,19 +341,30 @@ webAppManager.OnQRCodesPulled += OnQRCodesPulled;
                 return;
             }
 
-            if (string.IsNullOrEmpty(roomCodeInput?.text)) return;
-            string code = roomCodeInput.text.ToUpper().Trim();
-            string locationId = locationIdInput != null ? locationIdInput.text : "Unknown";
+            string locationId = locationIdInput != null ? locationIdInput.text.Trim() : "";
             
-            // Save Location ID
-            if (locationIdInput != null)
+            // If Location ID is blank, skip server connection and show Session Panel with demo markers
+            if (string.IsNullOrEmpty(locationId))
             {
-                PlayerPrefs.SetString("SavedLocationID", locationId);
-                PlayerPrefs.Save();
+                AppendChatMessage("<color=yellow>[System]</color> No Location ID. Starting in Demo Mode.");
+                
+                // Add demo markers
+                sessionInit.AddDefaultDemoQRCodes();
+                
+                ShowSessionScreen();
+                if (connectionStatusText != null) connectionStatusText.text = "Status: DEMO";
+                return;
             }
 
+            if (string.IsNullOrEmpty(roomCodeInput?.text)) return;
+            string code = roomCodeInput.text.ToUpper().Trim();
+            
+            // Save Location ID
+            PlayerPrefs.SetString("SavedLocationID", locationId);
+            PlayerPrefs.Save();
+
             if (joinStatusText != null) joinStatusText.text = "Connecting to server...";
-if (joinButtonText != null) joinButtonText.text = "Connecting...";
+            if (joinButtonText != null) joinButtonText.text = "Connecting...";
             if (joinButton != null) joinButton.interactable = false;
 
             webAppManager?.Login(locationId, code);

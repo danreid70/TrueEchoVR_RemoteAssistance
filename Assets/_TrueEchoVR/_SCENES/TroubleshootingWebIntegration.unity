@@ -318,6 +318,11 @@ Camera:
   m_OcclusionCulling: 1
   m_StereoConvergence: 10
   m_StereoSeparation: 0.022
+--- !u!4 &262036588 stripped
+Transform:
+  m_CorrespondingSourceObject: {fileID: 2379765367262335538, guid: 8cd1b957775c83d419a50ca0dd170690, type: 3}
+  m_PrefabInstance: {fileID: 4876439885971092207}
+  m_PrefabAsset: {fileID: 0}
 --- !u!114 &304502362 stripped
 MonoBehaviour:
   m_CorrespondingSourceObject: {fileID: 5790466923927883662, guid: ba2ebd14a1e515d4d9ce7169e63d1e50, type: 3}
@@ -975,6 +980,11 @@ PrefabInstance:
     m_AddedGameObjects: []
     m_AddedComponents: []
   m_SourcePrefab: {fileID: 100100000, guid: 18ddb545287c546e19cc77dc9fbb2189, type: 3}
+--- !u!4 &1356377454 stripped
+Transform:
+  m_CorrespondingSourceObject: {fileID: 2454606430193837240, guid: 8cd1b957775c83d419a50ca0dd170690, type: 3}
+  m_PrefabInstance: {fileID: 4876439885971092207}
+  m_PrefabAsset: {fileID: 0}
 --- !u!1 &1573075678
 GameObject:
   m_ObjectHideFlags: 0
@@ -1977,10 +1987,22 @@ PrefabInstance:
     serializedVersion: 3
     m_TransformParent: {fileID: 0}
     m_Modifications:
-    - target: {fileID: 695539541048446618, guid: 8cd1b957775c83d419a50ca0dd170690, type: 3}
-      propertyPath: m_Enabled
+    - target: {fileID: 603682241948504636, guid: 8cd1b957775c83d419a50ca0dd170690, type: 3}
+      propertyPath: m_InteractionLayers.m_Bits
       value: 0
       objectReference: {fileID: 0}
+    - target: {fileID: 695539541048446618, guid: 8cd1b957775c83d419a50ca0dd170690, type: 3}
+      propertyPath: m_Enabled
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 695539541048446618, guid: 8cd1b957775c83d419a50ca0dd170690, type: 3}
+      propertyPath: m_BaseLineMaterial
+      value: 
+      objectReference: {fileID: 10306, guid: 0000000000000000f000000000000000, type: 0}
+    - target: {fileID: 695539541048446618, guid: 8cd1b957775c83d419a50ca0dd170690, type: 3}
+      propertyPath: m_EmptyHitMaterial
+      value: 
+      objectReference: {fileID: 10306, guid: 0000000000000000f000000000000000, type: 0}
     - target: {fileID: 776857430734362859, guid: 8cd1b957775c83d419a50ca0dd170690, type: 3}
       propertyPath: m_IsActive
       value: 0
@@ -1989,9 +2011,29 @@ PrefabInstance:
       propertyPath: m_IsActive
       value: 0
       objectReference: {fileID: 0}
-    - target: {fileID: 2132784926691704193, guid: 8cd1b957775c83d419a50ca0dd170690, type: 3}
+    - target: {fileID: 1721711185619547679, guid: 8cd1b957775c83d419a50ca0dd170690, type: 3}
+      propertyPath: m_Enabled
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 2044234956475408679, guid: 8cd1b957775c83d419a50ca0dd170690, type: 3}
+      propertyPath: m_AttachTransform
+      value: 
+      objectReference: {fileID: 1356377454}
+    - target: {fileID: 2044234956475408679, guid: 8cd1b957775c83d419a50ca0dd170690, type: 3}
+      propertyPath: m_InteractionLayers.m_Bits
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 2077494007610431190, guid: 8cd1b957775c83d419a50ca0dd170690, type: 3}
       propertyPath: m_Enabled
       value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 2077494007610431190, guid: 8cd1b957775c83d419a50ca0dd170690, type: 3}
+      propertyPath: m_InteractionLayers.m_Bits
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 2132784926691704193, guid: 8cd1b957775c83d419a50ca0dd170690, type: 3}
+      propertyPath: m_Enabled
+      value: 1
       objectReference: {fileID: 0}
     - target: {fileID: 2944748116331135295, guid: 8cd1b957775c83d419a50ca0dd170690, type: 3}
       propertyPath: m_ClearFlags
@@ -2009,12 +2051,28 @@ PrefabInstance:
       propertyPath: m_BackGroundColor.r
       value: 0
       objectReference: {fileID: 0}
+    - target: {fileID: 3113006842509864403, guid: 8cd1b957775c83d419a50ca0dd170690, type: 3}
+      propertyPath: m_Enabled
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 3113006842509864403, guid: 8cd1b957775c83d419a50ca0dd170690, type: 3}
+      propertyPath: m_InteractionLayers.m_Bits
+      value: 0
+      objectReference: {fileID: 0}
     - target: {fileID: 3230963959281057557, guid: 8cd1b957775c83d419a50ca0dd170690, type: 3}
       propertyPath: m_Enabled
       value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 4100687482706922510, guid: 8cd1b957775c83d419a50ca0dd170690, type: 3}
       propertyPath: m_Enabled
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 5698583670171322955, guid: 8cd1b957775c83d419a50ca0dd170690, type: 3}
+      propertyPath: m_Enabled
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 5698583670171322955, guid: 8cd1b957775c83d419a50ca0dd170690, type: 3}
+      propertyPath: m_InteractionLayers.m_Bits
       value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 5791173534231487703, guid: 8cd1b957775c83d419a50ca0dd170690, type: 3}
@@ -2029,12 +2087,28 @@ PrefabInstance:
       propertyPath: m_EnableUIInteraction
       value: 1
       objectReference: {fileID: 0}
+    - target: {fileID: 5957633321789166585, guid: 8cd1b957775c83d419a50ca0dd170690, type: 3}
+      propertyPath: m_InteractionLayers.m_Bits
+      value: 0
+      objectReference: {fileID: 0}
     - target: {fileID: 5986502643206258970, guid: 8cd1b957775c83d419a50ca0dd170690, type: 3}
       propertyPath: m_Enabled
       value: 0
       objectReference: {fileID: 0}
+    - target: {fileID: 6242158772518834072, guid: 8cd1b957775c83d419a50ca0dd170690, type: 3}
+      propertyPath: m_InteractionLayers.m_Bits
+      value: 0
+      objectReference: {fileID: 0}
     - target: {fileID: 6482949478191993489, guid: 8cd1b957775c83d419a50ca0dd170690, type: 3}
       propertyPath: m_Enabled
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 7177735228961677096, guid: 8cd1b957775c83d419a50ca0dd170690, type: 3}
+      propertyPath: m_AttachTransform
+      value: 
+      objectReference: {fileID: 262036588}
+    - target: {fileID: 7177735228961677096, guid: 8cd1b957775c83d419a50ca0dd170690, type: 3}
+      propertyPath: m_InteractionLayers.m_Bits
       value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 7243407822387126981, guid: 8cd1b957775c83d419a50ca0dd170690, type: 3}
@@ -2105,6 +2179,22 @@ PrefabInstance:
       propertyPath: isInsightPassthroughEnabled
       value: 1
       objectReference: {fileID: 0}
+    - target: {fileID: 7504786736843393040, guid: 8cd1b957775c83d419a50ca0dd170690, type: 3}
+      propertyPath: m_Enabled
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 7597630249452326051, guid: 8cd1b957775c83d419a50ca0dd170690, type: 3}
+      propertyPath: m_InteractionLayers.m_Bits
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 7992213461808066130, guid: 8cd1b957775c83d419a50ca0dd170690, type: 3}
+      propertyPath: m_Enabled
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 7992213461808066130, guid: 8cd1b957775c83d419a50ca0dd170690, type: 3}
+      propertyPath: m_InteractionLayers.m_Bits
+      value: 0
+      objectReference: {fileID: 0}
     - target: {fileID: 8309888549029149599, guid: 8cd1b957775c83d419a50ca0dd170690, type: 3}
       propertyPath: m_BackGroundColor.a
       value: 0
@@ -2117,17 +2207,33 @@ PrefabInstance:
       propertyPath: m_EnableUIInteraction
       value: 1
       objectReference: {fileID: 0}
-    - target: {fileID: 8531481748773023893, guid: 8cd1b957775c83d419a50ca0dd170690, type: 3}
-      propertyPath: m_Enabled
+    - target: {fileID: 8309888549433079776, guid: 8cd1b957775c83d419a50ca0dd170690, type: 3}
+      propertyPath: m_InteractionLayers.m_Bits
       value: 0
       objectReference: {fileID: 0}
+    - target: {fileID: 8531481748773023893, guid: 8cd1b957775c83d419a50ca0dd170690, type: 3}
+      propertyPath: m_Enabled
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 8531481748773023893, guid: 8cd1b957775c83d419a50ca0dd170690, type: 3}
+      propertyPath: m_BaseLineMaterial
+      value: 
+      objectReference: {fileID: 10306, guid: 0000000000000000f000000000000000, type: 0}
+    - target: {fileID: 8531481748773023893, guid: 8cd1b957775c83d419a50ca0dd170690, type: 3}
+      propertyPath: m_EmptyHitMaterial
+      value: 
+      objectReference: {fileID: 10306, guid: 0000000000000000f000000000000000, type: 0}
     - target: {fileID: 8653375010361052183, guid: 8cd1b957775c83d419a50ca0dd170690, type: 3}
       propertyPath: overlayType
       value: 1
       objectReference: {fileID: 0}
+    - target: {fileID: 8780508857063341743, guid: 8cd1b957775c83d419a50ca0dd170690, type: 3}
+      propertyPath: m_InteractionLayers.m_Bits
+      value: 0
+      objectReference: {fileID: 0}
     - target: {fileID: 8973894147942851358, guid: 8cd1b957775c83d419a50ca0dd170690, type: 3}
       propertyPath: m_Enabled
-      value: 0
+      value: 1
       objectReference: {fileID: 0}
     - target: {fileID: 9144994010545451691, guid: 8cd1b957775c83d419a50ca0dd170690, type: 3}
       propertyPath: m_ClearFlags

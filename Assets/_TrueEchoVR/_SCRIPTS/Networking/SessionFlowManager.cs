@@ -167,7 +167,7 @@ namespace TEVR
             }
         }
 
-        private void AddDefaultDemoQRCodes()
+        public void AddDefaultDemoQRCodes()
         {
             string[] demoPayloads = { "TrueEchoVR", "1", "2", "3" };
             Vector3[] demoOffsets = { 

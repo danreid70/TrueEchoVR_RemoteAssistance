@@ -38,6 +38,7 @@ namespace TEVR
         public class QRCodeInstance
         {
             public GameObject visualObject;
+            public MRUKTrackable trackable;
             public string fullPayload;
             public string identifierKey;
             public Vector3 lastPosition;
@@ -76,6 +77,32 @@ namespace TEVR
         private void Start()
         {
             if (autoSaveLoad) LoadFromDiskAndRestore();
+            if (MRUK.Instance != null)
+            {
+                MRUK.Instance.SceneSettings.TrackableAdded.AddListener(OnTrackableAdded);
+                MRUK.Instance.SceneSettings.TrackableRemoved.AddListener(OnTrackableRemoved);
+            }
+        }
+
+        private void Update()
+        {
+            if (!IsDetecting) return;
+            foreach (var inst in _trackedQRCodes.Values)
+            {
+                if (inst.trackable != null && inst.visualObject != null)
+                {
+                    Vector3 tPos = inst.trackable.transform.position;
+                    Quaternion tRot = inst.trackable.transform.rotation;
+                    if (Vector3.Distance(inst.lastPosition, tPos) > positionThreshold || Quaternion.Angle(inst.lastRotation, tRot) > rotationThreshold)
+                    {
+                        Quaternion cRot = tRot * Quaternion.Euler(0, 180, 0);
+                        inst.visualObject.transform.SetPositionAndRotation(tPos, cRot);
+                        inst.lastPosition = tPos;
+                        inst.lastRotation = cRot;
+                        OnQRCodeUpdated?.Invoke(inst);
+                    }
+                }
+            }
         }
 
         public void ClearQRCodes()
@@ -167,11 +194,13 @@ namespace TEVR
             
             if (_trackedQRCodes.TryGetValue(key, out QRCodeInstance existing))
             {
+                existing.trackable = trackable;
                 if (existing.visualObject != null)
                 {
-                    existing.visualObject.transform.SetPositionAndRotation(trackable.transform.position, trackable.transform.rotation);
+                    Quaternion cRot = trackable.transform.rotation * Quaternion.Euler(0, 180, 0);
+                    existing.visualObject.transform.SetPositionAndRotation(trackable.transform.position, cRot);
                     existing.lastPosition = trackable.transform.position;
-                    existing.lastRotation = trackable.transform.rotation;
+                    existing.lastRotation = cRot;
                     UpdateTextOnObject(existing.visualObject, fullPayload);
                 }
                 if (isAnchor) { RoomAnchorInstance = existing; OnRoomAnchorDiscovered?.Invoke(existing); ActivateDormantQRCodes(); }
@@ -182,18 +211,33 @@ namespace TEVR
             if (isAnchor)
             {
                 RoomAnchorInstance = CreateAndAddInstance(fullPayload, trackable.transform.position, trackable.transform.rotation, QRStatus.Official, trackable.transform.localScale, true);
+                RoomAnchorInstance.trackable = trackable;
                 OnRoomAnchorDiscovered?.Invoke(RoomAnchorInstance);
                 ActivateDormantQRCodes();
             }
             else if (_isAnchorSet)
             {
-                CreateAndAddInstance(fullPayload, trackable.transform.position, trackable.transform.rotation, QRStatus.Unknown, trackable.transform.localScale, true);
+                var inst = CreateAndAddInstance(fullPayload, trackable.transform.position, trackable.transform.rotation, QRStatus.Unknown, trackable.transform.localScale, true);
+                inst.trackable = trackable;
             }
             else
             {
                 _dormantQRCodes.Add(new CalibrationQRData { qrValue = fullPayload, position = trackable.transform.position, rotation = trackable.transform.rotation });
             }
             if (autoSaveLoad) SaveToDisk();
+        }
+
+        public void OnTrackableRemoved(MRUKTrackable trackable)
+        {
+            if (!IsDetecting || trackable == null || trackable.TrackableType != OVRAnchor.TrackableType.QRCode) return;
+            string key = GetIdentifierKey(trackable.MarkerPayloadString ?? "");
+            if (_trackedQRCodes.TryGetValue(key, out QRCodeInstance instance))
+            {
+                if (instance.visualObject != null) Destroy(instance.visualObject);
+                _trackedQRCodes.Remove(key);
+                OnQRCodeRemoved?.Invoke(key);
+                if (autoSaveLoad) SaveToDisk();
+            }
         }
 
         private QRCodeInstance CreateAndAddInstance(string payload, Vector3 pos, Quaternion rot, QRStatus status, Vector3 scale, bool createVisual, bool isPosLocal = false)
@@ -221,15 +265,17 @@ namespace TEVR
             bool isAnchor = payload.Contains(qrRoomAnchorLabel);
             GameObject root = new GameObject(isAnchor ? "RoomAnchor" : $"QR_{payload.GetHashCode()}");
 
+            Quaternion cRot = rot * Quaternion.Euler(0, 180, 0);
+
             if (!isAnchor && _isAnchorSet)
             {
                 root.transform.SetParent(RoomAnchorInstance.visualObject.transform);
-                if (isPosLocal) { root.transform.localPosition = pos; root.transform.localRotation = rot; }
-                else root.transform.SetPositionAndRotation(pos, rot);
+                if (isPosLocal) { root.transform.localPosition = pos; root.transform.localRotation = cRot; }
+                else root.transform.SetPositionAndRotation(pos, cRot);
             }
             else
             {
-                root.transform.SetPositionAndRotation(pos, rot);
+                root.transform.SetPositionAndRotation(pos, cRot);
             }
 
             foreach (var action in payloadActions)
