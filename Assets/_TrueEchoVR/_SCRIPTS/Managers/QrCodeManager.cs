@@ -5,13 +5,10 @@ using System.IO;
 using TMPro;
 using UnityEngine;
 using UnityEngine.Events;
+using System.Linq;
 
 namespace TEVR
 {
-    /// <summary>
-    /// Manages the detection, visualization, and persistence of QR code markers in the MR scene.
-    /// Integrated with Meta MR Utility Kit (MRUK).
-    /// </summary>
     public class QrCodeManager : MonoBehaviour
     {
         [Serializable]
@@ -23,38 +20,21 @@ namespace TEVR
         }
 
         [Header("QR Code Tracking Settings")]
-        [Tooltip("Label used to identify the room's main anchor QR code.")]
         public string qrRoomAnchorLabel = "RoomAnchor";
-        
-        [Tooltip("Minimum movement required to trigger a position update event.")]
-        public float positionThreshold = 0.02f;
-        
-        [Tooltip("Minimum rotation change (degrees) required to trigger an update event.")]
-        public float rotationThreshold = 0.5f;
-
-        [Header("Payload Configuration")]
-        [Tooltip("Maximum length of the payload string used for unique identification keys.")]
-        public int payloadIdentifierMaxLength = 20;
+        public float positionThreshold = 0.01f;
+        public float rotationThreshold = 0.2f;
 
         [Header("Visualization & Prefabs")]
-        [Tooltip("Specific actions or prefabs to trigger when a matching QR payload is detected.")]
         public List<QRPayloadAction> payloadActions = new List<QRPayloadAction>();
 
         [Header("Persistence")]
-        [Tooltip("Automatically save detected QR codes to disk and load them on startup.")]
         public bool autoSaveLoad = true;
         public string saveFileName = "QRDetectedData.json";
 
-        /// <summary>
-        /// Current state of QR code detection.
-        /// </summary>
         public bool IsDetecting { get; private set; } = true;
 
         public enum QRStatus { Official, Unknown }
 
-        /// <summary>
-        /// Represents a specific instance of a detected QR code in the world.
-        /// </summary>
         public class QRCodeInstance
         {
             public GameObject visualObject;
@@ -65,268 +45,218 @@ namespace TEVR
             public QRStatus status = QRStatus.Unknown;
         }
 
-        // Events
         public Action<QRCodeInstance> OnRoomAnchorDiscovered;
         public Action<QRCodeInstance> OnQRCodeAdded;
         public Action<QRCodeInstance> OnQRCodeUpdated;
         public Action<string> OnQRCodeRemoved;
 
         private readonly Dictionary<string, QRCodeInstance> _trackedQRCodes = new Dictionary<string, QRCodeInstance>();
-        
-        /// <summary>
-        /// All currently tracked QR codes, keyed by their identifier payload.
-        /// </summary>
         public IReadOnlyDictionary<string, QRCodeInstance> TrackedQRCodes => _trackedQRCodes;
 
-        private bool _isAnchorSet = false;
+        public QRCodeInstance RoomAnchorInstance { get; private set; }
+        private bool _isAnchorSet => RoomAnchorInstance != null;
         private List<CalibrationQRData> _dormantQRCodes = new List<CalibrationQRData>();
 
-        /// <summary>
-        /// Sets whether the room anchor has been established.
-        /// When false, non-anchor QR codes are ignored to ensure spatial consistency.
-        /// </summary>
         public void SetAnchorEstablished(bool established)
         {
-            _isAnchorSet = established;
-            if (_isAnchorSet)
-            {
-                ActivateDormantQRCodes();
-            }
+            if (established && _isAnchorSet) ActivateDormantQRCodes();
         }
 
         private void ActivateDormantQRCodes()
         {
-            foreach (var dormant in _dormantQRCodes)
+            if (!_isAnchorSet) return;
+            var list = new List<CalibrationQRData>(_dormantQRCodes);
+            _dormantQRCodes.Clear();
+            foreach (var dormant in list)
             {
                 UpdateQRCodeFromRemote(dormant.qrValue, dormant.position, dormant.rotation);
             }
-            _dormantQRCodes.Clear();
         }
 
         private void Start()
         {
-            if (autoSaveLoad)
-            {
-                LoadFromDiskAndRestore();
-            }
+            if (autoSaveLoad) LoadFromDiskAndRestore();
         }
 
-        public void StartQRCodeDetection() => IsDetecting = true;
-        public void StopQRCodeDetection() => IsDetecting = false;
-
-        /// <summary>
-        /// Removes all tracked QR codes and clears local persistence.
-        /// </summary>
         public void ClearQRCodes()
         {
-            var keys = new List<string>(_trackedQRCodes.Keys);
-            foreach (var key in keys)
+            foreach (var inst in _trackedQRCodes.Values)
             {
-                OnQRCodeRemoved?.Invoke(key);
-                if (_trackedQRCodes[key].visualObject != null)
-                {
-                    Destroy(_trackedQRCodes[key].visualObject);
-                }
+                if (inst.visualObject != null) Destroy(inst.visualObject);
             }
             _trackedQRCodes.Clear();
+            RoomAnchorInstance = null;
             if (autoSaveLoad) SaveToDisk();
         }
 
-        /// <summary>
-        /// Serializes all currently tracked QR codes into a JSON string matching the Replit calibration structure.
-        /// </summary>
         public string GetQRCodeDataAsJson(string headsetId)
         {
             var list = new List<CalibrationQRData>();
-            foreach (var kvp in _trackedQRCodes)
+            foreach (var inst in _trackedQRCodes.Values)
             {
-                list.Add(new CalibrationQRData
+                Vector3 pos = inst.lastPosition;
+                Quaternion rot = inst.lastRotation;
+
+                if (inst != RoomAnchorInstance && inst.visualObject != null && _isAnchorSet)
                 {
-                    qrValue = kvp.Value.fullPayload,
-                    position = kvp.Value.lastPosition,
-                    rotation = kvp.Value.lastRotation
-                });
+                    pos = inst.visualObject.transform.localPosition;
+                    rot = inst.visualObject.transform.localRotation;
+                }
+
+                list.Add(new CalibrationQRData { qrValue = inst.fullPayload, position = pos, rotation = rot });
             }
             return JsonUtility.ToJson(new CalibrationWrapper { headsetId = headsetId, qrCodes = list });
         }
 
-        /// <summary>
-        /// Forces an update or creation of a QR code based on remote data (e.g., from the Expert console).
-        /// </summary>
         public void UpdateQRCodeFromRemote(string payload, Vector3 pos, Quaternion rot)
         {
             string key = GetIdentifierKey(payload);
             bool isAnchor = payload.Contains(qrRoomAnchorLabel);
 
-            if (_trackedQRCodes.TryGetValue(key, out QRCodeInstance existing))
+            if (isAnchor)
             {
-                existing.status = QRStatus.Official;
-                existing.lastPosition = pos;
-                existing.lastRotation = rot;
-
-                if (existing.visualObject != null)
+                if (_trackedQRCodes.TryGetValue(key, out QRCodeInstance existingAnchor))
                 {
-                    existing.visualObject.transform.SetPositionAndRotation(pos, rot);
-                    UpdateTextOnObject(existing.visualObject, payload);
+                    existingAnchor.lastPosition = pos;
+                    existingAnchor.lastRotation = rot;
+                    if (existingAnchor.visualObject != null) existingAnchor.visualObject.transform.SetPositionAndRotation(pos, rot);
+                    RoomAnchorInstance = existingAnchor;
                 }
-                else if (_isAnchorSet || isAnchor)
+                else
                 {
-                    // Create visual if it was missing and we are now allowed to show it
-                    existing.visualObject = CreateVisualObject(payload, pos, rot, QRStatus.Official, new Vector3(0.15f, 0.15f, 0.005f));
+                    RoomAnchorInstance = CreateAndAddInstance(payload, pos, rot, QRStatus.Official, new Vector3(0.15f, 0.15f, 0.005f), true);
                 }
-                
-                OnQRCodeUpdated?.Invoke(existing);
+                ActivateDormantQRCodes();
             }
             else
             {
-                // Create instance but only create visual if anchor is set or it IS the anchor
-                CreateAndAddInstance(payload, pos, rot, QRStatus.Official, new Vector3(0.15f, 0.15f, 0.005f), _isAnchorSet || isAnchor);
+                if (_trackedQRCodes.TryGetValue(key, out QRCodeInstance existing))
+                {
+                    existing.status = QRStatus.Official;
+                    if (existing.visualObject != null)
+                    {
+                        if (_isAnchorSet) { existing.visualObject.transform.localPosition = pos; existing.visualObject.transform.localRotation = rot; }
+                        else existing.visualObject.transform.SetPositionAndRotation(pos, rot);
+                        UpdateTextOnObject(existing.visualObject, payload);
+                    }
+                    else if (_isAnchorSet)
+                    {
+                         existing.visualObject = CreateVisualObject(payload, pos, rot, QRStatus.Official, new Vector3(0.15f, 0.15f, 0.005f), true);
+                    }
+                    OnQRCodeUpdated?.Invoke(existing);
+                }
+                else if (_isAnchorSet)
+                {
+                    CreateAndAddInstance(payload, pos, rot, QRStatus.Official, new Vector3(0.15f, 0.15f, 0.005f), true, true);
+                }
+                else
+                {
+                    _dormantQRCodes.Add(new CalibrationQRData { qrValue = payload, position = pos, rotation = rot });
+                }
             }
             if (autoSaveLoad) SaveToDisk();
         }
 
-        /// <summary>
-        /// Callback for MRUK when a new trackable object is detected.
-        /// </summary>
         public void OnTrackableAdded(MRUKTrackable trackable)
         {
-            Debug.Log($"[QrCodeManager] Trackable Added: {trackable?.name}, Type: {trackable?.TrackableType}");
             if (!IsDetecting || trackable == null || trackable.TrackableType != OVRAnchor.TrackableType.QRCode) return;
 
             string fullPayload = trackable.MarkerPayloadString ?? "";
-            string identifierKey = GetIdentifierKey(fullPayload);
-            bool isAnchorMarker = fullPayload.Contains(qrRoomAnchorLabel);
+            string key = GetIdentifierKey(fullPayload);
+            bool isAnchor = fullPayload.Contains(qrRoomAnchorLabel);
             
-            Debug.Log($"[QrCodeManager] Detected QR: {fullPayload}, IsAnchor: {isAnchorMarker}, Pos: {trackable.transform.position}");
-
-            // Verification log in headset
-            SignalingManager.Instance?.gameObject.GetComponentInChildren<SessionUiController>()?.AppendChatMessage($"<color=white>[Detection]</color> Seen: {fullPayload}");
-
-            // Allow updates for existing QR codes even if the anchor isn't set
-// This ensures stale disk data is corrected as soon as the marker is seen.
-            if (_trackedQRCodes.TryGetValue(identifierKey, out QRCodeInstance existing))
+            if (_trackedQRCodes.TryGetValue(key, out QRCodeInstance existing))
             {
-                Vector3 newPos = trackable.transform.position;
-                Quaternion newRot = trackable.transform.rotation;
-
-                if (Vector3.Distance(existing.lastPosition, newPos) > positionThreshold ||
-                    Quaternion.Angle(existing.lastRotation, newRot) > rotationThreshold)
+                if (existing.visualObject != null)
                 {
-                    existing.visualObject.transform.SetPositionAndRotation(newPos, newRot);
-                    existing.lastPosition = newPos;
-                    existing.lastRotation = newRot;
+                    existing.visualObject.transform.SetPositionAndRotation(trackable.transform.position, trackable.transform.rotation);
+                    existing.lastPosition = trackable.transform.position;
+                    existing.lastRotation = trackable.transform.rotation;
                     UpdateTextOnObject(existing.visualObject, fullPayload);
-                    OnQRCodeUpdated?.Invoke(existing);
-                    
-                    if (isAnchorMarker) OnRoomAnchorDiscovered?.Invoke(existing);
                 }
+                if (isAnchor) { RoomAnchorInstance = existing; OnRoomAnchorDiscovered?.Invoke(existing); ActivateDormantQRCodes(); }
+                OnQRCodeUpdated?.Invoke(existing);
                 return;
             }
 
-            // Allow all detections but mark them as Unknown if anchor is not set or not a verified marker
-            QRCodeInstance instance = CreateAndAddInstance(fullPayload, trackable.transform.position, trackable.transform.rotation, 
-                isAnchorMarker ? QRStatus.Official : QRStatus.Unknown, trackable.transform.localScale, true);
-            
-            if (isAnchorMarker) OnRoomAnchorDiscovered?.Invoke(instance);
-            
+            if (isAnchor)
+            {
+                RoomAnchorInstance = CreateAndAddInstance(fullPayload, trackable.transform.position, trackable.transform.rotation, QRStatus.Official, trackable.transform.localScale, true);
+                OnRoomAnchorDiscovered?.Invoke(RoomAnchorInstance);
+                ActivateDormantQRCodes();
+            }
+            else if (_isAnchorSet)
+            {
+                CreateAndAddInstance(fullPayload, trackable.transform.position, trackable.transform.rotation, QRStatus.Unknown, trackable.transform.localScale, true);
+            }
+            else
+            {
+                _dormantQRCodes.Add(new CalibrationQRData { qrValue = fullPayload, position = trackable.transform.position, rotation = trackable.transform.rotation });
+            }
             if (autoSaveLoad) SaveToDisk();
         }
 
-        private QRCodeInstance CreateAndAddInstance(string payload, Vector3 pos, Quaternion rot, QRStatus status, Vector3 scale, bool createVisual)
+        private QRCodeInstance CreateAndAddInstance(string payload, Vector3 pos, Quaternion rot, QRStatus status, Vector3 scale, bool createVisual, bool isPosLocal = false)
         {
-            // Avoid duplicate additions
-            string identifierKey = GetIdentifierKey(payload);
-            if (_trackedQRCodes.TryGetValue(identifierKey, out var existing))
-            {
-                // Update instead of add if already tracked
-                existing.status = status;
-                existing.lastPosition = pos;
-                existing.lastRotation = rot;
-                if (existing.visualObject != null)
-                {
-                    existing.visualObject.transform.SetPositionAndRotation(pos, rot);
-                    UpdateTextOnObject(existing.visualObject, payload);
-                }
-                return existing;
-            }
+            string key = GetIdentifierKey(payload);
+            if (_trackedQRCodes.TryGetValue(key, out var existing)) return existing;
 
-            GameObject visualObj = createVisual ? CreateVisualObject(payload, pos, rot, status, scale) : null;
+            GameObject visualObj = createVisual ? CreateVisualObject(payload, pos, rot, status, scale, isPosLocal) : null;
             var instance = new QRCodeInstance
             {
                 visualObject = visualObj,
                 fullPayload = payload,
-                identifierKey = identifierKey,
+                identifierKey = key,
                 lastPosition = pos,
                 lastRotation = rot,
                 status = status
             };
-            _trackedQRCodes.Add(instance.identifierKey, instance);
+            _trackedQRCodes.Add(key, instance);
             OnQRCodeAdded?.Invoke(instance);
             return instance;
         }
 
-        /// <summary>
-        /// Callback for MRUK when a trackable object is removed.
-        /// </summary>
-        public void OnTrackableRemoved(MRUKTrackable trackable)
+        private GameObject CreateVisualObject(string payload, Vector3 pos, Quaternion rot, QRStatus status, Vector3 scale, bool isPosLocal = false)
         {
-            if (!IsDetecting || trackable == null || trackable.TrackableType != OVRAnchor.TrackableType.QRCode) return;
+            bool isAnchor = payload.Contains(qrRoomAnchorLabel);
+            GameObject root = new GameObject(isAnchor ? "RoomAnchor" : $"QR_{payload.GetHashCode()}");
 
-            string fullPayload = trackable.MarkerPayloadString ?? "";
-            string identifierKey = GetIdentifierKey(fullPayload);
-
-            if (_trackedQRCodes.TryGetValue(identifierKey, out QRCodeInstance instance))
+            if (!isAnchor && _isAnchorSet)
             {
-                if (instance.visualObject != null) Destroy(instance.visualObject);
-                _trackedQRCodes.Remove(identifierKey);
-                OnQRCodeRemoved?.Invoke(identifierKey);
-                if (autoSaveLoad) SaveToDisk();
+                root.transform.SetParent(RoomAnchorInstance.visualObject.transform);
+                if (isPosLocal) { root.transform.localPosition = pos; root.transform.localRotation = rot; }
+                else root.transform.SetPositionAndRotation(pos, rot);
             }
-        }
+            else
+            {
+                root.transform.SetPositionAndRotation(pos, rot);
+            }
 
-        private string GetIdentifierKey(string payload)
-        {
-            if (string.IsNullOrEmpty(payload)) return "null";
-            if (payloadIdentifierMaxLength <= 0 || payload.Length <= payloadIdentifierMaxLength)
-                return payload;
-            return payload.Substring(0, payloadIdentifierMaxLength);
-        }
-
-        private GameObject CreateVisualObject(string payload, Vector3 position, Quaternion rotation, QRStatus status, Vector3 scale)
-        {
-            GameObject root = new GameObject($"QR_Instance_{payload.GetHashCode()}");
-            root.transform.SetPositionAndRotation(position, rotation);
-
-            GameObject prefabToUse = null;
             foreach (var action in payloadActions)
             {
                 if (!string.IsNullOrEmpty(action.matchString) && payload.Contains(action.matchString))
                 {
-                    prefabToUse = action.customPrefab;
+                    if (action.customPrefab != null)
+                    {
+                        var instantiated = Instantiate(action.customPrefab, root.transform);
+                        instantiated.transform.localPosition = Vector3.zero;
+                        instantiated.transform.localRotation = Quaternion.identity;
+                    }
                     action.onPayloadMatched?.Invoke();
                     break;
                 }
             }
 
-            if (prefabToUse != null)
-            {
-                var instantiated = Instantiate(prefabToUse, root.transform);
-                instantiated.transform.localPosition = Vector3.zero;
-                instantiated.transform.localRotation = Quaternion.identity;
-            }
-
-            // Always add the standard visualization (border, label, sphere) even if a prefab is used
             CreateDefaultVisualization(root, payload, status, scale);
-            
             return root;
         }
 
         private void CreateDefaultVisualization(GameObject root, string payload, QRStatus status, Vector3 scale)
         {
-            Color baseColor = status == QRStatus.Official ? Color.green : Color.yellow; // Official is green, Unknown is yellow
-            string labelPrefix = status == QRStatus.Official ? "[Legit] " : "[Unknown] ";
+            Color baseColor = status == QRStatus.Official ? Color.green : Color.yellow;
+            bool isLegit = payload.Contains(qrRoomAnchorLabel) || payload.Contains("TrueEchoVR") || (payload.Length <= 2 && payload != "null");
+            string labelPrefix = isLegit ? "[Legit] " : "[Unknown] ";
 
-            // Background Plane
             GameObject bg = GameObject.CreatePrimitive(PrimitiveType.Cube);
             bg.name = "VisualBackground";
             bg.transform.SetParent(root.transform);
@@ -338,33 +268,26 @@ namespace TEVR
             var renderer = bg.GetComponent<Renderer>();
             renderer.material = new Material(Shader.Find("Universal Render Pipeline/Unlit"));
             renderer.material.color = new Color(baseColor.r, baseColor.g, baseColor.b, 0.3f);
-            // Set for transparency in URP
-            renderer.material.SetInt("_Surface", 1); // 1 is Transparent
+            renderer.material.SetInt("_Surface", 1);
             renderer.material.SetInt("_ZWrite", 0);
             renderer.material.renderQueue = 3000;
 
-            // Borders
             CreateVisualBorder(root.transform, scale, baseColor);
 
-            // Center Debug Sphere (Ensures it's visible even if looking from side)
             GameObject sphere = GameObject.CreatePrimitive(PrimitiveType.Sphere);
             sphere.name = "DebugCenter";
             sphere.transform.SetParent(root.transform);
             sphere.transform.localScale = new Vector3(0.015f, 0.015f, 0.015f);
             sphere.transform.localPosition = Vector3.zero;
-            if (sphere.TryGetComponent<Collider>(out var sCol)) Destroy(sphere.GetComponent<Collider>());
-            var sRenderer = sphere.GetComponent<Renderer>();
-            sRenderer.material = new Material(Shader.Find("Universal Render Pipeline/Unlit"));
-            sRenderer.material.color = baseColor;
+            if (sphere.TryGetComponent<Collider>(out var sCol)) Destroy(sCol);
+            sphere.GetComponent<Renderer>().material = renderer.material;
 
-            // Add Pulse Effect for visibility
             var pulse = bg.AddComponent<QRPulseEffect>();
             pulse.targetColor = baseColor;
 
-            // Text Label - Correctly aligned with the QR code plane
             GameObject textObj = new GameObject("PayloadLabel");
             textObj.transform.SetParent(root.transform);
-            textObj.transform.localPosition = new Vector3(0, 0, -0.015f); // Offset forward to avoid Z-fighting
+            textObj.transform.localPosition = new Vector3(0, 0, -0.015f);
             textObj.transform.localRotation = Quaternion.identity;
 
             var tmp = textObj.AddComponent<TextMeshPro>();
@@ -372,20 +295,19 @@ namespace TEVR
             tmp.fontSize = 0.15f;
             tmp.alignment = TextAlignmentOptions.Center;
             tmp.color = Color.white;
-            tmp.rectTransform.sizeDelta = new Vector2(scale.x * 3.0f, scale.y * 3.0f); // Larger bounding box
+            tmp.rectTransform.sizeDelta = new Vector2(scale.x * 3.0f, scale.y * 3.0f);
             tmp.enableAutoSizing = true;
             tmp.fontSizeMin = 0.05f;
             tmp.fontSizeMax = 0.5f;
-            tmp.margin = new Vector4(0.01f, 0.01f, 0.01f, 0.01f);
         }
 
         private void CreateVisualBorder(Transform parent, Vector3 scale, Color color)
         {
-            float thickness = 0.008f; // Slightly thicker
-            CreateBorderBar(parent, new Vector3(0, scale.y / 2, 0), new Vector3(scale.x + thickness, thickness, thickness), color);
-            CreateBorderBar(parent, new Vector3(0, -scale.y / 2, 0), new Vector3(scale.x + thickness, thickness, thickness), color);
-            CreateBorderBar(parent, new Vector3(-scale.x / 2, 0, 0), new Vector3(thickness, scale.y + thickness, thickness), color);
-            CreateBorderBar(parent, new Vector3(scale.x / 2, 0, 0), new Vector3(thickness, scale.y + thickness, thickness), color);
+            float t = 0.008f;
+            CreateBorderBar(parent, new Vector3(0, scale.y/2, 0), new Vector3(scale.x+t, t, t), color);
+            CreateBorderBar(parent, new Vector3(0, -scale.y/2, 0), new Vector3(scale.x+t, t, t), color);
+            CreateBorderBar(parent, new Vector3(-scale.x/2, 0, 0), new Vector3(t, scale.y+t, t), color);
+            CreateBorderBar(parent, new Vector3(scale.x/2, 0, 0), new Vector3(t, scale.y+t, t), color);
         }
 
         private void CreateBorderBar(Transform parent, Vector3 pos, Vector3 size, Color color)
@@ -396,126 +318,70 @@ namespace TEVR
             bar.transform.localScale = size;
             bar.transform.localRotation = Quaternion.identity;
             if (bar.TryGetComponent<BoxCollider>(out var col)) Destroy(col);
-            
             var r = bar.GetComponent<Renderer>();
             r.material = new Material(Shader.Find("Universal Render Pipeline/Unlit"));
             r.material.color = color;
         }
 
-        private void UpdateTextOnObject(GameObject obj, string newPayload)
+        private void UpdateTextOnObject(GameObject obj, string payload)
         {
             var tmp = obj.GetComponentInChildren<TextMeshPro>();
             if (tmp != null) 
             {
-                bool isLegit = newPayload.Contains(qrRoomAnchorLabel) || newPayload.Contains("TrueEchoVR") || newPayload.Length <= 2; // Simple heuristic for demo
-                string prefix = isLegit ? "[Legit] " : "[Unknown] ";
-                tmp.text = $"{prefix}{newPayload}";
+                bool isLegit = payload.Contains(qrRoomAnchorLabel) || payload.Contains("TrueEchoVR") || (payload.Length <= 2 && payload != "null");
+                tmp.text = $"{(isLegit ? "[Legit] " : "[Unknown] ")}{payload}";
             }
-        }
-
-        private class QRPulseEffect : MonoBehaviour
-        {
-            public Color targetColor;
-            private Material _mat;
-            private float _time;
-
-            void Start() 
-            { 
-                var r = GetComponent<Renderer>();
-                if (r != null) _mat = r.material; 
-            }
-            void Update()
-            {
-                if (_mat == null) return;
-                _time += Time.deltaTime * 2f;
-                float pulse = (Mathf.Sin(_time) + 1f) * 0.5f;
-                _mat.color = new Color(targetColor.r, targetColor.g, targetColor.b, 0.1f + (pulse * 0.2f));
-            }
-        }
-
-        [Serializable]
-private class CalibrationQRData
-        {
-            public string qrValue;
-            public Vector3 position;
-            public Quaternion rotation;
-        }
-
-        [Serializable]
-        private class CalibrationWrapper
-        {
-            public string headsetId;
-            public List<CalibrationQRData> qrCodes;
-        }
-
-        [Serializable]
-        private class SerializableQRData
-        {
-            public string identifierKey;
-            public string fullPayload;
-            public Vector3 position;
-            public Quaternion rotation;
         }
 
         private void SaveToDisk()
         {
-            var saveList = new List<SerializableQRData>();
-            foreach (var kvp in _trackedQRCodes)
+            var list = new List<SerializableQRData>();
+            foreach (var inst in _trackedQRCodes.Values)
             {
-                saveList.Add(new SerializableQRData
-                {
-                    identifierKey = kvp.Value.identifierKey,
-                    fullPayload = kvp.Value.fullPayload,
-                    position = kvp.Value.visualObject.transform.position,
-                    rotation = kvp.Value.visualObject.transform.rotation
-                });
+                if (inst.visualObject == null) continue;
+                Vector3 p = inst.visualObject.transform.position;
+                Quaternion r = inst.visualObject.transform.rotation;
+                if (inst != RoomAnchorInstance && _isAnchorSet) { p = inst.visualObject.transform.localPosition; r = inst.visualObject.transform.localRotation; }
+                list.Add(new SerializableQRData { identifierKey = inst.identifierKey, fullPayload = inst.fullPayload, position = p, rotation = r });
             }
-            string json = JsonUtility.ToJson(new Wrapper { data = saveList }, true);
-            File.WriteAllText(Path.Combine(Application.persistentDataPath, saveFileName), json);
+            File.WriteAllText(Path.Combine(Application.persistentDataPath, saveFileName), JsonUtility.ToJson(new Wrapper { data = list }, true));
         }
 
         private void LoadFromDiskAndRestore()
         {
             string path = Path.Combine(Application.persistentDataPath, saveFileName);
             if (!File.Exists(path)) return;
-            try
-            {
-                string json = File.ReadAllText(path);
-                ManualLoadFromJson(json);
-            }
-            catch (Exception e)
-            {
-                Debug.LogError($"[QrCodeManager] Failed to load QR data: {e.Message}");
-            }
+            try {
+                Wrapper w = JsonUtility.FromJson<Wrapper>(File.ReadAllText(path));
+                if (w?.data == null) return;
+                var anchor = w.data.Find(d => d.fullPayload.Contains(qrRoomAnchorLabel));
+                if (anchor != null) UpdateQRCodeFromRemote(anchor.fullPayload, anchor.position, anchor.rotation);
+                foreach (var it in w.data) { if (it == anchor) continue; if (_isAnchorSet) UpdateQRCodeFromRemote(it.fullPayload, it.position, it.rotation); else _dormantQRCodes.Add(new CalibrationQRData { qrValue = it.fullPayload, position = it.position, rotation = it.rotation }); }
+            } catch (Exception e) { Debug.LogError(e.Message); }
         }
 
-        [Serializable]
-        private class Wrapper { public List<SerializableQRData> data; }
+        private string GetIdentifierKey(string p) => string.IsNullOrEmpty(p) ? "null" : (p.Length <= 20 ? p : p.Substring(0, 20));
 
+        private class QRPulseEffect : MonoBehaviour { public Color targetColor; private Material _mat; private float _time; void Start() { var r = GetComponent<Renderer>(); if (r != null) _mat = r.material; } void Update() { if (_mat == null) return; _time += Time.deltaTime * 2f; float p = (Mathf.Sin(_time) + 1f) * 0.5f; _mat.color = new Color(targetColor.r, targetColor.g, targetColor.b, 0.1f + (p * 0.2f)); } }
+        [Serializable] private class CalibrationQRData { public string qrValue; public Vector3 position; public Quaternion rotation; }
+        [Serializable] private class CalibrationWrapper { public string headsetId; public List<CalibrationQRData> qrCodes; }
+        [Serializable] private class SerializableQRData { public string identifierKey; public string fullPayload; public Vector3 position; public Quaternion rotation; }
+        [Serializable] private class Wrapper { public List<SerializableQRData> data; }
+        public void StartQRCodeDetection() => IsDetecting = true;
+        public void StopQRCodeDetection() => IsDetecting = false;
         public void ManualSave() => SaveToDisk();
         public void ManualLoad() => LoadFromDiskAndRestore();
-
-        /// <summary>
-        /// Manually loads QR code data from a JSON string.
-        /// </summary>
         public void ManualLoadFromJson(string json)
         {
             if (string.IsNullOrEmpty(json)) return;
             Wrapper wrapper = JsonUtility.FromJson<Wrapper>(json);
             if (wrapper?.data == null) return;
-
             foreach (var item in wrapper.data)
             {
-                if (_isAnchorSet || item.fullPayload.Contains(qrRoomAnchorLabel))
-                {
-                    UpdateQRCodeFromRemote(item.fullPayload, item.position, item.rotation);
-                }
-                else
-                {
-                    _dormantQRCodes.Add(new CalibrationQRData { qrValue = item.fullPayload, position = item.position, rotation = item.rotation });
-                }
+                if (_isAnchorSet || item.fullPayload.Contains(qrRoomAnchorLabel)) UpdateQRCodeFromRemote(item.fullPayload, item.position, item.rotation);
+                else _dormantQRCodes.Add(new CalibrationQRData { qrValue = item.fullPayload, position = item.position, rotation = item.rotation });
             }
             if (autoSaveLoad) SaveToDisk();
         }
-}
+    }
 }

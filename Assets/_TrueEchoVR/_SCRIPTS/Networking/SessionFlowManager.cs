@@ -17,7 +17,6 @@ namespace TEVR
         public float pullTimeoutSeconds = 5f;
 
         public bool InitializationComplete { get; private set; } = false;
-
         private bool isInitializing = true;
 
         private void Start()
@@ -40,7 +39,6 @@ namespace TEVR
 
             if (qrManager != null)
             {
-                qrManager.SetAnchorEstablished(false);
                 qrManager.OnRoomAnchorDiscovered += OnRoomAnchorDiscovered;
             }
 
@@ -54,28 +52,18 @@ namespace TEVR
 
         private void Update()
         {
-            // Fallback for cases where QR is detected but event was missed or disk-loaded anchor is now seen
+            // Fallback: Check if anchor is already tracked but we missed the event
             if (isInitializing && !InitializationComplete && qrManager != null)
             {
-                foreach (var kvp in qrManager.TrackedQRCodes)
+                if (qrManager.RoomAnchorInstance != null)
                 {
-                    if (kvp.Value.fullPayload.Contains(qrManager.qrRoomAnchorLabel))
-                    {
-                        // Anchor is tracked. If it has a visual object and we are still initializing, trigger discovery.
-                        if (kvp.Value.visualObject != null && isInitializing)
-                        {
-                            Debug.Log($"[SessionFlow] Fallback: Found RoomAnchor in tracked list: {kvp.Value.fullPayload}");
-                            OnRoomAnchorDiscovered(kvp.Value);
-                            break;
-                        }
-                    }
+                    OnRoomAnchorDiscovered(qrManager.RoomAnchorInstance);
                 }
             }
         }
 
         private void OnRemotePointToReceived(string name, string payload, string pose)
         {
-            // Use payload or name to find the right tracked QR
             foreach (var kvp in qrManager.TrackedQRCodes)
             {
                 if (kvp.Value.fullPayload == payload || kvp.Value.identifierKey == name)
@@ -103,82 +91,26 @@ namespace TEVR
 
         private void OnRoomAnchorDiscovered(QrCodeManager.QRCodeInstance anchor)
         {
-            if (!isInitializing)
-            {
-                // Drift/Movement detection for the Room Anchor
-                // Thresholds: 2cm or 1 degree
-                float dist = Vector3.Distance(anchor.visualObject.transform.position, Vector3.zero);
-                float angle = Quaternion.Angle(anchor.visualObject.transform.rotation, Quaternion.identity);
+            if (!isInitializing) return;
 
-                if (dist > 0.02f || angle > 1.0f)
-                {
-                    Debug.Log($"[System] Room Anchor move detected (Dist: {dist:F3}m, Angle: {angle:F1}°). Recalibrating Origin...");
-                    uiManager?.AppendChatMessage($"<color=yellow>[System]</color> Room Anchor moved. Recalibrating...");
-                    CalibrateOriginToAnchor(anchor);
-                }
-                return;
-            }
-
-            Debug.Log($"[SessionInitialization] RoomAnchor detected: {anchor.fullPayload}");
-            uiManager?.AppendChatMessage($"<color=green>[Init]</color> RoomAnchor detected: {anchor.fullPayload}");
+            Debug.Log($"[SessionInitialization] RoomAnchor established at {anchor.visualObject.transform.position}");
+            uiManager?.AppendChatMessage($"<color=green>[Init]</color> RoomAnchor established.");
             
-            // Clear the persistent "Look at Room Anchor" message
-            if (statusUI != null)
-                statusUI.ShowMessage("", ""); 
+            if (statusUI != null) statusUI.ShowMessage("", ""); 
 
-            CalibrateOriginToAnchor(anchor);
+            // Calibration in this refactor does NOT move the rig. 
+            // It simply allows initialization to proceed now that the root is present.
             StartCoroutine(CompleteInitializationAfterAnchor());
-        }
-
-        private void CalibrateOriginToAnchor(QrCodeManager.QRCodeInstance anchor)
-        {
-            if (xrOrigin == null || anchor.visualObject == null) return;
-
-            // 1. Capture the Physical Pose relative to current Rig
-            Vector3 wPos = anchor.visualObject.transform.position;
-            Quaternion wRot = anchor.visualObject.transform.rotation;
-
-            // Convert to Tracking Space (Rig-Local)
-            Vector3 pPos = xrOrigin.InverseTransformPoint(wPos);
-            Quaternion pRot = Quaternion.Inverse(xrOrigin.rotation) * wRot;
-
-            // 2. We want Physical Anchor (pPos, pRot) to align with Virtual origin (0,0,0, Identity)
-            // RigWorldTransform = Identity * Inverse(PhysicalPoseInRigSpace)
-            
-            // Extract Y-yaw only for comfort
-            float pYaw = pRot.eulerAngles.y;
-            Quaternion targetRigRot = Quaternion.Euler(0, -pYaw, 0);
-            
-            // Translation: Move Rig so that pPos (rotated by rig) lands at Vector3.zero
-            Vector3 targetRigPos = -(targetRigRot * pPos);
-
-            // 3. Apply
-            xrOrigin.SetPositionAndRotation(targetRigPos, targetRigRot);
-
-            string calMsg = $"Rig calibrated. physical anchor is now at virtual zero. Rig pos: {targetRigPos}";
-            Debug.Log("[Calibration] " + calMsg);
-            uiManager?.AppendChatMessage("<color=green>[System]</color> " + calMsg);
-            
-            uiManager?.LogAllQRCodesToChat();
         }
 
         private IEnumerator CompleteInitializationAfterAnchor()
         {
             isInitializing = false;
-            qrManager.SetAnchorEstablished(true);
 
             string syncMsg = "Anchor established. Syncing with cloud...";
-            if (statusUI != null)
-                statusUI.ShowMessage(syncMsg, "Please wait.");
+            if (statusUI != null) statusUI.ShowMessage(syncMsg, "Please wait.");
             
             uiManager?.AppendChatMessage($"<color=cyan>[Init]</color> {syncMsg}");
-
-            if (webAppManager != null)
-            {
-                webAppManager.FetchStartupData((json) => {
-                    Debug.Log("[SessionInitialization] Received startup data from server.");
-                });
-            }
 
             yield return StartCoroutine(LoadAndMergeQRCodes());
 
@@ -187,13 +119,10 @@ namespace TEVR
             
             if (Application.internetReachability == NetworkReachability.NotReachable)
             {
-                readyMsg += " (Offline Mode)";
-                if (statusUI != null) statusUI.ShowMessage("System Ready", "Offline Mode.");
                 if (uiManager != null) uiManager.ShowSessionScreen();
             }
             else
             {
-                if (statusUI != null) statusUI.ShowMessage("System Ready", "You can now join a session.");
                 if (uiManager != null) uiManager.ShowJoinScreen();
             }
             
@@ -229,13 +158,11 @@ namespace TEVR
 
             if (pullSuccess)
             {
-                Debug.Log("[SessionInitialization] Remote sync complete.");
                 uiManager?.AppendChatMessage("<color=green>[Init]</color> Remote sync complete.");
             }
             else
             {
-                Debug.LogWarning("[SessionInitialization] Remote sync failed/timed out. Using local/demo.");
-                uiManager?.AppendChatMessage("<color=yellow>[Init]</color> Remote sync unavailable. Adding demo markers.");
+                uiManager?.AppendChatMessage("<color=yellow>[Init]</color> Using local/demo markers.");
                 AddDefaultDemoQRCodes();
             }
         }
@@ -252,10 +179,9 @@ namespace TEVR
 
             for (int i = 0; i < demoPayloads.Length; i++)
             {
-                // Force status to Official for demo markers
                 qrManager.UpdateQRCodeFromRemote(demoPayloads[i], demoOffsets[i], Quaternion.identity);
             }
-}
+        }
 
         public void PointToQRCode(QrCodeManager.QRCodeInstance qr)
         {
