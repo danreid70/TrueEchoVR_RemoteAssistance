@@ -25,4 +25,6 @@
   <uses-permission android:name="com.oculus.permission.USE_SCENE" />
   <horizonos:uses-horizonos-sdk horizonos:minSdkVersion="60" horizonos:targetSdkVersion="85" />
   <uses-permission android:name="horizonos.permission.HEADSET_CAMERA" />
+  <uses-feature android:name="oculus.software.eye_tracking" android:required="false" />
+  <uses-permission android:name="com.oculus.permission.EYE_TRACKING" />
 </manifest>

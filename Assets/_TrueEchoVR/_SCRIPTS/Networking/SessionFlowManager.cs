@@ -62,15 +62,26 @@ namespace TEVR
             }
         }
 
-        private void OnRemotePointToReceived(string name, string payload, string pose)
+        private void OnRemotePointToReceived(string name, Vector3? position, Quaternion? rotation)
         {
-            foreach (var kvp in qrManager.TrackedQRCodes)
+            if (position.HasValue)
             {
-                if (kvp.Value.fullPayload == payload || kvp.Value.identifierKey == name)
+                // Enriched point-to
+                statusUI?.ShowMessage($"Pointing to: {name}", "");
+                // statusUI?.HighlightTarget requires Transform, so we'd need a temp object if we want a highlight
+            }
+            else
+            {
+                // Fallback: search for local QR
+                foreach (var kvp in qrManager.TrackedQRCodes)
                 {
-                    PointToQRCode(kvp.Value);
-                    return;
+                    if (kvp.Value.identifierKey == name)
+                    {
+                        PointToQRCode(kvp.Value);
+                        return;
+                    }
                 }
+                statusUI?.ShowMessage($"Admin pointing to: {name}", "(Object not found in room)");
             }
         }
 
@@ -79,6 +90,17 @@ namespace TEVR
             isInitializing = true;
             InitializationComplete = false;
 
+            if (webAppManager == null) yield break;
+
+            // Step 0: Check Credentials
+            if (!webAppManager.HasCredentials)
+            {
+                uiManager?.ShowLoginPanel();
+                while (!webAppManager.HasCredentials)
+                    yield return null;
+            }
+
+            // Step 1: Calibration (Room Anchor)
             string initMsg = "Look at the Room Anchor marker in the room to begin.";
             if (statusUI != null)
                 statusUI.ShowMessage(initMsg, "Calibration required.", true);
@@ -98,8 +120,6 @@ namespace TEVR
             
             if (statusUI != null) statusUI.ShowMessage("", ""); 
 
-            // Calibration in this refactor does NOT move the rig. 
-            // It simply allows initialization to proceed now that the root is present.
             StartCoroutine(CompleteInitializationAfterAnchor());
         }
 
@@ -107,64 +127,40 @@ namespace TEVR
         {
             isInitializing = false;
 
-            string syncMsg = "Anchor established. Syncing with cloud...";
+            string syncMsg = "Anchor established. Booting Platform...";
             if (statusUI != null) statusUI.ShowMessage(syncMsg, "Please wait.");
-            
             uiManager?.AppendChatMessage($"<color=cyan>[Init]</color> {syncMsg}");
 
-            yield return StartCoroutine(LoadAndMergeQRCodes());
+            bool bootSuccess = false;
+            if (webAppManager != null)
+            {
+                yield return StartCoroutine(webAppManager.EveryBootSequence((success) => bootSuccess = success));
+            }
+
+            if (bootSuccess)
+            {
+                uiManager?.AppendChatMessage("<color=green>[Init]</color> Platform sync complete.");
+            }
+            else
+            {
+                uiManager?.AppendChatMessage("<color=red>[Init]</color> Platform sync failed. Check connection.");
+                if (!webAppManager.HasCredentials)
+                {
+                    StartCoroutine(InitializationPhase());
+                    yield break;
+                }
+            }
 
             InitializationComplete = true;
             string readyMsg = "System Ready.";
             
-            if (Application.internetReachability == NetworkReachability.NotReachable)
-            {
-                if (uiManager != null) uiManager.ShowSessionScreen();
-            }
-            else
-            {
-                if (uiManager != null) uiManager.ShowJoinScreen();
-            }
+            if (uiManager != null) uiManager.ShowJoinScreen();
             
             uiManager?.AppendChatMessage($"<color=green>[Init]</color> {readyMsg}");
 
             qrManager.OnQRCodeAdded += OnQRCodeAddedNormal;
             qrManager.OnQRCodeUpdated += OnQRCodeUpdatedNormal;
             qrManager.OnQRCodeRemoved += OnQRCodeRemovedNormal;
-        }
-
-        private IEnumerator LoadAndMergeQRCodes()
-        {
-            uiManager?.AppendChatMessage("<color=cyan>[Init]</color> Loading local QR codes...");
-            qrManager.ManualLoad();
-            
-            bool pullSuccess = false;
-            if (webAppManager != null && webAppManager.IsConnected)
-            {
-                uiManager?.AppendChatMessage("<color=cyan>[Init]</color> Requesting remote QR codes...");
-                System.Action<string> pullCallback = null;
-                pullCallback = (json) => {
-                    qrManager.ManualLoadFromJson(json);
-                    pullSuccess = true;
-                    webAppManager.OnQRCodesPulled -= pullCallback;
-                };
-                webAppManager.OnQRCodesPulled += pullCallback;
-                webAppManager.PullQRCodes();
-
-                float start = Time.time;
-                while (!pullSuccess && Time.time - start < pullTimeoutSeconds)
-                    yield return null;
-            }
-
-            if (pullSuccess)
-            {
-                uiManager?.AppendChatMessage("<color=green>[Init]</color> Remote sync complete.");
-            }
-            else
-            {
-                uiManager?.AppendChatMessage("<color=yellow>[Init]</color> Using local/demo markers.");
-                AddDefaultDemoQRCodes();
-            }
         }
 
         public void AddDefaultDemoQRCodes()

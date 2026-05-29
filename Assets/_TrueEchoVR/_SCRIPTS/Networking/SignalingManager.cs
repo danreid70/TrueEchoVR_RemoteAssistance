@@ -4,13 +4,10 @@ using Meta.Net.NativeWebSocket;
 using System.Collections;
 using System;
 using UnityEngine.Networking;
+using System.Collections.Generic;
 
 namespace TEVR
 {
-    /// <summary>
-    /// Singleton manager for all incoming and outgoing API calls to the Replit backend.
-    /// Handles Socket.io signaling, WebRTC streaming, and RESTful data exchange.
-    /// </summary>
     public class SignalingManager : MonoBehaviour
     {
         public static SignalingManager Instance { get; private set; }
@@ -19,12 +16,12 @@ namespace TEVR
         public BackendConfig config;
         
         [Header("Session Info")]
-        public string currentLocationId;
+        public string tevrHeadsetId; 
+        public string tevrLocationId;
         public string currentRoomCode;
-        public string headsetId = "quest-3-unit-01"; // Should ideally be unique per device
         public bool IsConnected => _ws != null && _ws.State == WebSocketState.Open;
         public float currentLatency { get; private set; }
-
+        
         [Header("Reconnection Settings")]
         public bool autoReconnect = true;
         public int maxReconnectAttempts = 5;
@@ -32,10 +29,10 @@ namespace TEVR
 
         private int _reconnectCount = 0;
         private Coroutine _pingCoroutine;
+        private Coroutine _batteryCoroutine;
 
-        // WebSocket & WebRTC Traffic
         private WebSocket _ws;
-private RTCPeerConnection _pc;
+        private RTCPeerConnection _pc;
         private MediaStream _localStream;
         private VideoStreamTrack _videoTrack;
         private AudioStreamTrack _audioTrack;
@@ -51,13 +48,12 @@ private RTCPeerConnection _pc;
         private RenderTexture _captureRT;
         private Camera _internalCaptureCamera;
 
-        // Events for UI and Systems
         public Action OnConnected;
         public Action OnDisconnected;
         public Action<string> OnConnectionError;
         public Action<string> OnChatMessageReceived;
-        public Action<string, string, string> OnPointToReceived;
-        public Action<string> OnQRCodesPulled;
+        public Action<string, Vector3?, Quaternion?> OnPointToReceived;
+        public Action<StartupData> OnStartupDataReceived;
         public Action<Texture> OnRemoteStreamStarted;
         public Action<Texture> OnLocalStreamStarted;
 
@@ -76,7 +72,8 @@ private RTCPeerConnection _pc;
             {
                 Instance = this;
                 DontDestroyOnLoad(gameObject);
-                // WebRTC initialization is handled via Update coroutine or managed by the package
+                tevrHeadsetId = PlayerPrefs.GetString("TEVR_HEADSET_ID", "");
+                tevrLocationId = PlayerPrefs.GetString("TEVR_LOCATION_ID", "");
             }
             else
             {
@@ -86,79 +83,111 @@ private RTCPeerConnection _pc;
 
         private void Start()
         {
-#if UNITY_ANDROID && !UNITY_EDITOR
-            if (!UnityEngine.Android.Permission.HasUserAuthorizedPermission(UnityEngine.Android.Permission.Camera))
-            {
-                UnityEngine.Android.Permission.RequestUserPermission(UnityEngine.Android.Permission.Camera);
-            }
-            if (!UnityEngine.Android.Permission.HasUserAuthorizedPermission(UnityEngine.Android.Permission.Microphone))
-            {
-                UnityEngine.Android.Permission.RequestUserPermission(UnityEngine.Android.Permission.Microphone);
-            }
-#endif
             StartCoroutine(WebRTC.Update());
         }
 
-        #region API Handlers
+        #region Phase 1 — Provisioning & Boot
 
-        /// <summary>
-        /// Logs into the Replit server using Location ID and joins a specific room.
-        /// </summary>
-        public async void Login(string locationId, string roomCode)
+        public bool HasCredentials => !string.IsNullOrEmpty(tevrHeadsetId) && !string.IsNullOrEmpty(tevrLocationId);
+
+        public void RegisterAndBoot(string customerId, string locationId, Action<bool> onComplete)
         {
-            if (Application.internetReachability == NetworkReachability.NotReachable)
+            StartCoroutine(ProvisioningSequence(customerId, locationId, onComplete));
+        }
+
+        private IEnumerator ProvisioningSequence(string customerId, string locationId, Action<bool> onComplete)
+        {
+            bool registerDone = false;
+            string serial = SystemInfo.deviceUniqueIdentifier;
+            RegisterHeadsetPayload regPayload = new RegisterHeadsetPayload
             {
-                OnConnectionError?.Invoke("No internet connection detected.");
-                return;
-            }
+                serialNumber = serial,
+                customerId = customerId,
+                firmwareVersion = Application.version,
+                label = $"Quest {serial.Substring(Math.Max(0, serial.Length - 6))}"
+            };
 
-            currentLocationId = locationId;
+            PostData("/headsets/register", JsonUtility.ToJson(regPayload), (res) => {
+                var headset = JsonUtility.FromJson<HeadsetResponse>(res);
+                tevrHeadsetId = headset.id;
+                tevrLocationId = locationId;
+                PlayerPrefs.SetString("TEVR_HEADSET_ID", tevrHeadsetId);
+                PlayerPrefs.SetString("TEVR_LOCATION_ID", tevrLocationId);
+                PlayerPrefs.Save();
+                registerDone = true;
+            }, (err) => {
+                Debug.LogError($"[SignalingManager] Registration failed: {err}");
+                onComplete?.Invoke(false);
+            });
+
+            yield return new WaitUntil(() => registerDone);
+            yield return StartCoroutine(EveryBootSequence(onComplete));
+        }
+
+        public IEnumerator EveryBootSequence(Action<bool> onComplete)
+        {
+            bool startupDone = false;
+            GetData($"/headsets/{tevrHeadsetId}/startup-data?locationId={tevrLocationId}", (res) => {
+                var data = JsonUtility.FromJson<StartupData>(res);
+                OnStartupDataReceived?.Invoke(data);
+                startupDone = true;
+            }, (err) => {
+                Debug.LogError($"[SignalingManager] Startup data failed: {err}");
+                onComplete?.Invoke(false);
+            });
+
+            yield return new WaitUntil(() => startupDone);
+            onComplete?.Invoke(true);
+        }
+
+        public void ClearCredentials()
+        {
+            tevrHeadsetId = "";
+            tevrLocationId = "";
+            PlayerPrefs.DeleteKey("TEVR_HEADSET_ID");
+            PlayerPrefs.DeleteKey("TEVR_LOCATION_ID");
+            PlayerPrefs.Save();
+        }
+
+        #endregion
+
+        #region Socket Communications
+
+        public async void Login(string roomCode)
+        {
             currentRoomCode = roomCode;
-
             if (_ws != null) await _ws.Close();
 
-            // Socket.io standard connection path
-            string baseUrl = config != null ? config.serverBaseUrl : "https://live-troubleshooting-app.replit.app";
+            string baseUrl = config != null ? config.apiHost : "https://live-troubleshooting-app.replit.app";
             string wsUrl = baseUrl.Replace("https://", "wss://").Replace("http://", "ws://") + "/socket.io/?EIO=4&transport=websocket";
             _ws = new WebSocket(wsUrl);
 
             _ws.OnOpen += () => {
-                Debug.Log($"[SignalingManager] Socket.io connected to {wsUrl}");
                 _reconnectCount = 0;
                 SendSocketEvent("join-room", new JoinRoomPayload { 
                     role = "headset", 
                     roomCode = currentRoomCode, 
-                    locationId = currentLocationId 
+                    locationId = tevrLocationId 
                 });
                 OnConnected?.Invoke();
                 StartPingSequence();
+                StartBatterySequence();
             };
 
-            _ws.OnError += (err) => {
-                Debug.LogError($"[SignalingManager] WebSocket error: {err}");
-                OnConnectionError?.Invoke(err);
-            };
+            _ws.OnError += (err) => OnConnectionError?.Invoke(err);
 
             _ws.OnMessage += (bytes, start, length) => {
                 string msg = System.Text.Encoding.UTF8.GetString(bytes, start, length);
-                // Handle Socket.io-style framing (42[event, payload])
-                if (msg.StartsWith("42")) {
-                    ProcessIncomingMessage(msg.Substring(2));
-                }
-                else if (msg == "3") // Socket.io Pong
-                {
-                    HandlePong();
-                }
+                if (msg.StartsWith("42")) ProcessIncomingMessage(msg.Substring(2));
+                else if (msg == "3") HandlePong();
             };
 
             _ws.OnClose += (code) => {
-                Debug.Log($"[SignalingManager] Disconnected. Code: {code}");
                 OnDisconnected?.Invoke();
                 StopPingSequence();
+                StopBatterySequence();
                 if (autoReconnect && _reconnectCount < maxReconnectAttempts && code != WebSocketCloseCode.Normal)
-                {
                     StartCoroutine(ReconnectSequence());
-                }
             };
 
             await _ws.Connect();
@@ -167,43 +196,45 @@ private RTCPeerConnection _pc;
         private IEnumerator ReconnectSequence()
         {
             _reconnectCount++;
-            Debug.Log($"[SignalingManager] Attempting reconnect ({_reconnectCount}/{maxReconnectAttempts}) in {reconnectDelay}s...");
             yield return new WaitForSeconds(reconnectDelay);
-            Login(currentLocationId, currentRoomCode);
+            Login(currentRoomCode);
         }
 
-        private void StartPingSequence()
-        {
-            StopPingSequence();
-            _pingCoroutine = StartCoroutine(PingLoop());
-        }
-
-        private void StopPingSequence()
-        {
-            if (_pingCoroutine != null) StopCoroutine(_pingCoroutine);
-        }
+        private void StartPingSequence() { StopPingSequence(); _pingCoroutine = StartCoroutine(PingLoop()); }
+        private void StopPingSequence() { if (_pingCoroutine != null) StopCoroutine(_pingCoroutine); }
 
         private float _pingStartTime;
         private IEnumerator PingLoop()
         {
-            while (IsConnected)
-            {
+            while (IsConnected) {
                 _pingStartTime = Time.time;
-                _ws.SendText("2"); // Socket.io Ping
+                _ws.SendText("2"); 
                 yield return new WaitForSeconds(5f);
             }
         }
 
-        private void HandlePong()
+        private void HandlePong() { currentLatency = (Time.time - _pingStartTime) * 1000f; }
+
+        private void StartBatterySequence() { StopBatterySequence(); _batteryCoroutine = StartCoroutine(BatteryLoop()); }
+        private void StopBatterySequence() { if (_batteryCoroutine != null) StopCoroutine(_batteryCoroutine); }
+
+        private IEnumerator BatteryLoop()
         {
-            currentLatency = (Time.time - _pingStartTime) * 1000f;
+            float lastSentBattery = -1f;
+            while (IsConnected) {
+                float battery = SystemInfo.batteryLevel * 100f;
+                if (Mathf.Abs(battery - lastSentBattery) >= 5f || lastSentBattery < 0) {
+                    SendSocketEvent("battery-update", new { roomCode = currentRoomCode, batteryLevel = Mathf.RoundToInt(battery) });
+                    lastSentBattery = battery;
+                }
+                yield return new WaitForSeconds(60f);
+            }
         }
 
         public void Disconnect()
         {
             _ws?.Close();
-            _pc?.Close();
-            _pc?.Dispose();
+            _pc?.Close(); _pc?.Dispose();
             _localStream?.Dispose();
             _videoTrack?.Dispose();
             _audioTrack?.Dispose();
@@ -214,13 +245,11 @@ private RTCPeerConnection _pc;
 
         private void ProcessIncomingMessage(string json)
         {
-            // Socket.io format: ["eventName", {...payload}]
             json = json.Trim();
             if (!json.StartsWith("[")) return;
 
-            int nameStart = json.IndexOf('"') + 1;
-            int nameEnd = json.IndexOf('"', nameStart);
-            if (nameStart < 0 || nameEnd < 0) return;
+            int nameStart = json.IndexOf('\"') + 1;
+            int nameEnd = json.IndexOf('\"', nameStart);
             string eventName = json.Substring(nameStart, nameEnd - nameStart);
 
             int payloadStart = json.IndexOf(',', nameEnd) + 1;
@@ -231,7 +260,6 @@ private RTCPeerConnection _pc;
                 case "peer-joined":
                     var peer = JsonUtility.FromJson<PeerJoinedPayload>(payload);
                     _remoteSocketId = peer.socketId;
-                    Debug.Log($"[SignalingManager] Admin joined: {peer.socketId}");
                     break;
                 case "offer":
                     var offer = JsonUtility.FromJson<OfferPayload>(payload);
@@ -242,12 +270,11 @@ private RTCPeerConnection _pc;
                     var chat = JsonUtility.FromJson<ChatPayload>(payload);
                     OnChatMessageReceived?.Invoke(chat.message);
                     break;
-case "point-to":
+                case "point-to":
                     var pt = JsonUtility.FromJson<PointToPayload>(payload);
-                    OnPointToReceived?.Invoke(pt.name, pt.qrCode, pt.pose);
-                    break;
-                case "pull-qrcodes":
-                    OnQRCodesPulled?.Invoke(payload);
+                    Vector3? pos = null; Quaternion? rot = null;
+                    if (pt.pose != null && pt.pose.position != Vector3.zero) { pos = pt.pose.position; rot = pt.pose.rotation; }
+                    OnPointToReceived?.Invoke(pt.name, pos, rot); 
                     break;
             }
         }
@@ -259,33 +286,8 @@ case "point-to":
         public void SendChatMessage(string message)
         {
             SendSocketEvent("chat-message", new ChatPayload { 
-                roomCode = currentRoomCode, 
-                message = message, 
-                senderRole = "headset" 
+                roomCode = currentRoomCode, message = message, senderRole = "headset" 
             });
-        }
-
-        public void PushQRCodes(string qrDataJson)
-        {
-            // Update to use REST API as preferred by Replit architecture for persistence
-            PostData($"/locations/{currentLocationId}/qr-codes", qrDataJson, 
-                (res) => Debug.Log("[SignalingManager] Calibration pushed successfully."),
-                (err) => Debug.LogError($"[SignalingManager] Calibration push failed: {err}"));
-        }
-
-        public void PullQRCodes()
-        {
-            // Pulling from REST API
-            GetData($"/locations/{currentLocationId}/qr-codes", 
-                (res) => OnQRCodesPulled?.Invoke(res),
-                (err) => Debug.LogError($"[SignalingManager] QR pull failed: {err}"));
-        }
-
-        public void FetchStartupData(Action<string> onComplete)
-        {
-            GetData($"/headsets/{headsetId}/startup-data?locationId={currentLocationId}", 
-                onComplete,
-                (err) => Debug.LogError($"[SignalingManager] Startup sync failed: {err}"));
         }
 
         #endregion
@@ -304,25 +306,36 @@ case "point-to":
 
         private IEnumerator SendRequest(string endpoint, string method, string json, Action<string> onSuccess, Action<string> onError)
         {
-            string baseUrl = config != null ? config.serverBaseUrl : "https://live-troubleshooting-app.replit.app";
+            string baseUrl = config != null ? config.apiHost : "https://live-troubleshooting-app.replit.app";
             string apiP = config != null ? config.apiPath : "/api";
             string url = $"{baseUrl}{apiP}/{endpoint.TrimStart('/')}";
-            using (UnityWebRequest request = new UnityWebRequest(url, method))
-{
-                if (json != null)
-                {
-                    byte[] bodyRaw = System.Text.Encoding.UTF8.GetBytes(json);
-                    request.uploadHandler = new UploadHandlerRaw(bodyRaw);
+            
+            int attempts = 0;
+            while (attempts < 3) {
+                attempts++;
+                using (UnityWebRequest request = new UnityWebRequest(url, method)) {
+                    if (json != null) {
+                        byte[] bodyRaw = System.Text.Encoding.UTF8.GetBytes(json);
+                        request.uploadHandler = new UploadHandlerRaw(bodyRaw);
+                    }
+                    request.downloadHandler = new DownloadHandlerBuffer();
+                    request.SetRequestHeader("Content-Type", "application/json");
+
+                    yield return request.SendWebRequest();
+
+                    if (request.result == UnityWebRequest.Result.Success) {
+                        onSuccess?.Invoke(request.downloadHandler.text);
+                        yield break;
+                    } else {
+                        if (endpoint.Contains("startup-data") && (request.responseCode == 404 || request.responseCode == 403)) {
+                            ClearCredentials();
+                            onError?.Invoke($"Error {request.responseCode}: Credentials invalidated.");
+                            yield break;
+                        }
+                        if (attempts < 3) yield return new WaitForSeconds(2f);
+                        else onError?.Invoke(request.error);
+                    }
                 }
-                request.downloadHandler = new DownloadHandlerBuffer();
-                request.SetRequestHeader("Content-Type", "application/json");
-
-                yield return request.SendWebRequest();
-
-                if (request.result == UnityWebRequest.Result.Success)
-                    onSuccess?.Invoke(request.downloadHandler.text);
-                else
-                    onError?.Invoke(request.error);
             }
         }
 
@@ -337,133 +350,61 @@ case "point-to":
 
         #region WebRTC Handshake
 
-        /// <summary>
-        /// Starts capturing the local camera feed for preview purposes.
-        /// </summary>
-        public void StartLocalPreview()
-        {
-            if (_videoTrack != null) return;
-            StartCoroutine(SetupLocalMedia());
-        }
+        public void StartLocalPreview() { if (_videoTrack != null) return; StartCoroutine(SetupLocalMedia()); }
 
         private IEnumerator SetupLocalMedia()
         {
-            if (useWebcam)
-            {
-                var devices = WebCamTexture.devices;
-                if (devices.Length > 0)
-                {
-                    string device = string.IsNullOrEmpty(webcamDeviceName) ? devices[0].name : webcamDeviceName;
-                    _webcamTexture = new WebCamTexture(device);
-                    _webcamTexture.Play();
-                    yield return new WaitUntil(() => _webcamTexture.width > 16);
-                    _videoTrack = new VideoStreamTrack(_webcamTexture);
-                    OnLocalStreamStarted?.Invoke(_webcamTexture);
-                }
-            }
-            else
-            {
-                // Robust camera discovery for VR/MR
-                float timeout = 10f;
-                while (captureCamera == null && Camera.main == null && timeout > 0)
-                {
-                    timeout -= Time.deltaTime;
-                    yield return null;
-                }
+            float timeout = 10f;
+            while (captureCamera == null && Camera.main == null && timeout > 0) { timeout -= Time.deltaTime; yield return null; }
+            if (captureCamera == null) captureCamera = Camera.main;
 
-                if (captureCamera == null) captureCamera = Camera.main;
-
-                if (captureCamera != null)
-                {
-                    Debug.Log($"[SignalingManager] Starting capture from camera: {captureCamera.name}");
-                    if (_internalCaptureCamera == null)
-                    {
-                        GameObject camObj = new GameObject("WebApp_CaptureCamera");
-                        _internalCaptureCamera = camObj.AddComponent<Camera>();
-                        _internalCaptureCamera.CopyFrom(captureCamera);
-                        camObj.transform.SetParent(captureCamera.transform, false);
-                        camObj.transform.localPosition = Vector3.zero;
-                        camObj.transform.localRotation = Quaternion.identity;
-                        
-                        // Support passthrough in stream: Set background to transparent
-                        _internalCaptureCamera.clearFlags = CameraClearFlags.SolidColor;
-                        _internalCaptureCamera.backgroundColor = new Color(0, 0, 0, 0);
-                        
-                        if (captureCamera.clearFlags == CameraClearFlags.Skybox)
-                        {
-                            // If we really want the skybox, we'd keep it, but for MR training
-                            // we usually want the passthrough to show through in the stream.
-                            // Note: Raw passthrough capture requires specific Meta hardware permissions.
-                        }
-
-                        _captureRT = new RenderTexture(captureResolution.x, captureResolution.y, 16, UnityEngine.Experimental.Rendering.GraphicsFormat.B8G8R8A8_SRGB);
-_captureRT.Create();
-_internalCaptureCamera.targetTexture = _captureRT;
-                    }
-                    _videoTrack = new VideoStreamTrack(_captureRT);
-                    OnLocalStreamStarted?.Invoke(_captureRT);
+            if (captureCamera != null) {
+                if (_internalCaptureCamera == null) {
+                    GameObject camObj = new GameObject("WebApp_CaptureCamera");
+                    _internalCaptureCamera = camObj.AddComponent<Camera>();
+                    _internalCaptureCamera.CopyFrom(captureCamera);
+                    camObj.transform.SetParent(captureCamera.transform, false);
+                    camObj.transform.localPosition = Vector3.zero;
+                    camObj.transform.localRotation = Quaternion.identity;
+                    _internalCaptureCamera.clearFlags = CameraClearFlags.SolidColor;
+                    _internalCaptureCamera.backgroundColor = new Color(0, 0, 0, 0);
+                    _captureRT = new RenderTexture(captureResolution.x, captureResolution.y, 16, UnityEngine.Experimental.Rendering.GraphicsFormat.B8G8R8A8_SRGB);
+                    _captureRT.Create();
+                    _internalCaptureCamera.targetTexture = _captureRT;
                 }
-                else
-                {
-                    Debug.LogError("[SignalingManager] No capture camera found. Streaming will be disabled.");
-                }
+                _videoTrack = new VideoStreamTrack(_captureRT);
+                OnLocalStreamStarted?.Invoke(_captureRT);
             }
         }
 
         private IEnumerator HandleRemoteOffer(RTCSessionDescription offer)
         {
-            var config = IceConfig;
-            _pc = new RTCPeerConnection(ref config);
-
-            _pc.OnTrack = (RTCTrackEvent ev) => {
-                if (ev.Track is VideoStreamTrack videoTrack)
-                {
-                    videoTrack.OnVideoReceived += (Texture tex) => OnRemoteStreamStarted?.Invoke(tex);
-                }
-            };
-
+            var configIce = IceConfig;
+            _pc = new RTCPeerConnection(ref configIce);
+            _pc.OnTrack = (RTCTrackEvent ev) => { if (ev.Track is VideoStreamTrack videoTrack) videoTrack.OnVideoReceived += (Texture tex) => OnRemoteStreamStarted?.Invoke(tex); };
             _pc.OnIceCandidate = (candidate) => {
                 SendSocketEvent("ice-candidate", new IceCandidatePayload { 
                     roomCode = currentRoomCode,
-                    candidate = new IceCandidateData {
-                        candidate = candidate.Candidate,
-                        sdpMid = candidate.SdpMid,
-                        sdpMLineIndex = candidate.SdpMLineIndex ?? 0
-                    },
+                    candidate = new IceCandidateData { candidate = candidate.Candidate, sdpMid = candidate.SdpMid, sdpMLineIndex = candidate.SdpMLineIndex ?? 0 },
                     targetSocketId = _remoteSocketId
                 });
             };
 
-            // Setup local media if not already started
-            if (_videoTrack == null)
-            {
-                yield return StartCoroutine(SetupLocalMedia());
-            }
-            
+            if (_videoTrack == null) yield return StartCoroutine(SetupLocalMedia());
             _audioTrack = new AudioStreamTrack();
             _localStream = new MediaStream();
             if (_videoTrack != null) _localStream.AddTrack(_videoTrack);
             _localStream.AddTrack(_audioTrack);
 
-            foreach (var track in _localStream.GetTracks())
-                _pc.AddTrack(track, _localStream);
-
-            var setRemoteOp = _pc.SetRemoteDescription(ref offer);
-            yield return setRemoteOp;
-
+            foreach (var track in _localStream.GetTracks()) _pc.AddTrack(track, _localStream);
+            yield return _pc.SetRemoteDescription(ref offer);
             var createAnswerOp = _pc.CreateAnswer();
             yield return createAnswerOp;
-            
             var answerDesc = createAnswerOp.Desc;
-            var setLocalOp = _pc.SetLocalDescription(ref answerDesc);
-            yield return setLocalOp;
+            yield return _pc.SetLocalDescription(ref answerDesc);
 
-            SendSocketEvent("answer", new AnswerPayload { 
-                roomCode = currentRoomCode,
-                answer = answerDesc, 
-                targetSocketId = _remoteSocketId 
-            });
-}
+            SendSocketEvent("answer", new AnswerPayload { roomCode = currentRoomCode, answer = answerDesc, targetSocketId = _remoteSocketId });
+        }
 
         #endregion
 
@@ -471,6 +412,12 @@ _internalCaptureCamera.targetTexture = _captureRT;
 
         private void OnDestroy() { Disconnect(); }
 
+        [Serializable] public class RegisterHeadsetPayload { public string serialNumber; public string customerId; public string firmwareVersion; public string label; }
+        [Serializable] public class HeadsetResponse { public string id; public string serialNumber; public string label; public string customerId; public string customerName; }
+        [Serializable] public class StartupData { public string locationId; public string locationName; public List<QRAnchorData> qrCodes; public List<NameMapping> nameDictionary; }
+        [Serializable] public class QRAnchorData { public string qrValue; public string name; public Vector3 position; public Quaternion rotation; }
+        [Serializable] public class PoseData { public Vector3 position; public Quaternion rotation; }
+        [Serializable] public class NameMapping { public string qrValue; public string name; }
         [Serializable] public class JoinRoomPayload { public string role; public string roomCode; public string locationId; }
         [Serializable] public class ChatPayload { public string roomCode; public string message; public string senderRole; }
         [Serializable] public class OfferPayload { public RTCSessionDescription offer; public string fromSocketId; public string targetSocketId; }
@@ -478,7 +425,7 @@ _internalCaptureCamera.targetTexture = _captureRT;
         [Serializable] public class IceCandidatePayload { public string roomCode; public IceCandidateData candidate; public string targetSocketId; }
         [Serializable] public class IceCandidateData { public string candidate; public string sdpMid; public int sdpMLineIndex; }
         [Serializable] public class PeerJoinedPayload { public string role; public string socketId; }
-        [Serializable] public class PointToPayload { public string name; public string qrCode; public string pose; }
-#endregion
+        [Serializable] public class PointToPayload { public string name; public string qrCode; public PoseData pose; }
+        #endregion
     }
 }

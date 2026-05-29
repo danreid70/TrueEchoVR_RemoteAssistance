@@ -3,6 +3,7 @@ using UnityEngine.UI;
 using TMPro;
 using System.Collections;
 using System.Collections.Generic;
+using System;
 
 namespace TEVR
 {
@@ -66,6 +67,17 @@ public RawImage remoteVideoImage;
         private List<QrCodeManager.QRCodeInstance> qrCodeList = new List<QrCodeManager.QRCodeInstance>();
         private Transform panelTransform;
 
+        [Header("Login UI (assign in Inspector)")]
+        public GameObject loginPanel;
+        public TMP_Text apiHostText;
+        public TMP_Text customerIdText;
+        public TMP_Text locationIdText;
+        public Button signInButton;
+        public Button scanLoginCodeButton;
+        public TMP_Text loginStatusText;
+
+        private bool _isScanningLoginCode = false;
+
         private void Start()
         {
             if (webAppManager == null) webAppManager = SignalingManager.Instance;
@@ -74,19 +86,8 @@ public RawImage remoteVideoImage;
             if (sessionInit == null) sessionInit = GetComponent<SessionFlowManager>();
 
             camTransform = Camera.main?.transform;
-            if (camTransform == null)
-            {
-                Debug.LogError("[SessionUiController] No main camera found.");
-                enabled = false;
-                return;
-            }
-
-            if (sessionUIPanel == null)
-            {
-                Debug.LogError("[SessionUiController] No sessionUIPanel assigned.");
-                enabled = false;
-                return;
-            }
+            if (camTransform == null) { Debug.LogError("[SessionUiController] No camera."); enabled = false; return; }
+            if (sessionUIPanel == null) { Debug.LogError("[SessionUiController] No sessionUIPanel."); enabled = false; return; }
 
             panelTransform = sessionUIPanel.transform;
 
@@ -98,8 +99,11 @@ public RawImage remoteVideoImage;
             if (pushQRButton != null) pushQRButton.onClick.AddListener(OnPushQRPressed);
             if (pullQRButton != null) pullQRButton.onClick.AddListener(OnPullQRPressed);
             if (qrCodeDropdown != null) qrCodeDropdown.onValueChanged.AddListener(OnQRCodeSelected);
+            
+            // Login UI Listeners
+            if (signInButton != null) signInButton.onClick.AddListener(OnSignInPressed);
+            if (scanLoginCodeButton != null) scanLoginCodeButton.onClick.AddListener(OnScanLoginCodePressed);
 
-            // Set placeholders
             if (noSignalTexture != null)
             {
                 if (localVideoImage != null) localVideoImage.texture = noSignalTexture;
@@ -109,24 +113,17 @@ public RawImage remoteVideoImage;
             if (webAppManager != null)
             {
                 webAppManager.OnConnected += OnConnected;
-webAppManager.OnDisconnected += OnDisconnected;
+                webAppManager.OnDisconnected += OnDisconnected;
                 webAppManager.OnChatMessageReceived += OnChatReceived;
-                webAppManager.OnRemoteStreamStarted += (tex) => { 
-                    if (remoteVideoImage != null) {
-                        remoteVideoImage.texture = tex;
-                    }
-                };
-                webAppManager.OnLocalStreamStarted += (tex) => { 
-                    if (localVideoImage != null) {
-                        localVideoImage.texture = tex;
-                        localVideoImage.color = Color.white; // Ensure visibility
-                    }
-                };
-webAppManager.OnQRCodesPulled += OnQRCodesPulled;
+                webAppManager.OnRemoteStreamStarted += (tex) => { if (remoteVideoImage != null) remoteVideoImage.texture = tex; };
+                webAppManager.OnLocalStreamStarted += (tex) => { if (localVideoImage != null) { localVideoImage.texture = tex; localVideoImage.color = Color.white; } };
+                webAppManager.OnStartupDataReceived += OnStartupDataReceived;
                 webAppManager.OnConnectionError += (err) => {
                     if (joinStatusText != null) joinStatusText.text = $"<color=red>Error: {err}</color>";
+                    if (loginStatusText != null) loginStatusText.text = $"<color=red>{err}</color>";
                     if (joinButtonText != null) joinButtonText.text = "Try Again";
                     if (joinButton != null) joinButton.interactable = true;
+                    if (signInButton != null) signInButton.interactable = true;
                     AppendChatMessage($"<color=red>Error: {err}</color>");
                 };
             }
@@ -134,19 +131,17 @@ webAppManager.OnQRCodesPulled += OnQRCodesPulled;
             if (qrManager != null)
             {
                 qrManager.OnQRCodeAdded += (qr) => {
-                    AppendChatMessage($"[QR Added] {GetColoredPayload(qr)}");
-                    RefreshQRCodeDropdown();
+                    if (_isScanningLoginCode) HandleLoginQRScan(qr);
+                    else {
+                        AppendChatMessage($"[QR Added] {GetColoredPayload(qr)}");
+                        RefreshQRCodeDropdown();
+                    }
                 };
                 qrManager.OnQRCodeUpdated += (qr) => AppendChatMessage($"[QR Updated] {GetColoredPayload(qr)}");
-                qrManager.OnQRCodeRemoved += (key) => {
-                    AppendChatMessage($"[QR Removed] {key}");
-                    RefreshQRCodeDropdown();
-                };
+                qrManager.OnQRCodeRemoved += (key) => { AppendChatMessage($"[QR Removed] {key}"); RefreshQRCodeDropdown(); };
                 qrManager.OnRoomAnchorDiscovered += (qr) => {
                     AppendChatMessage($"[Anchor Discovered] <color=green>{qr.fullPayload}</color>");
-                    // If we were waiting for calibration, reset the join button
-                    if (joinButtonText != null && joinButtonText.text.Contains("Calibration"))
-                    {
+                    if (joinButtonText != null && joinButtonText.text.Contains("Calibration")) {
                         joinButtonText.text = "Connect";
                         if (joinButton != null) joinButton.interactable = true;
                     }
@@ -156,42 +151,77 @@ webAppManager.OnQRCodesPulled += OnQRCodesPulled;
             panelTransform.position = ComputeOptimalHUDPosition();
             panelTransform.rotation = ComputeTargetRotation();
 
-            // Clear the placeholder [xxx] text
             if (joinStatusText != null) joinStatusText.text = "";
             if (sessionStatusText != null) sessionStatusText.text = "";
 
-            // Ensure video images are black if no texture is assigned
             if (localVideoImage != null && localVideoImage.texture == null) localVideoImage.color = Color.black;
             if (remoteVideoImage != null && remoteVideoImage.texture == null) remoteVideoImage.color = Color.black;
 
-            // Check initial calibration state
-            if (sessionInit != null && !sessionInit.InitializationComplete)
-            {
-                if (joinButtonText != null) joinButtonText.text = "Waiting for Calibration...";
-                if (joinButton != null) joinButton.interactable = false;
-                
-                // Hide the main session UI panel until calibration is done
-                if (sessionUIPanel != null) sessionUIPanel.SetActive(false);
-            }
-
-            // Load saved Location ID
-            if (locationIdInput != null)
-            {
-                string savedLocation = PlayerPrefs.GetString("SavedLocationID", "");
-                locationIdInput.text = savedLocation;
-            }
+            if (locationIdInput != null) { string savedLocation = PlayerPrefs.GetString("SavedLocationID", ""); locationIdInput.text = savedLocation; }
 
             AppendChatMessage("<color=green>[System]</color> Session UI Initialized.");
-            LogAllQRCodesToChat();
-
-            // Setup VR Keyboard for Input Fields
             SetupInputFieldKeyboard(roomCodeInput);
             SetupInputFieldKeyboard(locationIdInput);
             SetupInputFieldKeyboard(chatInputField);
 
-            if (webAppManager != null)
-            {
-                webAppManager.StartLocalPreview();
+            if (webAppManager != null) webAppManager.StartLocalPreview();
+
+            // Initial UI state
+            if (webAppManager != null && !webAppManager.HasCredentials) ShowLoginPanel();
+            else ShowJoinScreen();
+        }
+
+        public void ShowLoginPanel()
+        {
+            if (sessionUIPanel != null) sessionUIPanel.SetActive(true);
+            if (loginPanel != null) loginPanel.SetActive(true);
+            if (joinPanel != null) joinPanel.SetActive(false);
+            if (sessionPanel != null) sessionPanel.SetActive(false);
+            
+            if (apiHostText != null && webAppManager.config != null) apiHostText.text = $"Host: {webAppManager.config.apiHost}";
+            if (customerIdText != null) customerIdText.text = $"Customer: {webAppManager.config.customerId}";
+            if (locationIdText != null) locationIdText.text = $"Location: {webAppManager.config.locationId}";
+        }
+
+        private void OnSignInPressed()
+        {
+            if (signInButton != null) signInButton.interactable = false;
+            if (loginStatusText != null) loginStatusText.text = "Signing in...";
+            
+            webAppManager.RegisterAndBoot(webAppManager.config.customerId, webAppManager.config.locationId, (success) => {
+                if (success) {
+                    ShowJoinScreen();
+                } else {
+                    if (signInButton != null) signInButton.interactable = true;
+                    if (loginStatusText != null) loginStatusText.text = "<color=red>Sign in failed.</color>";
+                }
+            });
+        }
+
+        private void OnScanLoginCodePressed()
+        {
+            _isScanningLoginCode = true;
+            if (loginStatusText != null) loginStatusText.text = "Scanning Setup QR...";
+            if (scanLoginCodeButton != null) scanLoginCodeButton.interactable = false;
+        }
+
+        [Serializable] public class SetupQR { public string customerId; public string locationId; }
+
+        private void HandleLoginQRScan(QrCodeManager.QRCodeInstance qr)
+        {
+            try {
+                var data = JsonUtility.FromJson<SetupQR>(qr.fullPayload);
+                if (!string.IsNullOrEmpty(data.customerId) && !string.IsNullOrEmpty(data.locationId)) {
+                    webAppManager.config.customerId = data.customerId;
+                    webAppManager.config.locationId = data.locationId;
+                    _isScanningLoginCode = false;
+                    if (customerIdText != null) customerIdText.text = $"Customer: {data.customerId}";
+                    if (locationIdText != null) locationIdText.text = $"Location: {data.locationId}";
+                    if (loginStatusText != null) loginStatusText.text = "<color=green>QR Scanned Successfully.</color>";
+                    if (scanLoginCodeButton != null) scanLoginCodeButton.interactable = true;
+                }
+            } catch {
+                // Ignore if not a setup QR
             }
         }
 
@@ -341,33 +371,14 @@ webAppManager.OnQRCodesPulled += OnQRCodesPulled;
                 return;
             }
 
-            string locationId = locationIdInput != null ? locationIdInput.text.Trim() : "";
-            
-            // If Location ID is blank, skip server connection and show Session Panel with demo markers
-            if (string.IsNullOrEmpty(locationId))
-            {
-                AppendChatMessage("<color=yellow>[System]</color> No Location ID. Starting in Demo Mode.");
-                
-                // Add demo markers
-                sessionInit.AddDefaultDemoQRCodes();
-                
-                ShowSessionScreen();
-                if (connectionStatusText != null) connectionStatusText.text = "Status: DEMO";
-                return;
-            }
-
             if (string.IsNullOrEmpty(roomCodeInput?.text)) return;
             string code = roomCodeInput.text.ToUpper().Trim();
             
-            // Save Location ID
-            PlayerPrefs.SetString("SavedLocationID", locationId);
-            PlayerPrefs.Save();
-
             if (joinStatusText != null) joinStatusText.text = "Connecting to server...";
             if (joinButtonText != null) joinButtonText.text = "Connecting...";
             if (joinButton != null) joinButton.interactable = false;
 
-            webAppManager?.Login(locationId, code);
+            webAppManager?.Login(code);
         }
 
         private void OnSendChat()
@@ -422,30 +433,31 @@ webAppManager.OnQRCodesPulled += OnQRCodesPulled;
 
         private void OnPushQRPressed()
         {
-            if (qrManager == null || webAppManager == null) return;
-            string json = qrManager.GetQRCodeDataAsJson(webAppManager.headsetId);
-            webAppManager.PushQRCodes(json);
-            AppendChatMessage("<color=yellow>Pushed local QR Codes to server.</color>");
+            // Legacy - Removed to align with Replit platform flow
+            AppendChatMessage("<color=orange>[System]</color> Manual push disabled. Calibration is managed by the Platform.");
         }
 
         private void OnPullQRPressed()
         {
-            webAppManager?.PullQRCodes();
-            AppendChatMessage("<color=yellow>Requested QR Codes from server.</color>");
+            // Legacy - Removed to align with Replit platform flow
+            AppendChatMessage("<color=orange>[System]</color> Manual pull disabled. Sync happens at boot.");
         }
 
-        private void OnQRCodesPulled(string json)
+        private void OnStartupDataReceived(SignalingManager.StartupData data)
         {
             if (qrManager == null) return;
             try
             {
-                qrManager.ManualLoadFromJson(json);
-                AppendChatMessage("Successfully synced QR Codes from server.");
+                foreach (var anchor in data.qrCodes)
+                {
+                    qrManager.UpdateQRCodeFromRemote(anchor.qrValue, anchor.position, anchor.rotation);
+                }
+                AppendChatMessage($"<color=green>[Init]</color> Synced {data.qrCodes.Count} anchors from {data.locationName}.");
                 RefreshQRCodeDropdown();
-}
+            }
             catch (System.Exception e)
             {
-                AppendChatMessage("Failed to sync QR Codes: " + e.Message);
+                AppendChatMessage("Failed to apply startup data: " + e.Message);
             }
         }
 
@@ -559,8 +571,8 @@ webAppManager.OnQRCodesPulled += OnQRCodesPulled;
                 webAppManager.OnConnected -= OnConnected;
                 webAppManager.OnDisconnected -= OnDisconnected;
                 webAppManager.OnChatMessageReceived -= OnChatReceived;
-                webAppManager.OnQRCodesPulled -= OnQRCodesPulled;
+                webAppManager.OnStartupDataReceived -= OnStartupDataReceived;
             }
         }
-    }
+}
 }

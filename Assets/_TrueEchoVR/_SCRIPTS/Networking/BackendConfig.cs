@@ -6,10 +6,10 @@ namespace TEVR
     public class BackendConfig : ScriptableObject
     {
         [Header("Backend Configuration")]
-        public string serverBaseUrl = "https://live-troubleshooting-app.replit.app";
+        public string apiHost = "https://live-troubleshooting-app.replit.app";
         public string apiPath = "/api";
-        
-        [Header("Default Session Info")]
-        public string headsetId = "quest-3-unit-01";
+        public string customerId = "cust-001";
+        public string locationId = "loc-abc123";
+        public string firmwareVersion = "1.0.0";
     }
 }
