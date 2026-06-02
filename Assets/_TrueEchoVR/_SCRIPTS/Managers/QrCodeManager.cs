@@ -11,8 +11,10 @@ namespace TEVR
 {
     public class QrCodeManager : MonoBehaviour
     {
+        public static QrCodeManager Instance { get; private set; }
+
         [Serializable]
-        public class QRPayloadAction
+public class QRPayloadAction
         {
             public string matchString;
             public GameObject customPrefab;
@@ -74,13 +76,25 @@ namespace TEVR
             }
         }
 
-        private void Start()
+        private void Awake()
         {
+            if (Instance == null) Instance = this;
+            else { Destroy(gameObject); return; }
+        }
+
+        private void Start()
+{
             if (autoSaveLoad) LoadFromDiskAndRestore();
             if (MRUK.Instance != null)
             {
                 MRUK.Instance.SceneSettings.TrackableAdded.AddListener(OnTrackableAdded);
                 MRUK.Instance.SceneSettings.TrackableRemoved.AddListener(OnTrackableRemoved);
+            }
+            
+            // Managers in the Bootstrap scene should persist
+            if (UnityEngine.SceneManagement.SceneManager.GetActiveScene().name == "Bootstrap")
+            {
+                DontDestroyOnLoad(gameObject);
             }
         }
 
@@ -146,13 +160,21 @@ namespace TEVR
                 {
                     existingAnchor.lastPosition = pos;
                     existingAnchor.lastRotation = rot;
-                    if (existingAnchor.visualObject != null) existingAnchor.visualObject.transform.SetPositionAndRotation(pos, rot);
+                    if (existingAnchor.visualObject != null)
+                    {
+                        existingAnchor.visualObject.transform.SetPositionAndRotation(pos, rot);
+                        // Suggestion: Apply OVRAnchor persistence here if Meta package is available
+                    }
                     RoomAnchorInstance = existingAnchor;
                 }
                 else
                 {
                     RoomAnchorInstance = CreateAndAddInstance(payload, pos, rot, QRStatus.Official, new Vector3(0.15f, 0.15f, 0.005f), true);
                 }
+                
+                // Ensure the RoomAnchor is persistent across scene loads if needed
+                // DontDestroyOnLoad(RoomAnchorInstance.visualObject); 
+                
                 ActivateDormantQRCodes();
             }
             else
@@ -162,8 +184,17 @@ namespace TEVR
                     existing.status = QRStatus.Official;
                     if (existing.visualObject != null)
                     {
-                        if (_isAnchorSet) { existing.visualObject.transform.localPosition = pos; existing.visualObject.transform.localRotation = rot; }
-                        else existing.visualObject.transform.SetPositionAndRotation(pos, rot);
+                        // Anchor-Relative positioning: if we have an anchor, we should use local coordinates
+                        if (_isAnchorSet) 
+                        { 
+                            existing.visualObject.transform.SetParent(RoomAnchorInstance.visualObject.transform, true);
+                            existing.visualObject.transform.localPosition = pos; 
+                            existing.visualObject.transform.localRotation = rot; 
+                        }
+                        else 
+                        {
+                            existing.visualObject.transform.SetPositionAndRotation(pos, rot);
+                        }
                         UpdateTextOnObject(existing.visualObject, payload);
                     }
                     else if (_isAnchorSet)

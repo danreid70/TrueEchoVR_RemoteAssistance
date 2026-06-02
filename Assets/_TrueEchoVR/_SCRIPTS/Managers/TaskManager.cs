@@ -41,9 +41,25 @@ namespace TEVR
         private int _currentStepIndex = -1;
         private bool _isTaskRunning = false;
 
+        private void Awake()
+        {
+            if (Current == null)
+            {
+                Current = this;
+                if (UnityEngine.SceneManagement.SceneManager.GetActiveScene().name == "Bootstrap")
+                {
+                    DontDestroyOnLoad(gameObject);
+                }
+            }
+            else
+            {
+                Destroy(gameObject);
+                return;
+            }
+        }
+
         private void OnEnable()
         {
-            Current = this;
             if (autoStart && !_isTaskRunning && steps.Count > 0)
             {
                 StartCoroutine(DelayedStartTask());
@@ -52,10 +68,6 @@ namespace TEVR
 
         private void OnDisable()
         {
-            if (Current == this)
-            {
-                Current = null;
-            }
             StopAllCoroutines();
         }
 

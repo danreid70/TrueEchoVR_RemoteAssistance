@@ -46,7 +46,6 @@
   <Project Path="meta.xr.mrutilitykit.csproj" />
   <Project Path="Oculus.Interaction.Samples.csproj" />
   <Project Path="Unity.XR.Hands.csproj" />
-  <Project Path="glTFast.csproj" />
   <Project Path="Unity.Services.Wire.Internal.csproj" />
   <Project Path="Oculus.Interaction.csproj" />
   <Project Path="Unity.InferenceEngine.Tokenization.csproj" />
@@ -80,7 +79,6 @@
   <Project Path="Meta.WitAi.Lib.csproj" />
   <Project Path="Unity.RenderPipelines.Core.Runtime.csproj" />
   <Project Path="VoiceSDK.Runtime.csproj" />
-  <Project Path="glTFast.Export.csproj" />
   <Project Path="Unity.XR.CompositionLayers.UIInteraction.csproj" />
   <Project Path="AssistantCoreSDKRuntime.csproj" />
   <Project Path="Unity.AppUI.Navigation.Editor.csproj" />
@@ -111,7 +109,6 @@
   <Project Path="Unity.Collections.csproj" />
   <Project Path="Unity.Burst.Editor.csproj" />
   <Project Path="Meta.Wit.Composer.csproj" />
-  <Project Path="glTFast.Newtonsoft.csproj" />
   <Project Path="Unity.TextMeshPro.Editor.csproj" />
   <Project Path="Unity.RenderPipelines.Universal.2D.Editor.Overrides.csproj" />
   <Project Path="Meta.XR.Editor.PlayCompanion.csproj" />
@@ -147,7 +144,6 @@
   <Project Path="Unity.UnifiedRayTracing.Runtime.csproj" />
   <Project Path="Unity.Mobile.AndroidLogcat.Editor.csproj" />
   <Project Path="VoiceSDK.Editor.csproj" />
-  <Project Path="glTFast.Documentation.Examples.csproj" />
   <Project Path="Unity.XR.Interaction.Toolkit.Analytics.Editor.csproj" />
   <Project Path="PasserVR.HumanoidControl.RuntimeTests.csproj" />
   <Project Path="Unity.TestTools.CodeCoverage.Editor.OpenCover.Mono.Reflection.csproj" />
@@ -202,9 +198,7 @@
   <Project Path="Unity.AI.Navigation.Editor.ConversionSystem.csproj" />
   <Project Path="Unity.AppUI.Redux.Editor.csproj" />
   <Project Path="Unity.AI.Pbr.Srp.csproj" />
-  <Project Path="Assembly-CSharp-Editor.csproj" />
   <Project Path="Oculus.Platform.Editor.csproj" />
-  <Project Path="glTFast.Editor.csproj" />
   <Project Path="Meta.XR.EnvironmentDepth.Editor.csproj" />
   <Project Path="VoiceSDK.Telemetry.Runtime.csproj" />
   <Project Path="Unity.AppUI.Undo.csproj" />
@@ -263,6 +257,7 @@
   <Project Path="Meta.WitAi.TTS.Editor.csproj" />
   <Project Path="Unity.XR.Interaction.Toolkit.Samples.InteractionSimulator.csproj" />
   <Project Path="Flexalon.Samples.csproj" />
+  <Project Path="Assembly-CSharp-Editor.csproj" />
   <Project Path="Unity.AI.Tracing.csproj" />
   <Project Path="Unity.AI.Toolkit.GenerationContextMenu.csproj" />
   <Project Path="Unity.XR.Interaction.Toolkit.Samples.ARStarterAssets.csproj" />
@@ -280,7 +275,6 @@
   <Project Path="VoiceSDK.Dictation.Editor.csproj" />
   <Project Path="Meta.Net.endel.nativewebsocket.csproj" />
   <Project Path="Unity.XR.Interaction.Toolkit.Samples.WorldSpaceUI.csproj" />
-  <Project Path="glTFast.dots.csproj" />
   <Project Path="Meta.Voice.Opus.csproj" />
   <Project Path="Unity.XR.OpenXR.Features.ConformanceAutomation.csproj" />
   <Project Path="Unity.XR.Interaction.Toolkit.Samples.WorldSpaceUI.Editor.csproj" />

@@ -390,7 +390,7 @@ namespace UnityEngine.XR.Interaction.Toolkit.Samples.DeviceSimulator
         protected void Update()
         {
 #if XR_HANDS_1_1_OR_NEWER
-            if (m_DeviceLifecycleManager.deviceMode != SimulatedDeviceLifecycleManager.DeviceMode.Hand)
+            if (m_DeviceLifecycleManager == null || m_DeviceLifecycleManager.deviceMode != SimulatedDeviceLifecycleManager.DeviceMode.Hand)
                 return;
 
             for (var index = 0; index < m_HandExpressionManager.simulatedHandExpressions.Count; ++index)

@@ -215,18 +215,26 @@ namespace TEVR
 
         private void HandlePong() { currentLatency = (Time.time - _pingStartTime) * 1000f; }
 
-        private void StartBatterySequence() { StopBatterySequence(); _batteryCoroutine = StartCoroutine(BatteryLoop()); }
+        private void StartBatterySequence() { StopBatterySequence(); _batteryCoroutine = StartCoroutine(HealthLoop()); }
         private void StopBatterySequence() { if (_batteryCoroutine != null) StopCoroutine(_batteryCoroutine); }
 
-        private IEnumerator BatteryLoop()
+        private IEnumerator HealthLoop()
         {
             float lastSentBattery = -1f;
             while (IsConnected) {
                 float battery = SystemInfo.batteryLevel * 100f;
-                if (Mathf.Abs(battery - lastSentBattery) >= 5f || lastSentBattery < 0) {
-                    SendSocketEvent("battery-update", new { roomCode = currentRoomCode, batteryLevel = Mathf.RoundToInt(battery) });
-                    lastSentBattery = battery;
-                }
+                bool isCalibrated = QrCodeManager.Instance != null && QrCodeManager.Instance.RoomAnchorInstance != null;
+                
+                // Send health update
+                SendSocketEvent("health-update", new { 
+                    roomCode = currentRoomCode, 
+                    batteryLevel = Mathf.RoundToInt(battery),
+                    calibrated = isCalibrated,
+                    headsetId = tevrHeadsetId,
+                    locationId = tevrLocationId,
+                    timestamp = DateTime.UtcNow.ToString("O")
+                });
+
                 yield return new WaitForSeconds(60f);
             }
         }
@@ -414,9 +422,23 @@ namespace TEVR
 
         [Serializable] public class RegisterHeadsetPayload { public string serialNumber; public string customerId; public string firmwareVersion; public string label; }
         [Serializable] public class HeadsetResponse { public string id; public string serialNumber; public string label; public string customerId; public string customerName; }
-        [Serializable] public class StartupData { public string locationId; public string locationName; public List<QRAnchorData> qrCodes; public List<NameMapping> nameDictionary; }
-        [Serializable] public class QRAnchorData { public string qrValue; public string name; public Vector3 position; public Quaternion rotation; }
-        [Serializable] public class PoseData { public Vector3 position; public Quaternion rotation; }
+        [Serializable] public class StartupData 
+        { 
+            public string locationId; 
+            public string locationName; 
+            public string version; // Added versioning for context isolation
+            public List<QRAnchorData> qrCodes; 
+            public List<NameMapping> nameDictionary; 
+        }
+        [Serializable] public class QRAnchorData 
+        { 
+            public string qrValue; 
+            public string name; 
+            public Vector3 position; 
+            public Quaternion rotation; 
+            public string metadata; // Flexible field for future expansion
+        }
+[Serializable] public class PoseData { public Vector3 position; public Quaternion rotation; }
         [Serializable] public class NameMapping { public string qrValue; public string name; }
         [Serializable] public class JoinRoomPayload { public string role; public string roomCode; public string locationId; }
         [Serializable] public class ChatPayload { public string roomCode; public string message; public string senderRole; }

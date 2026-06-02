@@ -21,6 +21,7 @@ The Unity application uses **Socket.io-style framing** for WebSocket messages. E
 | `chat-message` | `{ "text": "STR" }` | Text message sent by user. |
 | `answer` | `{ "offer": { "sdp": "STR", "type": "answer" }, "targetSocketId": "STR" }` | WebRTC Answer targeting the Admin. |
 | `ice-candidate`| `{ "candidate": "STR", "sdpMid": "STR", "sdpMLineIndex": INT, "targetSocketId": "STR" }` | WebRTC ICE candidate data. |
+| `health-update` | `{ "batteryLevel": INT, "calibrated": BOOL, "headsetId": "STR", "locationId": "STR", "timestamp": "ISO-8601" }` | periodic system health telemetry. |
 
 ### Incoming (Replit to Unity)
 | Event Name | Payload Structure | Description |
@@ -28,7 +29,7 @@ The Unity application uses **Socket.io-style framing** for WebSocket messages. E
 | `peer-joined` | `{ "role": "admin", "socketId": "STR" }` | Admin connection notification. |
 | `offer` | `{ "offer": { "sdp": "STR", "type": "offer" }, "fromSocketId": "STR" }` | WebRTC SDP offer from expert console. |
 | `chat-message` | `{ "text": "STR" }` | Text message from expert console. |
-| `point-to` | `{ "name": "STR", "qrCode": "STR", "pose": "STR" }` | Calibration-aware highlight command. |
+| `point-to` | `{ "name": "STR", "qrCode": "STR", "pose": { "position": VEC3, "rotation": QUAT } }` | Enriched calibration-aware highlight command. |
 | `pull-qrcodes` | `{...payload}` | Request to refresh local QR data. |
 
 ## 3. Data Persistence (REST API)

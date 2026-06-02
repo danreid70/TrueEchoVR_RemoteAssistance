@@ -15,6 +15,8 @@ namespace TEVR
 
         [Header("Settings")]
         public float pullTimeoutSeconds = 5f;
+        [Tooltip("If true, skips web app login and calibration for testing.")]
+        public bool bypassInitialization = false;
 
         public bool InitializationComplete { get; private set; } = false;
         private bool isInitializing = true;
@@ -28,11 +30,26 @@ namespace TEVR
             
             if (xrOrigin == null)
             {
-                Debug.LogError("[SessionInitialization] No XR Origin assigned!");
-                enabled = false;
-                return;
+                var rig = GameObject.Find("META_QUEST3_RIG");
+                if (rig != null) xrOrigin = rig.transform;
             }
 
+            if (xrOrigin == null)
+            {
+                Debug.LogWarning("[SessionInitialization] No XR Origin found yet. Waiting for scene load.");
+            }
+            else
+            {
+                InitializeOrigin();
+            }
+
+            // ... (rest of Start)
+        }
+
+        private void InitializeOrigin()
+        {
+            if (xrOrigin == null) return;
+            
             // Remove CharacterController as locomotion is physical via Passthrough
             CharacterController cc = xrOrigin.GetComponent<CharacterController>();
             if (cc != null) Destroy(cc);
@@ -59,23 +76,46 @@ namespace TEVR
                 {
                     OnRoomAnchorDiscovered(qrManager.RoomAnchorInstance);
                 }
+                else if (bypassInitialization)
+                {
+                    // Auto-generate a fake anchor for development
+                    CompleteOfflineInitialization();
+                }
             }
+        }
+
+        private void CompleteOfflineInitialization()
+        {
+            isInitializing = false;
+            InitializationComplete = true;
+            Debug.Log("[SessionInitialization] Offline Bypass active. Skipping Calibration.");
+            if (statusUI != null) statusUI.ShowMessage("System Ready (Offline)", "Debug mode active.");
+            UIManager.Instance?.SetState(UIManager.UIState.Session);
+            
+            qrManager.OnQRCodeAdded += OnQRCodeAddedNormal;
+            qrManager.OnQRCodeUpdated += OnQRCodeUpdatedNormal;
+            qrManager.OnQRCodeRemoved += OnQRCodeRemovedNormal;
         }
 
         private void OnRemotePointToReceived(string name, Vector3? position, Quaternion? rotation)
         {
             if (position.HasValue)
             {
-                // Enriched point-to
-                statusUI?.ShowMessage($"Pointing to: {name}", "");
-                // statusUI?.HighlightTarget requires Transform, so we'd need a temp object if we want a highlight
+                // Enriched point-to with real-world coordinates
+                UIManager.Instance?.remoteHighlight?.HighlightPosition(
+                    name, 
+                    position.Value, 
+                    rotation ?? Quaternion.identity
+                );
+                
+                statusUI?.ShowMessage($"Admin pointing to: {name}", "Visual highlight active.");
             }
             else
             {
-                // Fallback: search for local QR
+                // Fallback: search for local QR by name
                 foreach (var kvp in qrManager.TrackedQRCodes)
                 {
-                    if (kvp.Value.identifierKey == name)
+                    if (kvp.Value.identifierKey == name || kvp.Value.fullPayload.Contains(name))
                     {
                         PointToQRCode(kvp.Value);
                         return;
@@ -95,7 +135,7 @@ namespace TEVR
             // Step 0: Check Credentials
             if (!webAppManager.HasCredentials)
             {
-                uiManager?.ShowLoginPanel();
+                UIManager.Instance?.SetState(UIManager.UIState.Login);
                 while (!webAppManager.HasCredentials)
                     yield return null;
             }
@@ -105,7 +145,7 @@ namespace TEVR
             if (statusUI != null)
                 statusUI.ShowMessage(initMsg, "Calibration required.", true);
             
-            uiManager?.AppendChatMessage($"<color=cyan>[Init]</color> {initMsg}");
+            UIManager.Instance?.AppendChatMessage($"<color=cyan>[Init]</color> {initMsg}");
 
             while (isInitializing)
                 yield return null;
@@ -116,7 +156,7 @@ namespace TEVR
             if (!isInitializing) return;
 
             Debug.Log($"[SessionInitialization] RoomAnchor established at {anchor.visualObject.transform.position}");
-            uiManager?.AppendChatMessage($"<color=green>[Init]</color> RoomAnchor established.");
+            UIManager.Instance?.AppendChatMessage($"<color=green>[Init]</color> RoomAnchor established.");
             
             if (statusUI != null) statusUI.ShowMessage("", ""); 
 
@@ -129,7 +169,7 @@ namespace TEVR
 
             string syncMsg = "Anchor established. Booting Platform...";
             if (statusUI != null) statusUI.ShowMessage(syncMsg, "Please wait.");
-            uiManager?.AppendChatMessage($"<color=cyan>[Init]</color> {syncMsg}");
+            UIManager.Instance?.AppendChatMessage($"<color=cyan>[Init]</color> {syncMsg}");
 
             bool bootSuccess = false;
             if (webAppManager != null)
@@ -139,11 +179,11 @@ namespace TEVR
 
             if (bootSuccess)
             {
-                uiManager?.AppendChatMessage("<color=green>[Init]</color> Platform sync complete.");
+                UIManager.Instance?.AppendChatMessage("<color=green>[Init]</color> Platform sync complete.");
             }
             else
             {
-                uiManager?.AppendChatMessage("<color=red>[Init]</color> Platform sync failed. Check connection.");
+                UIManager.Instance?.AppendChatMessage("<color=red>[Init]</color> Platform sync failed. Check connection.");
                 if (!webAppManager.HasCredentials)
                 {
                     StartCoroutine(InitializationPhase());
@@ -154,9 +194,9 @@ namespace TEVR
             InitializationComplete = true;
             string readyMsg = "System Ready.";
             
-            if (uiManager != null) uiManager.ShowJoinScreen();
+            UIManager.Instance?.SetState(UIManager.UIState.Session);
             
-            uiManager?.AppendChatMessage($"<color=green>[Init]</color> {readyMsg}");
+            UIManager.Instance?.AppendChatMessage($"<color=green>[Init]</color> {readyMsg}");
 
             qrManager.OnQRCodeAdded += OnQRCodeAddedNormal;
             qrManager.OnQRCodeUpdated += OnQRCodeUpdatedNormal;
@@ -190,20 +230,17 @@ namespace TEVR
 
         private void OnQRCodeAddedNormal(QrCodeManager.QRCodeInstance qr)
         {
-            uiManager?.AddQRListItem(qr);
-            uiManager?.RefreshQRCodeDropdown();
+            UIManager.Instance?.RefreshQRCodeDropdown();
         }
 
         private void OnQRCodeUpdatedNormal(QrCodeManager.QRCodeInstance qr)
         {
-            uiManager?.UpdateQRListItem(qr);
-            uiManager?.RefreshQRCodeDropdown();
+            UIManager.Instance?.RefreshQRCodeDropdown();
         }
 
         private void OnQRCodeRemovedNormal(string identifierKey)
         {
-            uiManager?.RemoveQRListItem(identifierKey);
-            uiManager?.RefreshQRCodeDropdown();
+            UIManager.Instance?.RefreshQRCodeDropdown();
         }
 
         private void OnDestroy()

@@ -55,20 +55,27 @@ namespace TEVR
         private void Start()
         {
             _camTransform = Camera.main?.transform;
-            if (_camTransform != null)
+            if (_camTransform == null)
             {
-                _lastCameraPos = _camTransform.position;
-                _lastCameraRot = _camTransform.rotation;
+                var mainCam = GameObject.FindWithTag("MainCamera");
+                if (mainCam != null) _camTransform = mainCam.transform;
+            }
+
+            // Auto-discovery for Bootstrap/Prefab pattern
+            if (hudPanel == null)
+            {
+                var foundPanel = GameObject.Find("HUDPanel");
+                if (foundPanel != null) hudPanel = foundPanel;
+                else if (UIManager.Instance != null && UIManager.Instance.hudGroup.root != null)
+                    hudPanel = UIManager.Instance.hudGroup.root;
             }
 
             if (hudPanel == null)
             {
-                Debug.LogError("[VrHudController] No hudPanel assigned.", this);
-                enabled = false;
+                Debug.LogWarning("[VrHudController] No hudPanel assigned. Waiting for UIManager.", this);
+                // We'll retry in LateUpdate or rely on state changes
                 return;
             }
-
-            _panelTransform = hudPanel.transform;
 
             _canvasGroup = hudPanel.GetComponent<CanvasGroup>();
             if (_canvasGroup == null)
@@ -78,74 +85,35 @@ namespace TEVR
 
             if (pointerArrow != null) pointerArrow.SetActive(false);
 
-            if (_camTransform != null)
-            {
-                Vector3 startPos = ComputeTargetPosition();
-                Quaternion startRot = GetFaceCameraRotation();
-                _panelTransform.SetPositionAndRotation(startPos, startRot);
-            }
+            // Initially set active state
+            if (UIManager.Instance != null)
+                HandleUIStateChanged(UIManager.Instance.GetCurrentState());
+        }
 
-            hudPanel.SetActive(true);
-            _canvasGroup.alpha = 1f;
+        private void OnEnable()
+        {
+            if (UIManager.Instance != null)
+                UIManager.Instance.OnUIStateChanged += HandleUIStateChanged;
+        }
 
-            _isFollowing = true;
-            _uiManager = Object.FindAnyObjectByType<SessionUiController>();
+        private void OnDisable()
+        {
+            if (UIManager.Instance != null)
+                UIManager.Instance.OnUIStateChanged -= HandleUIStateChanged;
+        }
+
+        private void HandleUIStateChanged(UIManager.UIState newState)
+        {
+            // HUD is usually active during Session and Calibration
+            bool shouldBeVisible = (newState == UIManager.UIState.Session || newState == UIManager.UIState.Calibration);
+            if (hudPanel != null) hudPanel.SetActive(shouldBeVisible);
         }
 
         private void LateUpdate()
         {
             if (hudPanel == null) return;
 
-            // Late-binding camera discovery for VR rigs
-            if (_camTransform == null)
-            {
-                _camTransform = Camera.main?.transform;
-                if (_camTransform == null) return;
-            }
-
-            // Determine if the user has moved or looked away enough to trigger following
-            float angle = Quaternion.Angle(_lastCameraRot, _camTransform.rotation);
-            float distance = Vector3.Distance(_lastCameraPos, _camTransform.position);
-            
-            if (angle > angleThreshold || distance > distanceThreshold)
-            {
-                _isFollowing = true;
-                _lastCameraPos = _camTransform.position;
-                _lastCameraRot = _camTransform.rotation;
-            }
-
-            if (_isFollowing)
-            {
-                ApplyLazyFollow();
-            }
-
             UpdatePointerArrow();
-        }
-
-        private void ApplyLazyFollow()
-        {
-            Vector3 targetPos = ComputeTargetPosition();
-            
-            // Safety check for NaN
-            if (!float.IsFinite(targetPos.x) || !float.IsFinite(targetPos.y) || !float.IsFinite(targetPos.z))
-            {
-                return;
-            }
-
-            _panelTransform.position = Vector3.SmoothDamp(_panelTransform.position, targetPos, ref _velocity, smoothTime);
-            
-            Quaternion targetRot = GetFaceCameraRotation();
-            if (float.IsFinite(targetRot.x))
-            {
-                _panelTransform.rotation = Quaternion.Slerp(_panelTransform.rotation, targetRot, rotationSpeed * Time.deltaTime);
-            }
-
-            if (Vector3.Distance(_panelTransform.position, targetPos) < 0.01f &&
-                Quaternion.Angle(_panelTransform.rotation, targetRot) < 0.5f)
-            {
-                _isFollowing = false;
-                _panelTransform.SetPositionAndRotation(targetPos, targetRot);
-            }
         }
 
         private void UpdatePointerArrow()
@@ -217,7 +185,7 @@ namespace TEVR
             }
 
             // Sync with central log
-            if (_uiManager != null) _uiManager.AppendChatMessage($"<color=orange>[HUD]</color> {mainText} {hint}");
+            UIManager.Instance?.AppendChatMessage($"<color=orange>[HUD]</color> {mainText} {hint}");
 
             if (!hudPanel.activeSelf) hudPanel.SetActive(true);
 
@@ -250,7 +218,7 @@ namespace TEVR
             _hasActiveText = true;
             _isPersistent = persistent;
 
-            if (_uiManager != null) _uiManager.AppendChatMessage($"<color=green>[HUD]</color> {message}");
+            UIManager.Instance?.AppendChatMessage($"<color=green>[HUD]</color> {message}");
 
             if (!hudPanel.activeSelf) hudPanel.SetActive(true);
 
