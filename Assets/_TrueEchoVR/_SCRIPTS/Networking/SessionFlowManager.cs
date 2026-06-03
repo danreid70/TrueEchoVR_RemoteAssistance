@@ -1,6 +1,7 @@
 using UnityEngine;
 using System.Collections;
 using System.Collections.Generic;
+using TEVR.Core;
 
 namespace TEVR
 {
@@ -30,8 +31,29 @@ namespace TEVR
             
             if (xrOrigin == null)
             {
-                var rig = GameObject.Find("META_QUEST3_RIG");
-                if (rig != null) xrOrigin = rig.transform;
+                // Prioritize the persistent rig instance
+                if (PersistentXRRig.Instance != null)
+                {
+                    xrOrigin = PersistentXRRig.Instance.transform;
+                }
+                else
+                {
+                    // Fallback to searching
+                    var rig = GameObject.Find("[BuildingBlock] Camera Rig");
+                    if (rig == null) rig = GameObject.Find("[[BuildingBlock] Camera Rig]");
+
+                    // Robust fallback: search for the OVRCameraRig component
+                    if (rig == null)
+                    {
+                        var rigComponent = Object.FindObjectOfType<OVRCameraRig>();
+                        if (rigComponent != null) rig = rigComponent.gameObject;
+                    }
+
+                    if (rig != null)
+                    {
+                        xrOrigin = rig.transform;
+                    }
+                }
             }
 
             if (xrOrigin == null)
@@ -50,12 +72,16 @@ namespace TEVR
         {
             if (xrOrigin == null) return;
             
-            // Remove CharacterController as locomotion is physical via Passthrough
-            CharacterController cc = xrOrigin.GetComponent<CharacterController>();
-            if (cc != null) Destroy(cc);
+            // Persistence is now handled by PersistentXRRig if present, 
+            // but we keep this as a safeguard for standalone rigs.
+            if (xrOrigin.GetComponent<PersistentXRRig>() == null)
+            {
+                DontDestroyOnLoad(xrOrigin.gameObject);
+                PurgeLocomotion(xrOrigin.gameObject);
+            }
 
             if (qrManager != null)
-            {
+{
                 qrManager.OnRoomAnchorDiscovered += OnRoomAnchorDiscovered;
             }
 
@@ -65,6 +91,52 @@ namespace TEVR
             }
 
             StartCoroutine(InitializationPhase());
+        }
+
+        private void PurgeLocomotion(GameObject rig)
+        {
+            Debug.Log("[SessionInitialization] Purging locomotion systems from rig...");
+
+            // List of locomotion GameObjects to destroy (by name patterns)
+            string[] locomotionNames = {
+                "Locomotion",
+                "Teleport",
+                "Turner",
+                "Step",
+                "Slide",
+                "Locomotor",
+                "Tunneling",
+                "SnapTurn"
+            };
+
+            Transform[] children = rig.GetComponentsInChildren<Transform>(true);
+            foreach (var child in children)
+            {
+                if (child == null || child == rig.transform) continue;
+
+                bool isLocomotionObj = false;
+                foreach (var namePart in locomotionNames)
+                {
+                    if (child.name.Contains(namePart))
+                    {
+                        isLocomotionObj = true;
+                        break;
+                    }
+                }
+
+                if (isLocomotionObj)
+                {
+                    Debug.Log($"[SessionInitialization] Destroying locomotion object: {child.name}");
+                    Destroy(child.gameObject);
+                }
+            }
+
+            // Also explicitly destroy components on the root if they exist
+            if (rig.TryGetComponent<CharacterController>(out var cc)) Destroy(cc);
+            
+            // FirstPersonLocomotor is a custom Meta component usually
+            var locomotor = rig.GetComponent("FirstPersonLocomotor");
+            if (locomotor != null) Destroy(locomotor);
         }
 
         private void Update()
@@ -174,7 +246,25 @@ namespace TEVR
             bool bootSuccess = false;
             if (webAppManager != null)
             {
-                yield return StartCoroutine(webAppManager.EveryBootSequence((success) => bootSuccess = success));
+                // Add a timeout for the boot sequence
+                float timeout = 10f;
+                bool finished = false;
+                StartCoroutine(webAppManager.EveryBootSequence((success) => {
+                    bootSuccess = success;
+                    finished = true;
+                }));
+
+                while (!finished && timeout > 0)
+                {
+                    timeout -= Time.deltaTime;
+                    yield return null;
+                }
+
+                if (!finished)
+                {
+                    Debug.LogWarning("[SessionFlowManager] Boot sequence timed out. Falling back to Demo Mode.");
+                    bootSuccess = false;
+                }
             }
 
             if (bootSuccess)
@@ -183,12 +273,16 @@ namespace TEVR
             }
             else
             {
-                UIManager.Instance?.AppendChatMessage("<color=red>[Init]</color> Platform sync failed. Check connection.");
-                if (!webAppManager.HasCredentials)
-                {
-                    StartCoroutine(InitializationPhase());
-                    yield break;
-                }
+                UIManager.Instance?.AppendChatMessage("<color=orange>[Init]</color> Platform sync unavailable. Entering Demo Mode.");
+                // In demo mode, we might want to skip the login block
+                InitializationComplete = true;
+                UIManager.Instance?.SetState(UIManager.UIState.Session);
+                if (statusUI != null) statusUI.ShowMessage("Demo Mode Active", "Offline visualization enabled.");
+                
+                qrManager.OnQRCodeAdded += OnQRCodeAddedNormal;
+                qrManager.OnQRCodeUpdated += OnQRCodeUpdatedNormal;
+                qrManager.OnQRCodeRemoved += OnQRCodeRemovedNormal;
+                yield break;
             }
 
             InitializationComplete = true;

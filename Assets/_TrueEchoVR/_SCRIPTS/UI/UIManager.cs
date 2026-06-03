@@ -52,11 +52,29 @@ namespace TEVR
                 return;
             }
 
-            if (mainCamera == null) mainCamera = Camera.main?.transform;
+            if (mainCamera == null) FindMainCamera();
+        }
+
+        private void FindMainCamera()
+        {
+            mainCamera = Camera.main?.transform;
+            
+            if (mainCamera == null)
+            {
+                // Fallback to searching in PersistentXRRig
+                var persistentRig = UnityEngine.Object.FindAnyObjectByType<TEVR.Core.PersistentXRRig>();
+                if (persistentRig != null)
+{
+                    var cam = persistentRig.GetComponentInChildren<Camera>();
+                    if (cam != null) mainCamera = cam.transform;
+                }
+            }
         }
 
         private void Start()
         {
+            if (mainCamera == null) FindMainCamera();
+
             if (mainCamera != null)
             {
                 hudGroup.Initialize(mainCamera);
@@ -65,13 +83,13 @@ namespace TEVR
             
             // Trigger initial state
             SetState(currentState);
-}
+        }
 
         private void LateUpdate()
         {
             if (mainCamera == null || !mainCamera.gameObject.activeInHierarchy)
             {
-                mainCamera = Camera.main?.transform;
+                FindMainCamera();
                 if (mainCamera == null) return;
             }
 
@@ -130,6 +148,7 @@ namespace TEVR
         [Header("Lazy Follow Settings")]
         public float angleThreshold = 25f;
         public float distanceThreshold = 0.3f;
+        public float viewAngleThreshold = 35.0f;
 
         private Vector3 _velocity = Vector3.zero;
         private Vector3 _lastCamPos;
@@ -149,14 +168,19 @@ namespace TEVR
         {
             if (root == null || !root.activeInHierarchy) return;
 
-            float angle = Quaternion.Angle(_lastCamRot, cam.rotation);
-            float dist = Vector3.Distance(_lastCamPos, cam.position);
+            // 1. Always update rotation to face camera (Y-axis)
+            Quaternion targetRot = GetFaceCameraRotation(cam, root.transform);
+            root.transform.rotation = Quaternion.Slerp(root.transform.rotation, targetRot, rotationSpeed * Time.deltaTime);
 
-            // Distance from camera to current root position vs target distance
+            // 2. Check if we should trigger movement
             float currentDistToCam = Vector3.Distance(root.transform.position, cam.position);
-            bool outOfRange = currentDistToCam < (forwardDistance * 0.7f) || currentDistToCam > (forwardDistance * 1.5f);
+            bool outOfRange = currentDistToCam < (forwardDistance * 0.5f) || currentDistToCam > (forwardDistance * 2.0f);
 
-            if (angle > angleThreshold || dist > distanceThreshold || outOfRange)
+            // Check FOV: Is the panel currently in the camera's field of view?
+            Vector3 toPanel = (root.transform.position - cam.position).normalized;
+            float angleInView = Vector3.Angle(cam.forward, toPanel);
+
+            if (angleInView > viewAngleThreshold || outOfRange)
             {
                 _isFollowing = true;
                 _lastCamPos = cam.position;
@@ -168,11 +192,8 @@ namespace TEVR
                 Vector3 targetPos = ComputeTargetPosition(cam);
                 root.transform.position = Vector3.SmoothDamp(root.transform.position, targetPos, ref _velocity, smoothTime);
 
-                Quaternion targetRot = GetFaceCameraRotation(cam, root.transform);
-                root.transform.rotation = Quaternion.Slerp(root.transform.rotation, targetRot, rotationSpeed * Time.deltaTime);
-
-                if (Vector3.Distance(root.transform.position, targetPos) < 0.01f && 
-                    Quaternion.Angle(root.transform.rotation, targetRot) < 1f)
+                // Stop following once we are close enough to the target position
+                if (Vector3.Distance(root.transform.position, targetPos) < 0.05f)
                 {
                     _isFollowing = false;
                 }

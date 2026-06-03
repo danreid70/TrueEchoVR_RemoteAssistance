@@ -92,7 +92,31 @@ namespace TEVR
 
         public void RegisterAndBoot(string customerId, string locationId, Action<bool> onComplete)
         {
+            if (Application.internetReachability == NetworkReachability.NotReachable)
+            {
+                Debug.LogWarning("[SignalingManager] No internet detected. Entering Demo Mode.");
+                EnterDemoMode(onComplete);
+                return;
+            }
             StartCoroutine(ProvisioningSequence(customerId, locationId, onComplete));
+        }
+
+        private void EnterDemoMode(Action<bool> onComplete)
+        {
+            tevrHeadsetId = "DEMO_HEADSET";
+            tevrLocationId = "DEMO_LOCATION";
+            
+            StartupData demoData = new StartupData
+            {
+                locationId = tevrLocationId,
+                locationName = "Offline Demo Location",
+                version = "1.0-demo",
+                qrCodes = new List<QRAnchorData>(),
+                nameDictionary = new List<NameMapping>()
+            };
+            
+            OnStartupDataReceived?.Invoke(demoData);
+            onComplete?.Invoke(true);
         }
 
         private IEnumerator ProvisioningSequence(string customerId, string locationId, Action<bool> onComplete)
@@ -127,17 +151,28 @@ namespace TEVR
         public IEnumerator EveryBootSequence(Action<bool> onComplete)
         {
             bool startupDone = false;
+            bool failed = false;
+
             GetData($"/headsets/{tevrHeadsetId}/startup-data?locationId={tevrLocationId}", (res) => {
                 var data = JsonUtility.FromJson<StartupData>(res);
                 OnStartupDataReceived?.Invoke(data);
                 startupDone = true;
             }, (err) => {
-                Debug.LogError($"[SignalingManager] Startup data failed: {err}");
-                onComplete?.Invoke(false);
+                Debug.LogError($"[SignalingManager] Startup data failed: {err}. Falling back to Demo Mode.");
+                failed = true;
+                startupDone = true;
             });
 
             yield return new WaitUntil(() => startupDone);
-            onComplete?.Invoke(true);
+            
+            if (failed)
+            {
+                EnterDemoMode(onComplete);
+            }
+            else
+            {
+                onComplete?.Invoke(true);
+            }
         }
 
         public void ClearCredentials()

@@ -35,6 +35,8 @@ public class QRPayloadAction
 
         public bool IsDetecting { get; private set; } = true;
 
+        private bool _isSubscribedToMRUK = false;
+
         public enum QRStatus { Official, Unknown }
 
         public class QRCodeInstance
@@ -83,12 +85,13 @@ public class QRPayloadAction
         }
 
         private void Start()
-{
+        {
             if (autoSaveLoad) LoadFromDiskAndRestore();
+            
+            // Register if MRUK is already available
             if (MRUK.Instance != null)
             {
-                MRUK.Instance.SceneSettings.TrackableAdded.AddListener(OnTrackableAdded);
-                MRUK.Instance.SceneSettings.TrackableRemoved.AddListener(OnTrackableRemoved);
+                RegisterWithMRUK();
             }
             
             // Managers in the Bootstrap scene should persist
@@ -100,6 +103,12 @@ public class QRPayloadAction
 
         private void Update()
         {
+            // Robust check for MRUK initialization (useful if Building Blocks defer it)
+            if (!_isSubscribedToMRUK && MRUK.Instance != null)
+            {
+                RegisterWithMRUK();
+            }
+
             if (!IsDetecting) return;
             foreach (var inst in _trackedQRCodes.Values)
             {
@@ -117,6 +126,16 @@ public class QRPayloadAction
                     }
                 }
             }
+        }
+
+        private void RegisterWithMRUK()
+        {
+            if (_isSubscribedToMRUK || MRUK.Instance == null) return;
+            
+            MRUK.Instance.SceneSettings.TrackableAdded.AddListener(OnTrackableAdded);
+            MRUK.Instance.SceneSettings.TrackableRemoved.AddListener(OnTrackableRemoved);
+            _isSubscribedToMRUK = true;
+            Debug.Log("[QrCodeManager] Successfully registered with MRUK SceneSettings listeners.");
         }
 
         public void ClearQRCodes()
@@ -185,19 +204,19 @@ public class QRPayloadAction
                     if (existing.visualObject != null)
                     {
                         // Anchor-Relative positioning: if we have an anchor, we should use local coordinates
-                        if (_isAnchorSet) 
-                        { 
+                        if (RoomAnchorInstance != null && RoomAnchorInstance.visualObject != null)
+                        {
                             existing.visualObject.transform.SetParent(RoomAnchorInstance.visualObject.transform, true);
-                            existing.visualObject.transform.localPosition = pos; 
-                            existing.visualObject.transform.localRotation = rot; 
+                            existing.visualObject.transform.localPosition = pos;
+                            existing.visualObject.transform.localRotation = rot;
                         }
-                        else 
+                        else
                         {
                             existing.visualObject.transform.SetPositionAndRotation(pos, rot);
                         }
                         UpdateTextOnObject(existing.visualObject, payload);
                     }
-                    else if (_isAnchorSet)
+else if (_isAnchorSet)
                     {
                          existing.visualObject = CreateVisualObject(payload, pos, rot, QRStatus.Official, new Vector3(0.15f, 0.15f, 0.005f), true);
                     }
@@ -298,11 +317,18 @@ public class QRPayloadAction
 
             Quaternion cRot = rot * Quaternion.Euler(0, 180, 0);
 
-            if (!isAnchor && _isAnchorSet)
+            if (!isAnchor && RoomAnchorInstance != null && RoomAnchorInstance.visualObject != null)
             {
                 root.transform.SetParent(RoomAnchorInstance.visualObject.transform);
-                if (isPosLocal) { root.transform.localPosition = pos; root.transform.localRotation = cRot; }
-                else root.transform.SetPositionAndRotation(pos, cRot);
+                if (isPosLocal)
+                {
+                    root.transform.localPosition = pos;
+                    root.transform.localRotation = cRot;
+                }
+                else
+                {
+                    root.transform.SetPositionAndRotation(pos, cRot);
+                }
             }
             else
             {
