@@ -1,4 +1,4 @@
-# Project Overview: TrueEchoVR - Octane V1
+# Project Overview: TrueEchoVR - RemoteAssistance
 
 ## 1. Project Description
 **TrueEchoVR** is an immersive Mixed Reality (MR) training and troubleshooting application developed for Meta Quest 3. The project facilitates guided procedural training, remote expert assistance via WebRTC streaming, and learning management system (LMS) integration (SCORM/xAPI). It leverages the **Meta MR Utility Kit (MRUK)** for scene awareness and **WebRTC** for live video/audio communication between a VR headset and a web-based expert console.

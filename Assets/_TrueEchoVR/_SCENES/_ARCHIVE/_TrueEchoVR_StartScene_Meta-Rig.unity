@@ -1786,7 +1786,7 @@ GameObject:
   m_Component:
   - component: {fileID: 239280917}
   m_Layer: 0
-  m_Name: Octane_Building_Demo
+  m_Name: RemoteAssistance_Building_Demo
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -11236,7 +11236,7 @@ GameObject:
   - component: {fileID: 1733540009}
   - component: {fileID: 1733540010}
   m_Layer: 0
-  m_Name: OctaneCoffeeLogo (1)
+  m_Name: RemoteAssistanceCoffeeLogo (1)
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -12703,7 +12703,7 @@ GameObject:
   - component: {fileID: 2093465719}
   - component: {fileID: 2093465720}
   m_Layer: 0
-  m_Name: OctaneCoffeeLogo
+  m_Name: RemoteAssistanceCoffeeLogo
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0

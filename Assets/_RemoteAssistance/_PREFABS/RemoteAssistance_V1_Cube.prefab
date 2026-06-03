@@ -122,7 +122,7 @@ GameObject:
   m_Component:
   - component: {fileID: 551803712920922445}
   m_Layer: 0
-  m_Name: Octane_V1_Cube
+  m_Name: RemoteAssistance_V1_Cube
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0

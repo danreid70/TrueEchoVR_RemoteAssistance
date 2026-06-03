@@ -1,4 +1,4 @@
-# TrueEchoVR SignalingManager Synchronization Protocol (v2.1 - Octane)
+# TrueEchoVR SignalingManager Synchronization Protocol (v2.1 - RemoteAssistance)
 
 This document outlines the communication protocol between the Unity application (TrueEchoVR) and the Replit backend. This is used by the **SignalingManager** to coordinate WebRTC, chat, and spatial data.
 

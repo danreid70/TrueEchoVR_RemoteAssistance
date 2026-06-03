@@ -13,7 +13,7 @@ PlayerSettings:
   useOnDemandResources: 0
   accelerometerFrequency: 60
   companyName: TrueEchoVR
-  productName: TrueEchoVR_Octane_V1
+  productName: TrueEchoVR_RemoteAssistance_V1
   defaultCursor: {fileID: 0}
   cursorHotspot: {x: 0, y: 0}
   m_SplashScreenBackgroundColor: {r: 0, g: 0, b: 0, a: 0.5019608}
@@ -169,7 +169,7 @@ PlayerSettings:
   androidMaxAspectRatio: 2.4
   androidMinAspectRatio: 1
   applicationIdentifier:
-    Android: com.TrueEchoVR.TrueEchoVR_Octane_V1
+    Android: com.TrueEchoVR.TrueEchoVR_RemoteAssistance_V1
     Standalone: com.unity.template.mr
   buildNumber:
     Standalone: 0
@@ -924,14 +924,14 @@ PlayerSettings:
   editorAssembliesCompatibilityLevel: 1
   m_RenderingPath: 1
   m_MobileRenderingPath: 1
-  metroPackageName: TrueEchoVROctaneV1
+  metroPackageName: TrueEchoVRRemoteAssistanceV1
   metroPackageVersion: 1.0.0.0
   metroCertificatePath: 
   metroCertificatePassword: 
   metroCertificateSubject: 
   metroCertificateIssuer: 
   metroCertificateNotAfter: 0000000000000000
-  metroApplicationDescription: TrueEchoVR_Octane_V1
+  metroApplicationDescription: TrueEchoVR_RemoteAssistance_V1
   wsaImages: {}
   metroTileShortName: com.unity.template.mr
   metroTileShowName: 0
