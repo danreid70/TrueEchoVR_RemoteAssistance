@@ -21,8 +21,29 @@ namespace TEVR
 
         [Header("Global Settings")]
         public Transform mainCamera;
-        [SerializeField] private float globalSmoothTime = 0.25f;
-        [SerializeField] private float globalRotationSpeed = 5f;
+
+        [Header("Canvas Lazy Follow")]
+        [Tooltip("The world-space Canvas that holds the collider/PointableCanvas. This single transform is moved, so the interactable surface always stays aligned with the visible UI.")]
+        public Transform uiCanvasRoot;
+        [Tooltip("Distance in meters the canvas is placed in front of the camera when it recenters.")]
+        public float followDistance = 1.3f;
+        [Tooltip("Vertical offset (meters) applied when recentering. 0 keeps it at eye height.")]
+        public float followVerticalOffset = 0f;
+        [Tooltip("If the canvas drifts more than this many degrees from the view center, it recenters back into view.")]
+        public float viewAngleThreshold = 35f;
+        [SerializeField] private float followSmoothTime = 0.25f;
+        [SerializeField] private float faceRotationSpeed = 8f;
+
+        private Vector3 _followVelocity;
+        private bool _isRecentering;
+
+        // Drag-to-reposition state.
+        // _isDragging: a drag is in progress (the drag handler is setting the position directly).
+        // _isLocked:   the user dragged-and-released, so the panel stays put and will NOT auto-recenter
+        //              until a quick tap on the background resumes following.
+        private bool _isDragging;
+        private bool _isLocked;
+        public bool IsLocked => _isLocked;
 
         [Header("Controllers")]
         public VrHudController hudController;
@@ -75,12 +96,42 @@ namespace TEVR
         {
             if (mainCamera == null) FindMainCamera();
 
-            if (mainCamera != null)
+            // Place the canvas in front of the user immediately so it starts in view.
+            if (mainCamera != null && uiCanvasRoot != null)
             {
-                hudGroup.Initialize(mainCamera);
-                sessionUiGroup.Initialize(mainCamera);
+                uiCanvasRoot.position = ComputeCanvasTarget(mainCamera);
+                uiCanvasRoot.rotation = FaceCameraYaw(mainCamera);
             }
-            
+
+            // Ensure the world-space canvas has an event camera. This is required for the
+            // GraphicRaycaster (mouse fallback in the editor) and harmless for the Meta ray path.
+            if (uiCanvasRoot != null)
+            {
+                var canvas = uiCanvasRoot.GetComponent<Canvas>();
+                if (canvas != null && canvas.renderMode == RenderMode.WorldSpace)
+                {
+                    // Use the center eye camera as the event camera
+                    if (mainCamera != null)
+                    {
+                        var cam = mainCamera.GetComponent<Camera>();
+                        if (cam != null) canvas.worldCamera = cam;
+                    }
+                    
+                    if (canvas.worldCamera == null)
+                    {
+                         canvas.worldCamera = Camera.main;
+                    }
+                }
+
+                // Cleanup: Remove XRI raycaster if it's conflicting with Meta interaction
+                var tdgr = uiCanvasRoot.GetComponent("TrackedDeviceGraphicRaycaster");
+                if (tdgr != null)
+                {
+                    Debug.Log("[UIManager] Removing TrackedDeviceGraphicRaycaster to prevent conflict.");
+                    Destroy(tdgr);
+                }
+            }
+
             // Trigger initial state
             SetState(currentState);
         }
@@ -93,8 +144,109 @@ namespace TEVR
                 if (mainCamera == null) return;
             }
 
-            hudGroup.UpdatePositioning(mainCamera, globalSmoothTime, globalRotationSpeed);
-            sessionUiGroup.UpdatePositioning(mainCamera, globalSmoothTime, globalRotationSpeed);
+            UpdateCanvasFollow(mainCamera);
+        }
+
+        /// <summary>
+        /// Moves the single world-space canvas (which carries the collider/PointableCanvas)
+        /// so the interactable surface and the visible UI always stay together.
+        /// Behavior: always billboards toward the user on the Y axis, stays put while in view,
+        /// and only glides back to a comfortable forward position when it leaves the field of view.
+        /// </summary>
+        private void UpdateCanvasFollow(Transform cam)
+        {
+            if (uiCanvasRoot == null) return;
+
+            // While the user is actively dragging, the drag handler owns the transform completely.
+            if (_isDragging) return;
+
+            // 1. Always face the user (yaw only - the panel stays upright and faces the headset).
+            Quaternion targetRot = FaceCameraYaw(cam);
+            uiCanvasRoot.rotation = Quaternion.Slerp(uiCanvasRoot.rotation, targetRot, faceRotationSpeed * Time.deltaTime);
+
+            // 2. If the user dragged-and-released, the panel is locked in place: no auto-recenter.
+            if (_isLocked) return;
+
+            // 3. Decide whether the canvas needs to come back into view.
+            Vector3 toCanvas = uiCanvasRoot.position - cam.position;
+            float distance = toCanvas.magnitude;
+            float angleFromView = (distance > 0.0001f) ? Vector3.Angle(cam.forward, toCanvas) : 0f;
+            bool outOfRange = distance < followDistance * 0.5f || distance > followDistance * 2.0f;
+
+            if (angleFromView > viewAngleThreshold || outOfRange)
+            {
+                _isRecentering = true;
+            }
+
+            // 4. Glide back to a comfortable spot directly ahead, then stop and stay put.
+            if (_isRecentering)
+            {
+                Vector3 targetPos = ComputeCanvasTarget(cam);
+                uiCanvasRoot.position = Vector3.SmoothDamp(uiCanvasRoot.position, targetPos, ref _followVelocity, followSmoothTime);
+
+                if (Vector3.Distance(uiCanvasRoot.position, targetPos) < 0.05f)
+                {
+                    _isRecentering = false;
+                }
+            }
+        }
+
+        // ---- Drag-to-reposition API (called by UiPanelDragHandler) ----
+
+        /// <summary>Begin a manual drag: suspends auto-follow so the drag handler can move the panel.</summary>
+        public void BeginManualDrag()
+        {
+            _isDragging = true;
+            _isRecentering = false;
+            _followVelocity = Vector3.zero;
+        }
+
+        /// <summary>End a drag that actually moved the panel: lock it in place (no auto-recenter).</summary>
+        public void EndManualDragAndLock()
+        {
+            _isDragging = false;
+            _isLocked = true;
+            _followVelocity = Vector3.zero;
+        }
+
+        /// <summary>Resume normal follow/recenter behavior (e.g. after a quick tap on the background).</summary>
+        public void ResumeFollow()
+        {
+            _isDragging = false;
+            _isLocked = false;
+            _isRecentering = true; // glide back into view immediately
+        }
+
+        /// <summary>The camera transform the drag handler should use for ray math.</summary>
+        public Transform ActiveCamera => mainCamera;
+
+        private Vector3 ComputeCanvasTarget(Transform cam)
+        {
+            Vector3 flatForward = cam.forward;
+            flatForward.y = 0f;
+            if (flatForward.sqrMagnitude < 0.0001f)
+                flatForward = Vector3.ProjectOnPlane(cam.up, Vector3.up).normalized;
+            else
+                flatForward.Normalize();
+
+            // No horizontal offset - keep it centered in the user's view.
+            return cam.position + flatForward * followDistance + Vector3.up * followVerticalOffset;
+        }
+
+        private Quaternion FaceCameraYaw(Transform cam)
+        {
+            // Canvas +Z must point away from the camera so its front face is readable by the user.
+            if (uiCanvasRoot == null) return Quaternion.identity;
+            Vector3 forward = uiCanvasRoot.position - cam.position;
+            forward.y = 0f;
+            if (forward.sqrMagnitude < 0.0001f)
+            {
+                Vector3 camFwd = cam.forward;
+                camFwd.y = 0f;
+                if (camFwd.sqrMagnitude < 0.0001f) return uiCanvasRoot.rotation;
+                return Quaternion.LookRotation(camFwd.normalized, Vector3.up);
+            }
+            return Quaternion.LookRotation(forward.normalized, Vector3.up);
         }
 
         public void SetState(UIState newState)

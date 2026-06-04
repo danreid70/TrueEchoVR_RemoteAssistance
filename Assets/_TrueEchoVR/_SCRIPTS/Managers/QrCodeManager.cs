@@ -55,6 +55,13 @@ public class QRPayloadAction
         public Action<QRCodeInstance> OnQRCodeUpdated;
         public Action<string> OnQRCodeRemoved;
 
+        /// <summary>
+        /// Fires for EVERY detected QR trackable (payload, worldPosition, worldRotation),
+        /// regardless of whether a RoomAnchor exists yet. Use this for login/setup-code scanning,
+        /// which happens before calibration (when QR codes would otherwise be dormant and silent).
+        /// </summary>
+        public Action<string, Vector3, Quaternion> OnRawQRDetected;
+
         private readonly Dictionary<string, QRCodeInstance> _trackedQRCodes = new Dictionary<string, QRCodeInstance>();
         public IReadOnlyDictionary<string, QRCodeInstance> TrackedQRCodes => _trackedQRCodes;
 
@@ -84,10 +91,37 @@ public class QRPayloadAction
             else { Destroy(gameObject); return; }
         }
 
+        // Meta Quest scene permission required for QR-code / trackable detection.
+        public const string ScenePermission = "com.oculus.permission.USE_SCENE";
+
+        /// <summary>
+        /// LIVE check of the runtime scene permission (always true in the Editor).
+        /// This must NOT be cached: OVRManager (requestScenePermissionOnStartup) may grant it via its own
+        /// dialog without our callback firing, so we always query the OS for the current state.
+        /// </summary>
+        public bool HasScenePermission
+        {
+#if UNITY_EDITOR
+            get => true;
+#elif UNITY_ANDROID
+            get => UnityEngine.Android.Permission.HasUserAuthorizedPermission(ScenePermission);
+#else
+            get => true;
+#endif
+        }
+
+        /// <summary>Fires with the result of the scene-permission request (true = granted).</summary>
+        public Action<bool> OnScenePermissionResult;
+
         private void Start()
         {
             if (autoSaveLoad) LoadFromDiskAndRestore();
-            
+
+            // CRITICAL: Quest QR / trackable detection needs the scene permission granted at RUNTIME.
+            // Declaring it in the AndroidManifest is not enough — without this request MRUK receives
+            // zero QR trackables (this is why scanning never worked on device).
+            RequestScenePermissionIfNeeded();
+
             // Register if MRUK is already available
             if (MRUK.Instance != null)
             {
@@ -98,6 +132,63 @@ public class QRPayloadAction
             if (UnityEngine.SceneManagement.SceneManager.GetActiveScene().name == "Bootstrap")
             {
                 DontDestroyOnLoad(gameObject);
+            }
+        }
+
+        /// <summary>Public entry point so the UI can (re)trigger the scene-permission request on demand.</summary>
+        public void RequestScenePermissionPublic() => RequestScenePermissionIfNeeded();
+
+        private void RequestScenePermissionIfNeeded()
+        {
+#if UNITY_EDITOR
+            // Editor / Link: no Android runtime permission. (For Link, enable "Spatial Data over Meta Quest Link" in the Link app.)
+            EnsureQrTrackingEnabled();
+            OnScenePermissionResult?.Invoke(true);
+#elif UNITY_ANDROID
+            if (HasScenePermission)
+            {
+                EnsureQrTrackingEnabled();
+                OnScenePermissionResult?.Invoke(true);
+                return;
+            }
+
+            Debug.Log("[QrCodeManager] Requesting scene permission for QR tracking: " + ScenePermission);
+            var callbacks = new UnityEngine.Android.PermissionCallbacks();
+            callbacks.PermissionGranted += p =>
+            {
+                Debug.Log("[QrCodeManager] Scene permission GRANTED: " + p);
+                EnsureQrTrackingEnabled();
+                OnScenePermissionResult?.Invoke(true);
+            };
+            callbacks.PermissionDenied += p =>
+            {
+                Debug.LogError("[QrCodeManager] Scene permission DENIED: " + p + " — QR scanning will not work.");
+                OnScenePermissionResult?.Invoke(false);
+            };
+            UnityEngine.Android.Permission.RequestUserPermission(ScenePermission, callbacks);
+#else
+            EnsureQrTrackingEnabled();
+            OnScenePermissionResult?.Invoke(true);
+#endif
+        }
+
+        /// <summary>
+        /// (Re)applies the MRUK tracker configuration so QR-code tracking actually starts.
+        /// Re-applying after the permission grant is what kicks tracking into life.
+        /// </summary>
+        public void EnsureQrTrackingEnabled()
+        {
+            if (MRUK.Instance == null) return;
+            try
+            {
+                var config = MRUK.Instance.SceneSettings.TrackerConfiguration;
+                config.QRCodeTrackingEnabled = true;
+                MRUK.Instance.SceneSettings.TrackerConfiguration = config;
+                Debug.Log("[QrCodeManager] QR code tracking configuration applied.");
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning("[QrCodeManager] Could not apply QR tracker config yet: " + e.Message);
             }
         }
 
@@ -136,6 +227,9 @@ public class QRPayloadAction
             MRUK.Instance.SceneSettings.TrackableRemoved.AddListener(OnTrackableRemoved);
             _isSubscribedToMRUK = true;
             Debug.Log("[QrCodeManager] Successfully registered with MRUK SceneSettings listeners.");
+
+            // If permission was already granted before MRUK came online, make sure tracking is active now.
+            if (HasScenePermission) EnsureQrTrackingEnabled();
         }
 
         public void ClearQRCodes()
@@ -241,7 +335,11 @@ else if (_isAnchorSet)
             string fullPayload = trackable.MarkerPayloadString ?? "";
             string key = GetIdentifierKey(fullPayload);
             bool isAnchor = fullPayload.Contains(qrRoomAnchorLabel);
-            
+
+            // Always announce the raw detection (even for codes that will go dormant before calibration).
+            // This is what drives the login/setup-code scan + on-screen detection feedback.
+            OnRawQRDetected?.Invoke(fullPayload, trackable.transform.position, trackable.transform.rotation);
+
             if (_trackedQRCodes.TryGetValue(key, out QRCodeInstance existing))
             {
                 existing.trackable = trackable;

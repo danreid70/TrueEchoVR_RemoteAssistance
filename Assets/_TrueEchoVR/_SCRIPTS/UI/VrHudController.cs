@@ -24,43 +24,18 @@ namespace TEVR
         [Tooltip("Visual indicator that points toward the current task objective.")]
         public GameObject pointerArrow;
 
-        [Header("Following & Positioning")]
-        [SerializeField] private float forwardDistance = 1.5f;
-        [SerializeField] private float horizontalOffset = 0f;
-        [SerializeField] private float verticalOffset = 0.3f;
-        [SerializeField] private float smoothTime = 0.15f;
-        [SerializeField] private float rotationSpeed = 3f;
-        
-        [Tooltip("Angle threshold before the HUD starts catching up to the user's view.")]
-        [SerializeField] private float angleThreshold = 30f;
-        [SerializeField] private float distanceThreshold = 0.2f;
-
         [Header("Fading Settings")]
         [SerializeField] private float fadeDelay = 2f;
         [SerializeField] private float fadeDuration = 0.5f;
 
-        private Transform _camTransform;
         private CanvasGroup _canvasGroup;
         private Coroutine _fadeCoroutine;
         private bool _hasActiveText = false;
         private bool _isPersistent = false;
         private Transform _currentTarget;
-        private Vector3 _lastCameraPos;
-        private Quaternion _lastCameraRot;
-        private bool _isFollowing = true;
-        private Vector3 _velocity = Vector3.zero;
-        private Transform _panelTransform;
-        private SessionUiController _uiManager;
 
         private void Start()
         {
-            _camTransform = Camera.main?.transform;
-            if (_camTransform == null)
-            {
-                var mainCam = GameObject.FindWithTag("MainCamera");
-                if (mainCam != null) _camTransform = mainCam.transform;
-            }
-
             // Auto-discovery for Bootstrap/Prefab pattern
             if (hudPanel == null)
             {
@@ -133,41 +108,6 @@ namespace TEVR
             {
                 pointerArrow.SetActive(false);
             }
-        }
-
-        private Vector3 ComputeTargetPosition()
-        {
-            // Use a flattened camera coordinate system to prevent 'twisting' when the head rolls/tilts
-            Vector3 flatForward = _camTransform.forward;
-            flatForward.y = 0;
-            if (flatForward.sqrMagnitude < 0.001f) flatForward = Vector3.ProjectOnPlane(_camTransform.up, Vector3.up).normalized;
-            else flatForward.Normalize();
-
-            Vector3 flatRight = Vector3.Cross(Vector3.up, flatForward);
-
-            return _camTransform.position
-                   + flatForward * forwardDistance
-                   + flatRight * horizontalOffset
-                   + Vector3.up * verticalOffset;
-        }
-
-        private Quaternion GetFaceCameraRotation()
-        {
-            // Calculate a Yaw-only look rotation (looking at the user's horizontal position)
-            Vector3 directionToCamera = _camTransform.position - _panelTransform.position;
-            directionToCamera.y = 0;
-            
-            if (directionToCamera.sqrMagnitude < 0.001f)
-            {
-                // Fallback: face in the same direction as the camera's flattened forward
-                Vector3 camForward = _camTransform.forward;
-                camForward.y = 0;
-                if (camForward.sqrMagnitude < 0.001f) return _panelTransform.rotation;
-                return Quaternion.LookRotation(camForward, Vector3.up);
-            }
-            
-            // We want the panel to FACE the camera, so we use -directionToCamera
-            return Quaternion.LookRotation(-directionToCamera, Vector3.up);
         }
 
         /// <summary>

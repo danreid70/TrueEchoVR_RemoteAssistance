@@ -51,13 +51,18 @@ If you see errors in the Package Manager related to "getting access token", this
 4. Ensure your internet connection is stable.
 
 
-### Mouse Interaction & Simulator in Editor
-If you cannot rotate the camera or click UI buttons in the Editor:
-1. **Focus the Game View**: Click anywhere inside the Game View window.
-2. **Toggle Cursor Lock**: Press the **`\` (backslash)** key. This toggles between "Mouse controls Rig" and "Mouse controls Arrow".
-3. **Rotate Camera**: When the cursor is locked (hidden), move the mouse. You can also **Hold Right-Click** to manipulate the head.
-4. **Click Buttons**: Ensure the cursor is **unlocked** (visible) to use the standard mouse arrow on UI buttons. 
-5. **World Space UI**: The `PersistentXRRig` automatically links the `CenterEyeAnchor` camera to all World Space canvases to ensure raycasting works correctly for the mouse arrow.
+### Mouse / Hand Interaction (Editor vs Device)
+UI input is routed by **`UiEventSystemModeSwitcher`** on the `EventSystem`, which enables exactly one input module based on whether an XR headset is present:
+- **In the Editor (no headset)** → `InputSystemUIInputModule` is active. Just press **Play** and use the **mouse** to hover, click, and drag the panels. (Quest Link, if connected, switches to the hand-ray automatically.)
+- **On device / Quest Link** → Meta's `PointableCanvasModule` is active, driving the hand/controller ray.
+
+Requirements for world-space clicks (handled automatically by `UIManager` at runtime):
+- The `MainCanvas` `worldCamera` is set to `CenterEyeAnchor`.
+- `RayInteractable._pointableElement` is linked to the `PointableCanvas` so the hand-ray forwards hover/click events to uGUI.
+- The redundant `TrackedDeviceGraphicRaycaster` (XRI) is removed to avoid conflicts.
+
+### Movable UI
+The world-space panel can be **grab-dragged** with the ray/mouse (`UiPanelDragHandler`): drag and release to **lock** it in place; a quick tap on the panel background resumes the comfortable **lazy-follow** behaviour. Panel backdrops are rendered at ~50% transparency for passthrough visibility.
 
 ### No Cameras Rendering in Editor
 The project includes an `EditorCameraFallback` script on the `CenterEyeAnchor`. If the Game View still shows "No cameras rendering":

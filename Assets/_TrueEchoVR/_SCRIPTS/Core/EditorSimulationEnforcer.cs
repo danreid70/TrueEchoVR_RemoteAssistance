@@ -100,7 +100,10 @@ namespace TEVR.Core
                     var tpd = centerCam.GetComponent<UnityEngine.InputSystem.XR.TrackedPoseDriver>();
                     if (tpd != null)
                     {
-                        if (string.IsNullOrEmpty(tpd.positionInput.action?.bindings[0].path))
+                        var posAction = tpd.positionInput.action;
+                        bool needsBinding = posAction == null || posAction.bindings.Count == 0 ||
+                                            string.IsNullOrEmpty(posAction.bindings[0].path);
+                        if (needsBinding)
                         {
                             tpd.positionInput = new InputActionProperty(new InputAction("Position", binding: "<XRHMD>/centerEyePosition"));
                             tpd.rotationInput = new InputActionProperty(new InputAction("Rotation", binding: "<XRHMD>/centerEyeRotation"));
@@ -112,7 +115,7 @@ namespace TEVR.Core
             // 4. World Canvas Fix
             if (centerCam != null)
             {
-                var canvases = Object.FindObjectsByType<Canvas>(FindObjectsSortMode.None);
+                var canvases = Object.FindObjectsByType<Canvas>(FindObjectsInactive.Include);
                 foreach (var canvas in canvases)
                 {
                     if (canvas.renderMode == RenderMode.WorldSpace && canvas.worldCamera == null)
@@ -125,7 +128,7 @@ namespace TEVR.Core
 
         private Camera GetCenterEyeCamera()
         {
-            var cameras = Object.FindObjectsByType<Camera>(FindObjectsSortMode.None);
+            var cameras = Object.FindObjectsByType<Camera>(FindObjectsInactive.Include);
             foreach (var cam in cameras)
             {
                 if (cam.name == "CenterEyeAnchor") return cam;

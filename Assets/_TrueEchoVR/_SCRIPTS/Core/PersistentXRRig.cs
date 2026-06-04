@@ -199,7 +199,7 @@ namespace TEVR.Core
 
             if (mainCam == null) return;
 
-            Canvas[] canvases = Object.FindObjectsByType<Canvas>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+            Canvas[] canvases = Object.FindObjectsByType<Canvas>(FindObjectsInactive.Include);
             foreach (var canvas in canvases)
             {
                 if (canvas.renderMode == RenderMode.WorldSpace && canvas.worldCamera == null)

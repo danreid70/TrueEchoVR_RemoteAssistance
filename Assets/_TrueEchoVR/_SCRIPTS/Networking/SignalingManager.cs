@@ -27,8 +27,14 @@ namespace TEVR
         public int maxReconnectAttempts = 5;
         public float reconnectDelay = 3f;
 
+        [Header("Debugging")]
+        [Tooltip("Logs every raw Engine.IO/Socket.IO packet sent (=>) and received (<=). Invaluable for diagnosing the Replit handshake.")]
+        public bool verboseSocketLogging = true;
+
+        // True only after the Socket.IO namespace CONNECT ('40') has been acknowledged by the server.
+        public bool IsSocketConnected { get; private set; }
+
         private int _reconnectCount = 0;
-        private Coroutine _pingCoroutine;
         private Coroutine _batteryCoroutine;
 
         private WebSocket _ws;
@@ -56,6 +62,17 @@ namespace TEVR
         public Action<StartupData> OnStartupDataReceived;
         public Action<Texture> OnRemoteStreamStarted;
         public Action<Texture> OnLocalStreamStarted;
+
+        /// <summary>Human-readable progress messages for the UI (e.g. "Registering headset...").</summary>
+        public Action<string> OnStatusUpdate;
+        /// <summary>The most recent failure detail (HTTP code, URL, message). Read this when a flow reports failure.</summary>
+        public string LastError { get; private set; }
+
+        private void Status(string msg)
+        {
+            if (verboseSocketLogging) Debug.Log("[Signaling] " + msg);
+            OnStatusUpdate?.Invoke(msg);
+        }
 
         private static readonly RTCConfiguration IceConfig = new RTCConfiguration
         {
@@ -122,6 +139,7 @@ namespace TEVR
         private IEnumerator ProvisioningSequence(string customerId, string locationId, Action<bool> onComplete)
         {
             bool registerDone = false;
+            bool registerFailed = false;
             string serial = SystemInfo.deviceUniqueIdentifier;
             RegisterHeadsetPayload regPayload = new RegisterHeadsetPayload
             {
@@ -131,6 +149,8 @@ namespace TEVR
                 label = $"Quest {serial.Substring(Math.Max(0, serial.Length - 6))}"
             };
 
+            Status($"Registering headset for customer '{customerId}' ...");
+
             PostData("/headsets/register", JsonUtility.ToJson(regPayload), (res) => {
                 var headset = JsonUtility.FromJson<HeadsetResponse>(res);
                 tevrHeadsetId = headset.id;
@@ -138,13 +158,24 @@ namespace TEVR
                 PlayerPrefs.SetString("TEVR_HEADSET_ID", tevrHeadsetId);
                 PlayerPrefs.SetString("TEVR_LOCATION_ID", tevrLocationId);
                 PlayerPrefs.Save();
+                Status($"Registered (headset id: {tevrHeadsetId}). Loading startup data ...");
                 registerDone = true;
             }, (err) => {
+                LastError = err;
+                Status($"Registration failed: {err}");
                 Debug.LogError($"[SignalingManager] Registration failed: {err}");
-                onComplete?.Invoke(false);
+                registerFailed = true;
+                registerDone = true;
             });
 
+            // Wait for the register call to resolve either way (no more infinite hang on failure).
             yield return new WaitUntil(() => registerDone);
+            if (registerFailed)
+            {
+                onComplete?.Invoke(false);
+                yield break;
+            }
+
             yield return StartCoroutine(EveryBootSequence(onComplete));
         }
 
@@ -197,30 +228,32 @@ namespace TEVR
             string wsUrl = baseUrl.Replace("https://", "wss://").Replace("http://", "ws://") + "/socket.io/?EIO=4&transport=websocket";
             _ws = new WebSocket(wsUrl);
 
+            IsSocketConnected = false;
+
+            // NOTE: We do NOT emit any Socket.IO event on raw WebSocket open.
+            // Engine.IO v4 requires waiting for the server OPEN packet ('0'), then sending
+            // the Socket.IO CONNECT packet ('40'), and only emitting events after the
+            // server acknowledges the namespace connection (also '40').
             _ws.OnOpen += () => {
                 _reconnectCount = 0;
-                SendSocketEvent("join-room", new JoinRoomPayload { 
-                    role = "headset", 
-                    roomCode = currentRoomCode, 
-                    locationId = tevrLocationId 
-                });
-                OnConnected?.Invoke();
-                StartPingSequence();
-                StartBatterySequence();
+                if (verboseSocketLogging) Debug.Log("[Signaling] WebSocket open. Awaiting Engine.IO handshake ('0').");
             };
 
-            _ws.OnError += (err) => OnConnectionError?.Invoke(err);
+            _ws.OnError += (err) => {
+                if (verboseSocketLogging) Debug.LogError("[Signaling] WS error: " + err);
+                OnConnectionError?.Invoke(err);
+            };
 
             _ws.OnMessage += (bytes, start, length) => {
                 string msg = System.Text.Encoding.UTF8.GetString(bytes, start, length);
-                if (msg.StartsWith("42")) ProcessIncomingMessage(msg.Substring(2));
-                else if (msg == "3") HandlePong();
+                HandleEngineIoPacket(msg);
             };
 
             _ws.OnClose += (code) => {
+                IsSocketConnected = false;
                 OnDisconnected?.Invoke();
-                StopPingSequence();
                 StopBatterySequence();
+                if (verboseSocketLogging) Debug.LogWarning("[Signaling] WS closed: " + code);
                 if (autoReconnect && _reconnectCount < maxReconnectAttempts && code != WebSocketCloseCode.Normal)
                     StartCoroutine(ReconnectSequence());
             };
@@ -235,27 +268,80 @@ namespace TEVR
             Login(currentRoomCode);
         }
 
-        private void StartPingSequence() { StopPingSequence(); _pingCoroutine = StartCoroutine(PingLoop()); }
-        private void StopPingSequence() { if (_pingCoroutine != null) StopCoroutine(_pingCoroutine); }
-
-        private float _pingStartTime;
-        private IEnumerator PingLoop()
+        /// <summary>
+        /// Engine.IO v4 / Socket.IO v4 packet router.
+        /// Engine.IO packet type = first char: '0'=OPEN, '2'=PING, '3'=PONG, '4'=MESSAGE.
+        /// For MESSAGE ('4'), the next char is the Socket.IO type: '0'=CONNECT(ack), '1'=DISCONNECT, '2'=EVENT.
+        /// </summary>
+        private void HandleEngineIoPacket(string msg)
         {
-            while (IsConnected) {
-                _pingStartTime = Time.time;
-                _ws.SendText("2"); 
-                yield return new WaitForSeconds(5f);
+            if (string.IsNullOrEmpty(msg)) return;
+            if (verboseSocketLogging) Debug.Log("[Signaling] <= " + msg);
+
+            switch (msg[0])
+            {
+                case '0': // Engine.IO OPEN -> respond with Socket.IO CONNECT to the default namespace
+                    _pingStartTime = Time.time;
+                    SendRaw("40");
+                    break;
+
+                case '2': // Engine.IO PING (server-initiated in v4) -> must reply PONG
+                    SendRaw("3");
+                    currentLatency = (Time.time - _pingStartTime) * 1000f;
+                    _pingStartTime = Time.time;
+                    break;
+
+                case '3': // Engine.IO PONG (not expected; client does not initiate ping in v4)
+                    break;
+
+                case '4': // Engine.IO MESSAGE -> Socket.IO packet
+                    if (msg.Length < 2) return;
+                    switch (msg[1])
+                    {
+                        case '0': // Socket.IO CONNECT acknowledged
+                            OnSocketConnected();
+                            break;
+                        case '1': // Socket.IO DISCONNECT
+                            IsSocketConnected = false;
+                            break;
+                        case '2': // Socket.IO EVENT -> payload is everything after "42"
+                            ProcessIncomingMessage(msg.Substring(2));
+                            break;
+                    }
+                    break;
             }
         }
 
-        private void HandlePong() { currentLatency = (Time.time - _pingStartTime) * 1000f; }
+        /// <summary>Called once the server acknowledges the Socket.IO namespace connection ('40').</summary>
+        private void OnSocketConnected()
+        {
+            IsSocketConnected = true;
+            if (verboseSocketLogging) Debug.Log("[Signaling] Socket.IO connected. Emitting join-room for room '" + currentRoomCode + "'.");
+
+            SendSocketEvent("join-room", new JoinRoomPayload {
+                role = "headset",
+                roomCode = currentRoomCode,
+                locationId = tevrLocationId
+            });
+            OnConnected?.Invoke();
+            StartBatterySequence();
+            // Heartbeat is server-driven in Engine.IO v4 (server sends '2', we reply '3' in HandleEngineIoPacket).
+        }
+
+        private float _pingStartTime;
+
+        private void SendRaw(string raw)
+        {
+            if (_ws == null || _ws.State != WebSocketState.Open) return;
+            if (verboseSocketLogging) Debug.Log("[Signaling] => " + raw);
+            _ws.SendText(raw);
+        }
 
         private void StartBatterySequence() { StopBatterySequence(); _batteryCoroutine = StartCoroutine(HealthLoop()); }
         private void StopBatterySequence() { if (_batteryCoroutine != null) StopCoroutine(_batteryCoroutine); }
 
         private IEnumerator HealthLoop()
         {
-            float lastSentBattery = -1f;
             while (IsConnected) {
                 float battery = SystemInfo.batteryLevel * 100f;
                 bool isCalibrated = QrCodeManager.Instance != null && QrCodeManager.Instance.RoomAnchorInstance != null;
@@ -370,13 +456,23 @@ namespace TEVR
                         onSuccess?.Invoke(request.downloadHandler.text);
                         yield break;
                     } else {
+                        // Build a detailed, human-readable diagnostic.
+                        string body = request.downloadHandler != null ? request.downloadHandler.text : "";
+                        if (!string.IsNullOrEmpty(body) && body.Length > 140) body = body.Substring(0, 140) + "…";
+                        string detail = $"{request.result} (HTTP {request.responseCode}) {method} {url}" +
+                                        (string.IsNullOrEmpty(request.error) ? "" : $" — {request.error}") +
+                                        (string.IsNullOrEmpty(body) ? "" : $" | {body}");
+
                         if (endpoint.Contains("startup-data") && (request.responseCode == 404 || request.responseCode == 403)) {
                             ClearCredentials();
-                            onError?.Invoke($"Error {request.responseCode}: Credentials invalidated.");
+                            onError?.Invoke($"HTTP {request.responseCode}: credentials invalid/expired. {url}");
                             yield break;
                         }
-                        if (attempts < 3) yield return new WaitForSeconds(2f);
-                        else onError?.Invoke(request.error);
+                        if (attempts < 3) {
+                            Debug.LogWarning($"[SignalingManager] Request attempt {attempts}/3 failed: {detail}");
+                            yield return new WaitForSeconds(2f);
+                        }
+                        else onError?.Invoke(detail);
                     }
                 }
             }
@@ -386,6 +482,7 @@ namespace TEVR
         {
             if (_ws == null || _ws.State != WebSocketState.Open) return;
             string json = $"42[\"{eventName}\",{JsonUtility.ToJson(payload)}]";
+            if (verboseSocketLogging) Debug.Log("[Signaling] => " + json);
             _ws.SendText(json);
         }
 

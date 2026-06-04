@@ -62,6 +62,10 @@ public RawImage remoteVideoImage;
         public Button scanLoginCodeButton;
         public TMP_Text loginStatusText;
 
+        [Header("Login Manual Entry (fallback to scanning)")]
+        public TMP_InputField loginCustomerIdInput;
+        public TMP_InputField loginLocationIdInput;
+
         private bool _isScanningLoginCode = false;
 
         private void HandleUIStateChanged(UIManager.UIState newState)
@@ -95,9 +99,9 @@ public RawImage remoteVideoImage;
         private void Start()
         {
             if (webAppManager == null) webAppManager = SignalingManager.Instance;
-            if (qrManager == null) qrManager = FindFirstObjectByType<QrCodeManager>();
-            if (statusUI == null) statusUI = FindFirstObjectByType<VrHudController>();
-            if (sessionInit == null) sessionInit = FindFirstObjectByType<SessionFlowManager>();
+            if (qrManager == null) qrManager = FindAnyObjectByType<QrCodeManager>();
+            if (statusUI == null) statusUI = FindAnyObjectByType<VrHudController>();
+            if (sessionInit == null) sessionInit = FindAnyObjectByType<SessionFlowManager>();
 
             // Auto-discovery for Bootstrap/Prefab pattern
             if (sessionUIPanel == null)
@@ -124,6 +128,19 @@ public RawImage remoteVideoImage;
             if (toggleDetectionButton != null) toggleDetectionButton.onClick.AddListener(OnToggleDetectQR);
             if (clearQRButton != null) clearQRButton.onClick.AddListener(OnClearQRPressed);
             if (qrCodeDropdown != null) qrCodeDropdown.onValueChanged.AddListener(OnQRCodeSelected);
+
+            // Login panel buttons (previously never wired -> clicking did nothing).
+            if (signInButton != null) signInButton.onClick.AddListener(OnSignInPressed);
+            if (scanLoginCodeButton != null) scanLoginCodeButton.onClick.AddListener(OnScanLoginCodePressed);
+
+            // Calibration persistence buttons (REST push/pull of QR codes).
+            if (pushQRButton != null) pushQRButton.onClick.AddListener(OnPushQRPressed);
+            if (pullQRButton != null) pullQRButton.onClick.AddListener(OnPullQRPressed);
+
+            // Room code: confirming the field (keyboard "done"/enter) connects to the remote session.
+            if (roomCodeInput != null) roomCodeInput.onSubmit.AddListener((_) => OnJoinPressed());
+
+            PopulateLoginConfigTexts();
             
             if (noSignalTexture != null)
             {
@@ -139,6 +156,7 @@ public RawImage remoteVideoImage;
                 webAppManager.OnRemoteStreamStarted += (tex) => { if (remoteVideoImage != null) remoteVideoImage.texture = tex; };
                 webAppManager.OnLocalStreamStarted += (tex) => { if (localVideoImage != null) { localVideoImage.texture = tex; localVideoImage.color = Color.white; } };
                 webAppManager.OnStartupDataReceived += OnStartupDataReceived;
+                webAppManager.OnStatusUpdate += OnBackendStatus;
                 webAppManager.OnConnectionError += (err) => {
                     if (loginStatusText != null) loginStatusText.text = $"<color=red>{err}</color>";
                     if (joinButtonText != null) joinButtonText.text = "Try Again";
@@ -149,12 +167,13 @@ public RawImage remoteVideoImage;
 
             if (qrManager != null)
             {
+                // Login/setup-code scanning uses the RAW event because a setup QR detected before
+                // calibration would otherwise go dormant and never raise OnQRCodeAdded.
+                qrManager.OnRawQRDetected += OnRawQRDetected;
+                qrManager.OnScenePermissionResult += OnScenePermissionResult;
                 qrManager.OnQRCodeAdded += (qr) => {
-                    if (_isScanningLoginCode) HandleLoginQRScan(qr);
-                    else {
-                        AppendChatMessage($"[QR Added] {GetColoredPayload(qr)}");
-                        RefreshQRCodeDropdown();
-                    }
+                    AppendChatMessage($"[QR Added] {GetColoredPayload(qr)}");
+                    RefreshQRCodeDropdown();
                 };
                 qrManager.OnQRCodeUpdated += (qr) => AppendChatMessage($"[QR Updated] {GetColoredPayload(qr)}");
                 qrManager.OnQRCodeRemoved += (key) => { AppendChatMessage($"[QR Removed] {key}"); RefreshQRCodeDropdown(); };
@@ -173,6 +192,8 @@ public RawImage remoteVideoImage;
             AppendChatMessage("<color=green>[System]</color> Session UI Initialized.");
             SetupInputFieldKeyboard(roomCodeInput);
             SetupInputFieldKeyboard(chatInputField);
+            SetupInputFieldKeyboard(loginCustomerIdInput);
+            SetupInputFieldKeyboard(loginLocationIdInput);
 
             if (webAppManager != null) webAppManager.StartLocalPreview();
 
@@ -190,6 +211,25 @@ public RawImage remoteVideoImage;
 
         private void OnSignInPressed()
         {
+            if (webAppManager == null || webAppManager.config == null)
+            {
+                if (loginStatusText != null) loginStatusText.text = "<color=red>Backend config missing.</color>";
+                return;
+            }
+
+            // Manual entry fallback: if the user typed Customer/Location IDs, use them (overrides scan/defaults).
+            if (loginCustomerIdInput != null && !string.IsNullOrWhiteSpace(loginCustomerIdInput.text))
+                webAppManager.config.customerId = loginCustomerIdInput.text.Trim();
+            if (loginLocationIdInput != null && !string.IsNullOrWhiteSpace(loginLocationIdInput.text))
+                webAppManager.config.locationId = loginLocationIdInput.text.Trim();
+            PopulateLoginConfigTexts();
+
+            if (string.IsNullOrEmpty(webAppManager.config.customerId) || string.IsNullOrEmpty(webAppManager.config.locationId))
+            {
+                if (loginStatusText != null) loginStatusText.text = "<color=orange>Scan a Login Code, or type Customer ID and Location ID, then Sign In.</color>";
+                return;
+            }
+
             if (signInButton != null) signInButton.interactable = false;
             if (loginStatusText != null) loginStatusText.text = "Signing in...";
             
@@ -198,41 +238,174 @@ public RawImage remoteVideoImage;
                     ShowJoinScreen();
                 } else {
                     if (signInButton != null) signInButton.interactable = true;
-                    if (loginStatusText != null) loginStatusText.text = "<color=red>Sign in failed.</color>";
+                    string detail = webAppManager != null && !string.IsNullOrEmpty(webAppManager.LastError)
+                        ? webAppManager.LastError : "Unknown error.";
+                    if (loginStatusText != null)
+                        loginStatusText.text = $"<color=red>Sign in failed:</color> {Truncate(detail, 120)}";
+                    Debug.LogError($"[SessionUI] Sign in failed: {detail}");
                 }
             });
         }
 
         private void OnScanLoginCodePressed()
         {
+            // Toggle: a second press cancels scanning.
+            if (_isScanningLoginCode)
+            {
+                _isScanningLoginCode = false;
+                if (loginStatusText != null) loginStatusText.text = "Scan cancelled.";
+                UpdateScanButtonLabel(false);
+                return;
+            }
+
+            // Guard: QR detection is impossible without the Quest scene permission.
+            if (qrManager != null && !qrManager.HasScenePermission)
+            {
+                if (loginStatusText != null)
+                    loginStatusText.text = "<color=orange>Requesting camera/scene permission… grant it, then press Scan again.</color>";
+                qrManager.RequestScenePermissionPublic();
+                return;
+            }
+
             _isScanningLoginCode = true;
-            if (loginStatusText != null) loginStatusText.text = "Scanning Setup QR...";
-            if (scanLoginCodeButton != null) scanLoginCodeButton.interactable = false;
+            // Ensure the QR detector is actively looking for the setup code.
+            if (qrManager != null)
+            {
+                qrManager.StartQRCodeDetection();
+                qrManager.EnsureQrTrackingEnabled();
+            }
+            if (loginStatusText != null) loginStatusText.text = "Look at the Setup QR on the admin Locations page...";
+            UpdateScanButtonLabel(true);
+        }
+
+        private void OnScenePermissionResult(bool granted)
+        {
+            if (loginStatusText == null) return;
+            loginStatusText.text = granted
+                ? "<color=#22D3EE>Scene permission granted. Press Scan Login Code.</color>"
+                : "<color=red>Scene permission denied — QR scanning is disabled. Grant it in Settings ▸ Apps ▸ Permissions.</color>";
+        }
+
+        private void UpdateScanButtonLabel(bool scanning)
+        {
+            if (scanLoginCodeButton == null) return;
+            var label = scanLoginCodeButton.GetComponentInChildren<TMP_Text>(true);
+            if (label != null) label.text = scanning ? "Cancel Scan" : "Scan Login Code";
         }
 
         [Serializable] public class SetupQR { public string customerId; public string locationId; }
 
-        private void HandleLoginQRScan(QrCodeManager.QRCodeInstance qr)
+        /// <summary>
+        /// Raw QR detection callback (fires for every detected code, even before calibration).
+        /// Gives on-headset feedback (a cyan box + the payload text) and attempts the login parse.
+        /// </summary>
+        private void OnRawQRDetected(string payload, Vector3 pos, Quaternion rot)
         {
-            try {
-                var data = JsonUtility.FromJson<SetupQR>(qr.fullPayload);
-                if (!string.IsNullOrEmpty(data.customerId) && !string.IsNullOrEmpty(data.locationId)) {
-                    webAppManager.config.customerId = data.customerId;
-                    webAppManager.config.locationId = data.locationId;
-                    _isScanningLoginCode = false;
-                    if (customerIdText != null) customerIdText.text = $"Customer: {data.customerId}";
-                    if (locationIdText != null) locationIdText.text = $"Location: {data.locationId}";
-                    if (loginStatusText != null) loginStatusText.text = "<color=green>QR Scanned Successfully.</color>";
-                    if (scanLoginCodeButton != null) scanLoginCodeButton.interactable = true;
-                }
-            } catch {
-                // Ignore if not a setup QR
+            if (!_isScanningLoginCode) return;
+
+            // Visual confirmation: draw a box at the detected code so the user knows it was seen.
+            ShowScanHighlight(pos, rot);
+
+            // Show what was actually read (helps diagnose wrong/!valid codes on device).
+            if (loginStatusText != null)
+                loginStatusText.text = $"Detected QR: <color=#22D3EE>{Truncate(payload, 48)}</color>";
+
+            HandleLoginQRScan(payload);
+        }
+
+        private void HandleLoginQRScan(string payload)
+        {
+            if (string.IsNullOrEmpty(payload) || webAppManager == null || webAppManager.config == null) return;
+            SetupQR data = null;
+            try { data = JsonUtility.FromJson<SetupQR>(payload); }
+            catch { data = null; }
+
+            if (data != null && !string.IsNullOrEmpty(data.customerId) && !string.IsNullOrEmpty(data.locationId))
+            {
+                webAppManager.config.customerId = data.customerId;
+                webAppManager.config.locationId = data.locationId;
+                _isScanningLoginCode = false;
+                if (qrManager != null) qrManager.StopQRCodeDetection();
+                PopulateLoginConfigTexts();
+                if (loginStatusText != null) loginStatusText.text = "<color=#22D3EE>Setup code accepted. Press Sign In to continue.</color>";
+                if (scanLoginCodeButton != null) scanLoginCodeButton.interactable = true;
+                UpdateScanButtonLabel(false);
             }
+            else
+            {
+                // A code was seen but it is not a valid setup code -> tell the user explicitly.
+                if (loginStatusText != null)
+                    loginStatusText.text = $"<color=orange>Not a valid Setup code. Read: {Truncate(payload, 40)}</color>";
+            }
+        }
+
+        private static string Truncate(string s, int max)
+        {
+            if (string.IsNullOrEmpty(s)) return "";
+            return s.Length <= max ? s : s.Substring(0, max - 1) + "…";
+        }
+
+        /// <summary>Routes backend progress messages to the login status line.</summary>
+        private void OnBackendStatus(string msg)
+        {
+            if (loginStatusText != null) loginStatusText.text = msg;
+        }
+
+        // ---- On-headset QR detection box (cyan outline) ----
+        private GameObject _scanHighlight;
+
+        private void ShowScanHighlight(Vector3 pos, Quaternion rot)
+        {
+            if (_scanHighlight == null) _scanHighlight = BuildScanHighlight();
+            _scanHighlight.SetActive(true);
+            _scanHighlight.transform.SetPositionAndRotation(pos, rot * Quaternion.Euler(0f, 180f, 0f));
+            CancelInvoke(nameof(HideScanHighlight));
+            Invoke(nameof(HideScanHighlight), 2.5f);
+        }
+
+        private void HideScanHighlight()
+        {
+            if (_scanHighlight != null) _scanHighlight.SetActive(false);
+        }
+
+        private GameObject BuildScanHighlight()
+        {
+            const float s = 0.12f;  // ~ a typical printed QR size
+            const float t = 0.006f; // bar thickness
+            var root = new GameObject("LoginScanHighlight");
+            AddBorderBar(root.transform, new Vector3(0f, s / 2f, 0f), new Vector3(s + t, t, t));
+            AddBorderBar(root.transform, new Vector3(0f, -s / 2f, 0f), new Vector3(s + t, t, t));
+            AddBorderBar(root.transform, new Vector3(-s / 2f, 0f, 0f), new Vector3(t, s + t, t));
+            AddBorderBar(root.transform, new Vector3(s / 2f, 0f, 0f), new Vector3(t, s + t, t));
+            return root;
+        }
+
+        private void AddBorderBar(Transform parent, Vector3 localPos, Vector3 localScale)
+        {
+            var bar = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            bar.name = "Bar";
+            bar.transform.SetParent(parent);
+            bar.transform.localPosition = localPos;
+            bar.transform.localScale = localScale;
+            bar.transform.localRotation = Quaternion.identity;
+            var col = bar.GetComponent<Collider>();
+            if (col != null) Destroy(col);
+            var r = bar.GetComponent<Renderer>();
+            var sh = Shader.Find("Universal Render Pipeline/Unlit");
+            if (sh == null) sh = Shader.Find("Unlit/Color");
+            r.material = new Material(sh);
+            r.material.color = new Color(0.13f, 0.83f, 0.93f, 1f); // cyan
         }
 
         private void SetupInputFieldKeyboard(TMP_InputField input)
         {
             if (input == null) return;
+
+            // Meta's PointableCanvasModule does not auto-select input fields, so onSelect would
+            // never fire on device. This component supplies the missing selection on pointer click.
+            if (input.GetComponent<VrInputFieldActivator>() == null)
+                input.gameObject.AddComponent<VrInputFieldActivator>();
+
             input.onSelect.AddListener((s) => StartCoroutine(OpenKeyboard(input)));
         }
 
@@ -240,12 +413,12 @@ public RawImage remoteVideoImage;
         {
             yield return new WaitForSeconds(0.1f);
             TouchScreenKeyboard keyboard = TouchScreenKeyboard.Open(input.text, TouchScreenKeyboardType.Default);
-            while (keyboard != null && !keyboard.done && !keyboard.wasCanceled)
+            while (keyboard != null && keyboard.status == TouchScreenKeyboard.Status.Visible)
             {
                 input.text = keyboard.text;
                 yield return null;
             }
-            if (keyboard != null && keyboard.done) input.text = keyboard.text;
+            if (keyboard != null && keyboard.status == TouchScreenKeyboard.Status.Done) input.text = keyboard.text;
         }
 
         private string GetColoredPayload(QrCodeManager.QRCodeInstance qr)
@@ -376,6 +549,79 @@ public RawImage remoteVideoImage;
             RefreshQRCodeDropdown();
         }
 
+        /// <summary>Shows the current backend host / customer / location on the Login panel.</summary>
+        private void PopulateLoginConfigTexts()
+        {
+            var cfg = webAppManager != null ? webAppManager.config : null;
+            if (cfg == null) return;
+            if (apiHostText != null) apiHostText.text = $"Host: {cfg.apiHost}";
+            if (customerIdText != null) customerIdText.text = $"Customer: {(string.IsNullOrEmpty(cfg.customerId) ? "(scan or set)" : cfg.customerId)}";
+            if (locationIdText != null) locationIdText.text = $"Location: {(string.IsNullOrEmpty(cfg.locationId) ? "(scan or set)" : cfg.locationId)}";
+        }
+
+        /// <summary>Uploads the current local QR calibration to the backend for this location.</summary>
+        private void OnPushQRPressed()
+        {
+            if (qrManager == null || webAppManager == null) return;
+            string locId = GetActiveLocationId();
+            if (string.IsNullOrEmpty(locId)) { AppendChatMessage("<color=red>[Push] No Location ID set.</color>"); return; }
+
+            string json = qrManager.GetQRCodeDataAsJson(webAppManager.tevrHeadsetId);
+            AppendChatMessage("[Push] Uploading calibration...");
+            if (pushQRButton != null) pushQRButton.interactable = false;
+            webAppManager.PostData($"locations/{locId}/qr-codes", json,
+                (res) => { AppendChatMessage("<color=green>[Push] Calibration uploaded.</color>"); if (pushQRButton != null) pushQRButton.interactable = true; },
+                (err) => { AppendChatMessage($"<color=red>[Push] Failed: {err}</color>"); if (pushQRButton != null) pushQRButton.interactable = true; });
+        }
+
+        /// <summary>Fetches the latest QR calibration for this location from the backend and applies it.</summary>
+        private void OnPullQRPressed()
+        {
+            if (qrManager == null || webAppManager == null) return;
+            string locId = GetActiveLocationId();
+            if (string.IsNullOrEmpty(locId)) { AppendChatMessage("<color=red>[Pull] No Location ID set.</color>"); return; }
+
+            AppendChatMessage("[Pull] Fetching calibration...");
+            if (pullQRButton != null) pullQRButton.interactable = false;
+            webAppManager.GetData($"locations/{locId}/qr-codes",
+                (res) => {
+                    int count = ApplyPulledCalibration(res);
+                    RefreshQRCodeDropdown();
+                    AppendChatMessage($"<color=green>[Pull] Loaded {count} QR code(s).</color>");
+                    if (pullQRButton != null) pullQRButton.interactable = true;
+                },
+                (err) => { AppendChatMessage($"<color=red>[Pull] Failed: {err}</color>"); if (pullQRButton != null) pullQRButton.interactable = true; });
+        }
+
+        private string GetActiveLocationId()
+        {
+            if (locationIdInput != null && !string.IsNullOrEmpty(locationIdInput.text)) return locationIdInput.text.Trim();
+            if (webAppManager != null && !string.IsNullOrEmpty(webAppManager.tevrLocationId)) return webAppManager.tevrLocationId;
+            if (webAppManager != null && webAppManager.config != null) return webAppManager.config.locationId;
+            return null;
+        }
+
+        [Serializable] private class PulledQR { public string qrValue; public Vector3 position; public Quaternion rotation; }
+        [Serializable] private class PulledCalibration { public string headsetId; public System.Collections.Generic.List<PulledQR> qrCodes; }
+
+        private int ApplyPulledCalibration(string json)
+        {
+            if (string.IsNullOrEmpty(json) || qrManager == null) return 0;
+            try
+            {
+                var data = JsonUtility.FromJson<PulledCalibration>(json);
+                if (data == null || data.qrCodes == null) return 0;
+                foreach (var q in data.qrCodes)
+                    qrManager.UpdateQRCodeFromRemote(q.qrValue, q.position, q.rotation);
+                return data.qrCodes.Count;
+            }
+            catch (Exception e)
+            {
+                AppendChatMessage($"<color=red>[Pull] Parse error: {e.Message}</color>");
+                return 0;
+            }
+        }
+
         private void OnStartupDataReceived(SignalingManager.StartupData data)
         {
             if (qrManager == null) return;
@@ -405,7 +651,14 @@ public RawImage remoteVideoImage;
                 webAppManager.OnDisconnected -= OnDisconnected;
                 webAppManager.OnChatMessageReceived -= OnChatReceived;
                 webAppManager.OnStartupDataReceived -= OnStartupDataReceived;
+                webAppManager.OnStatusUpdate -= OnBackendStatus;
             }
+            if (qrManager != null)
+            {
+                qrManager.OnRawQRDetected -= OnRawQRDetected;
+                qrManager.OnScenePermissionResult -= OnScenePermissionResult;
+            }
+            if (_scanHighlight != null) Destroy(_scanHighlight);
         }
 }
 }

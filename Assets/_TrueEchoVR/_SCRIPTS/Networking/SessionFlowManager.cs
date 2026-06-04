@@ -45,7 +45,7 @@ namespace TEVR
                     // Robust fallback: search for the OVRCameraRig component
                     if (rig == null)
                     {
-                        var rigComponent = Object.FindObjectOfType<OVRCameraRig>();
+                        var rigComponent = Object.FindAnyObjectByType<OVRCameraRig>();
                         if (rigComponent != null) rig = rigComponent.gameObject;
                     }
 
