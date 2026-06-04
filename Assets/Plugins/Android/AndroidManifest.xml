@@ -25,6 +25,12 @@
   <uses-permission android:name="com.oculus.permission.USE_SCENE" />
   <horizonos:uses-horizonos-sdk horizonos:minSdkVersion="60" horizonos:targetSdkVersion="85" />
   <uses-permission android:name="horizonos.permission.HEADSET_CAMERA" />
+  <!-- Required (in addition to horizonos HEADSET_CAMERA) for Meta Passthrough Camera Access (WebCamTexture). -->
+  <uses-permission android:name="android.permission.CAMERA" />
+  <uses-feature android:name="android.hardware.camera2" android:required="false" />
+  <!-- Required for WebRTC / WebSocket signaling / REST to the Replit backend. -->
+  <uses-permission android:name="android.permission.INTERNET" />
+  <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
   <uses-feature android:name="oculus.software.eye_tracking" android:required="false" />
   <uses-permission android:name="com.oculus.permission.EYE_TRACKING" />
 </manifest>

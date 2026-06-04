@@ -44,11 +44,31 @@ namespace TEVR
         private AudioStreamTrack _audioTrack;
         private string _remoteSocketId;
 
+        public enum VideoSource
+        {
+            /// <summary>Capture the headset passthrough camera (real world) via WebCamTexture. Requires CAMERA permission.</summary>
+            PassthroughCamera,
+            /// <summary>Capture the Unity rendered eye view (virtual content only). No real-world imagery.</summary>
+            RenderedCamera
+        }
+
         [Header("Video Settings")]
+        [Tooltip("PassthroughCamera streams the real world (requires Camera permission + passthrough camera access). " +
+                 "RenderedCamera streams only Unity-rendered content. If passthrough is unavailable at runtime, " +
+                 "the system automatically falls back to the rendered camera.")]
+        public VideoSource videoSource = VideoSource.PassthroughCamera;
+
+        [Tooltip("Legacy flag kept for compatibility. When true, forces the PassthroughCamera (WebCamTexture) source.")]
         public bool useWebcam = false;
+
         public Camera captureCamera;
         public Vector2Int captureResolution = new Vector2Int(1280, 720);
+
+        [Tooltip("Optional: substring of the desired WebCamTexture device name. Leave empty to auto-pick the passthrough camera.")]
         public string webcamDeviceName = "";
+
+        [Tooltip("How long (seconds) to wait for Camera permission + the passthrough camera to start before falling back to the rendered view.")]
+        public float passthroughStartTimeout = 8f;
 
         private WebCamTexture _webcamTexture;
         private RenderTexture _captureRT;
@@ -91,6 +111,17 @@ namespace TEVR
                 DontDestroyOnLoad(gameObject);
                 tevrHeadsetId = PlayerPrefs.GetString("TEVR_HEADSET_ID", "");
                 tevrLocationId = PlayerPrefs.GetString("TEVR_LOCATION_ID", "");
+
+                // Restore the last-used connection info so the login fields prepopulate with what the
+                // device remembers (from a prior QR setup or manual sign-in) instead of the baked
+                // BackendConfig defaults. This is what lets the user skip re-scanning the setup QR.
+                if (config != null)
+                {
+                    string savedCustomer = PlayerPrefs.GetString(PrefCustomerId, "");
+                    string savedLocation = PlayerPrefs.GetString("TEVR_LOCATION_ID", "");
+                    if (!string.IsNullOrEmpty(savedCustomer)) config.customerId = savedCustomer;
+                    if (!string.IsNullOrEmpty(savedLocation)) config.locationId = savedLocation;
+                }
             }
             else
             {
@@ -105,7 +136,30 @@ namespace TEVR
 
         #region Phase 1 — Provisioning & Boot
 
+        // PlayerPrefs key for the remembered customer id (headset & location reuse their existing keys).
+        private const string PrefCustomerId = "TEVR_CUSTOMER_ID";
+
         public bool HasCredentials => !string.IsNullOrEmpty(tevrHeadsetId) && !string.IsNullOrEmpty(tevrLocationId);
+
+        /// <summary>
+        /// Persists the connection info (customer + location) so it is remembered across app restarts
+        /// and used to prepopulate the login fields. Call this whenever the IDs are established
+        /// (QR setup scan or manual sign-in). Also updates the in-memory config immediately.
+        /// </summary>
+        public void SaveConnectionInfo(string customerId, string locationId)
+        {
+            if (!string.IsNullOrEmpty(customerId))
+            {
+                PlayerPrefs.SetString(PrefCustomerId, customerId);
+                if (config != null) config.customerId = customerId;
+            }
+            if (!string.IsNullOrEmpty(locationId))
+            {
+                PlayerPrefs.SetString("TEVR_LOCATION_ID", locationId);
+                if (config != null) config.locationId = locationId;
+            }
+            PlayerPrefs.Save();
+        }
 
         public void RegisterAndBoot(string customerId, string locationId, Action<bool> onComplete)
         {
@@ -212,6 +266,7 @@ namespace TEVR
             tevrLocationId = "";
             PlayerPrefs.DeleteKey("TEVR_HEADSET_ID");
             PlayerPrefs.DeleteKey("TEVR_LOCATION_ID");
+            PlayerPrefs.DeleteKey(PrefCustomerId);
             PlayerPrefs.Save();
         }
 
@@ -493,6 +548,87 @@ namespace TEVR
         public void StartLocalPreview() { if (_videoTrack != null) return; StartCoroutine(SetupLocalMedia()); }
 
         private IEnumerator SetupLocalMedia()
+        {
+            if (_videoTrack != null) yield break;
+
+            bool wantPassthrough = useWebcam || videoSource == VideoSource.PassthroughCamera;
+
+            if (wantPassthrough)
+            {
+                bool ok = false;
+                yield return StartCoroutine(SetupPassthroughCamera(success => ok = success));
+                if (ok) yield break; // passthrough track created; done.
+                Debug.LogWarning("[SignalingManager] Passthrough camera unavailable — falling back to rendered camera stream.");
+            }
+
+            yield return StartCoroutine(SetupRenderedCamera());
+        }
+
+        /// <summary>
+        /// Streams the real-world view using Meta's Passthrough Camera Access, which exposes the
+        /// headset cameras as standard Android camera devices through Unity's WebCamTexture.
+        /// Requires the CAMERA + HEADSET_CAMERA permissions and "Passthrough Camera Access" enabled
+        /// in the Oculus project config (both are configured in this project).
+        /// </summary>
+        private IEnumerator SetupPassthroughCamera(Action<bool> onComplete)
+        {
+            float deadline = Time.time + Mathf.Max(2f, passthroughStartTimeout);
+
+            // 1. Wait for the runtime CAMERA permission.
+#if UNITY_ANDROID && !UNITY_EDITOR
+            while (!UnityEngine.Android.Permission.HasUserAuthorizedPermission("android.permission.CAMERA") && Time.time < deadline)
+            {
+                yield return null;
+            }
+            if (!UnityEngine.Android.Permission.HasUserAuthorizedPermission("android.permission.CAMERA"))
+            {
+                Status("Camera permission not granted — cannot stream passthrough.");
+                onComplete?.Invoke(false);
+                yield break;
+            }
+#endif
+
+            // 2. Wait for a camera device to be enumerated.
+            while (WebCamTexture.devices.Length == 0 && Time.time < deadline) yield return null;
+            var devices = WebCamTexture.devices;
+            if (devices.Length == 0) { onComplete?.Invoke(false); yield break; }
+
+            // 3. Choose the device: explicit name match if provided, otherwise the first available.
+            string chosen = devices[0].name;
+            if (!string.IsNullOrEmpty(webcamDeviceName))
+            {
+                foreach (var d in devices)
+                {
+                    if (d.name.IndexOf(webcamDeviceName, StringComparison.OrdinalIgnoreCase) >= 0) { chosen = d.name; break; }
+                }
+            }
+
+            // 4. Start the WebCamTexture.
+            _webcamTexture = new WebCamTexture(chosen, captureResolution.x, captureResolution.y, 30);
+            _webcamTexture.Play();
+
+            // 5. Wait until it actually produces frames (width stays at 16 until the stream is live).
+            while (_webcamTexture.width <= 16 && Time.time < deadline) yield return null;
+            if (_webcamTexture.width <= 16)
+            {
+                Status("Passthrough camera failed to start.");
+                _webcamTexture.Stop();
+                _webcamTexture = null;
+                onComplete?.Invoke(false);
+                yield break;
+            }
+
+            _videoTrack = new VideoStreamTrack(_webcamTexture);
+            Status($"Streaming passthrough camera: {chosen} ({_webcamTexture.width}x{_webcamTexture.height}).");
+            OnLocalStreamStarted?.Invoke(_webcamTexture);
+            onComplete?.Invoke(true);
+        }
+
+        /// <summary>
+        /// Fallback path: streams the Unity-rendered eye view into a RenderTexture. Note that on a
+        /// passthrough MR app this contains only the virtual content, not the real world.
+        /// </summary>
+        private IEnumerator SetupRenderedCamera()
         {
             float timeout = 10f;
             while (captureCamera == null && Camera.main == null && timeout > 0) { timeout -= Time.deltaTime; yield return null; }

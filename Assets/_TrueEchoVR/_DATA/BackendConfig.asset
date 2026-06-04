@@ -12,6 +12,8 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 2f9d0e852c2d3bc42993550e6a882fc5, type: 3}
   m_Name: BackendConfig
   m_EditorClassIdentifier: Assembly-CSharp::TEVR.BackendConfig
-  serverBaseUrl: https://live-troubleshooting-app.replit.app
+  apiHost: https://live-troubleshooting-app.replit.app
   apiPath: /api
-  headsetId: quest-3-unit-01
+  customerId: cust-004
+  locationId: 4343e4d8-0dd0-4fd0-8ce6-8f42af994ffc
+  firmwareVersion: 1.0.0

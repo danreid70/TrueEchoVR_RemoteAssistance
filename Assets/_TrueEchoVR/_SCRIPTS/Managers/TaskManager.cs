@@ -1,5 +1,7 @@
+using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.IO;
 using UnityEngine;
 using UnityEngine.Events;
 
@@ -25,6 +27,26 @@ namespace TEVR
         
         [Tooltip("Delay in seconds before progressing to the next step after completion.")]
         [SerializeField] private float stepCompletionDelay = 1.0f;
+
+        [Header("Persistence (offline / restart resilience)")]
+        [Tooltip("Save progress locally and resume from the last incomplete step after a restart " +
+                 "(e.g. if the cloud connection dropped before the session finished).")]
+        [SerializeField] private bool persistProgress = true;
+
+        [Tooltip("File name used to persist task progress under Application.persistentDataPath.")]
+        [SerializeField] private string progressFileName = "TaskProgress.json";
+
+        [Serializable]
+        private class TaskProgress
+        {
+            public string sessionSignature; // identifies the step-set so we don't resume a different task
+            public int currentStepIndex;
+            public bool completed;
+            public List<string> completedStepIds = new List<string>();
+            public string lastUpdatedUtc;
+        }
+
+        private readonly HashSet<string> _completedStepIds = new HashSet<string>();
 
         [Header("UI & Tracking Integration")]
         [Tooltip("Reference to the world-space HUD for displaying instructions.")]
@@ -78,7 +100,7 @@ namespace TEVR
 
             if (statusUI == null)
             {
-                statusUI = Object.FindAnyObjectByType<VrHudController>(FindObjectsInactive.Include);
+                statusUI = UnityEngine.Object.FindAnyObjectByType<VrHudController>(FindObjectsInactive.Include);
             }
 
             foreach (var tracker in lmsTrackers)
@@ -100,10 +122,33 @@ namespace TEVR
                 return;
             }
 
-            _currentStepIndex = 0;
+            _completedStepIds.Clear();
+
+            // Resume from persisted progress if a compatible, unfinished session exists.
+            int startIndex = 0;
+            if (persistProgress && TryLoadProgress(out var saved))
+            {
+                if (saved.completed)
+                {
+                    // The previous run already finished this exact task set — start fresh.
+                    Debug.Log("[TaskManager] Saved progress was already complete. Starting a new run.");
+                    ClearProgress();
+                }
+                else
+                {
+                    if (saved.completedStepIds != null)
+                        foreach (var id in saved.completedStepIds) _completedStepIds.Add(id);
+
+                    startIndex = Mathf.Clamp(saved.currentStepIndex, 0, steps.Count - 1);
+                    Debug.Log($"[TaskManager] Resuming task from step {startIndex} ({_completedStepIds.Count} step(s) already completed).");
+                }
+            }
+
+            _currentStepIndex = startIndex;
             _isTaskRunning = true;
             onTaskStarted?.Invoke();
             ActivateStep(_currentStepIndex);
+            SaveProgress();
         }
 
         private void ActivateStep(int index)
@@ -158,10 +203,14 @@ namespace TEVR
             current.onStepCompleted?.Invoke();
             statusUI?.ClearHighlight();
 
+            if (!string.IsNullOrEmpty(stepId)) _completedStepIds.Add(stepId);
+
             foreach (var tracker in lmsTrackers)
             {
                 if (tracker != null) tracker.LogProgress(stepId, true, Time.time);
             }
+
+            SaveProgress();
 
             if (_currentStepIndex < steps.Count - 1)
             {
@@ -183,6 +232,9 @@ namespace TEVR
             {
                 if (tracker != null) tracker.CompleteCourse("default_training_session");
             }
+
+            // Persist the completed state so a restart starts a fresh run instead of resuming the last step.
+            SaveProgress(markCompleted: true);
         }
 
         private IEnumerator DelayedNextStep()
@@ -199,6 +251,7 @@ namespace TEVR
             }
 
             ActivateStep(_currentStepIndex);
+            SaveProgress();
 
             // Log attempt for the next step
             foreach (var tracker in lmsTrackers)
@@ -244,5 +297,93 @@ namespace TEVR
             _currentStepIndex = -1;
             statusUI?.ClearHighlight();
         }
+
+        #region Persistence
+
+        private string ProgressFilePath =>
+            Path.Combine(Application.persistentDataPath, string.IsNullOrEmpty(progressFileName) ? "TaskProgress.json" : progressFileName);
+
+        /// <summary>
+        /// A signature of the current step set so we never resume progress that belongs to a
+        /// different/edited task list (which would point at the wrong steps).
+        /// </summary>
+        private string BuildSessionSignature()
+        {
+            var ids = new List<string>(steps.Count);
+            foreach (var s in steps) ids.Add(s != null ? s.stepId : "<null>");
+            return $"{steps.Count}:{string.Join("|", ids)}";
+        }
+
+        /// <summary>Writes the current progress to disk. Safe to call frequently.</summary>
+        public void SaveProgress(bool markCompleted = false)
+        {
+            if (!persistProgress) return;
+            try
+            {
+                var data = new TaskProgress
+                {
+                    sessionSignature = BuildSessionSignature(),
+                    currentStepIndex = _currentStepIndex,
+                    completed = markCompleted,
+                    completedStepIds = new List<string>(_completedStepIds),
+                    lastUpdatedUtc = DateTime.UtcNow.ToString("O")
+                };
+                File.WriteAllText(ProgressFilePath, JsonUtility.ToJson(data, true));
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[TaskManager] Could not save task progress: {e.Message}");
+            }
+        }
+
+        /// <summary>Loads saved progress, returning false if none exists or it belongs to a different task set.</summary>
+        private bool TryLoadProgress(out TaskProgress progress)
+        {
+            progress = null;
+            if (!persistProgress) return false;
+            try
+            {
+                string path = ProgressFilePath;
+                if (!File.Exists(path)) return false;
+
+                var data = JsonUtility.FromJson<TaskProgress>(File.ReadAllText(path));
+                if (data == null) return false;
+
+                // Reject progress saved against a different step list.
+                if (data.sessionSignature != BuildSessionSignature())
+                {
+                    Debug.Log("[TaskManager] Saved progress is for a different task set; ignoring it.");
+                    return false;
+                }
+
+                progress = data;
+                return true;
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[TaskManager] Could not load task progress: {e.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>Deletes any persisted progress (e.g. to force a clean restart).</summary>
+        public void ClearProgress()
+        {
+            _completedStepIds.Clear();
+            try
+            {
+                string path = ProgressFilePath;
+                if (File.Exists(path)) File.Delete(path);
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[TaskManager] Could not clear task progress: {e.Message}");
+            }
+        }
+
+        /// <summary>True if a given step id has already been completed in this (possibly resumed) session.</summary>
+        public bool IsStepCompleted(string stepId) => _completedStepIds.Contains(stepId);
+
+        #endregion
     }
 }

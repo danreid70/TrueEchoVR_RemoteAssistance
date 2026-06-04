@@ -141,6 +141,7 @@ public RawImage remoteVideoImage;
             if (roomCodeInput != null) roomCodeInput.onSubmit.AddListener((_) => OnJoinPressed());
 
             PopulateLoginConfigTexts();
+            PrefillLoginInputs();
             
             if (noSignalTexture != null)
             {
@@ -322,10 +323,14 @@ public RawImage remoteVideoImage;
 
             if (data != null && !string.IsNullOrEmpty(data.customerId) && !string.IsNullOrEmpty(data.locationId))
             {
-                webAppManager.config.customerId = data.customerId;
-                webAppManager.config.locationId = data.locationId;
+                // Persist immediately so the device remembers this setup and the fields prepopulate
+                // on every subsequent launch (no need to re-scan the setup QR).
+                webAppManager.SaveConnectionInfo(data.customerId, data.locationId);
                 _isScanningLoginCode = false;
                 if (qrManager != null) qrManager.StopQRCodeDetection();
+                // Reflect the accepted values in the editable input fields and labels.
+                if (loginCustomerIdInput != null) loginCustomerIdInput.text = data.customerId;
+                if (loginLocationIdInput != null) loginLocationIdInput.text = data.locationId;
                 PopulateLoginConfigTexts();
                 if (loginStatusText != null) loginStatusText.text = "<color=#22D3EE>Setup code accepted. Press Sign In to continue.</color>";
                 if (scanLoginCodeButton != null) scanLoginCodeButton.interactable = true;
@@ -547,6 +552,27 @@ public RawImage remoteVideoImage;
         {
             qrManager?.ClearQRCodes();
             RefreshQRCodeDropdown();
+        }
+
+        /// <summary>
+        /// Seeds the editable Customer/Location input fields with the current config values
+        /// so the user can connect immediately, or click a field to bring up the VR keyboard
+        /// and edit them if a setup QR code is not detected.
+        /// </summary>
+        private void PrefillLoginInputs()
+        {
+            var cfg = webAppManager != null ? webAppManager.config : null;
+            if (cfg == null) return;
+
+            // Only prefill when empty so we never clobber what the user has typed.
+            if (loginCustomerIdInput != null && string.IsNullOrEmpty(loginCustomerIdInput.text) && !string.IsNullOrEmpty(cfg.customerId))
+                loginCustomerIdInput.text = cfg.customerId;
+            if (loginLocationIdInput != null && string.IsNullOrEmpty(loginLocationIdInput.text) && !string.IsNullOrEmpty(cfg.locationId))
+                loginLocationIdInput.text = cfg.locationId;
+
+            // The session-screen Location field (used for QR push/pull) is also seeded.
+            if (locationIdInput != null && string.IsNullOrEmpty(locationIdInput.text) && !string.IsNullOrEmpty(cfg.locationId))
+                locationIdInput.text = cfg.locationId;
         }
 
         /// <summary>Shows the current backend host / customer / location on the Login panel.</summary>
