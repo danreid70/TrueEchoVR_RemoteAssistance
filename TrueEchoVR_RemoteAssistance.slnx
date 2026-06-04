@@ -3,8 +3,8 @@
   <Project Path="Meta.Voice.NLayer.csproj" />
   <Project Path="Meta.XR.MultiplayerBlocks.Shared.csproj" />
   <Project Path="Unity.AppUI.csproj" />
-  <Project Path="Unity.Services.Core.Internal.csproj" />
   <Project Path="Unity.Services.Authentication.PlayerAccounts.csproj" />
+  <Project Path="Unity.Services.Core.Internal.csproj" />
   <Project Path="Unity.AI.Toolkit.Asset.csproj" />
   <Project Path="Unity.ShaderGraph.Editor.csproj" />
   <Project Path="Meta.XR.BuildingBlocks.csproj" />
@@ -41,8 +41,8 @@
   <Project Path="Unity.XR.Simulation.Editor.csproj" />
   <Project Path="Unity.Searcher.Editor.csproj" />
   <Project Path="meta.xr.mrutilitykit.csproj" />
-  <Project Path="Unity.XR.Hands.csproj" />
   <Project Path="Oculus.Interaction.Samples.csproj" />
+  <Project Path="Unity.XR.Hands.csproj" />
   <Project Path="glTFast.csproj" />
   <Project Path="Unity.Services.Wire.Internal.csproj" />
   <Project Path="Oculus.Interaction.csproj" />
@@ -197,8 +197,8 @@
   <Project Path="Unity.AppUI.Redux.Editor.csproj" />
   <Project Path="Unity.AI.Pbr.Srp.csproj" />
   <Project Path="Oculus.Platform.Editor.csproj" />
-  <Project Path="Meta.XR.EnvironmentDepth.Editor.csproj" />
   <Project Path="glTFast.Editor.csproj" />
+  <Project Path="Meta.XR.EnvironmentDepth.Editor.csproj" />
   <Project Path="VoiceSDK.Telemetry.Runtime.csproj" />
   <Project Path="Unity.AppUI.Undo.csproj" />
   <Project Path="Unity.Services.Core.Analytics.csproj" />

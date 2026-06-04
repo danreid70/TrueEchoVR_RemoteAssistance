@@ -504,6 +504,8 @@ namespace TEVR
                     }
                     request.downloadHandler = new DownloadHandlerBuffer();
                     request.SetRequestHeader("Content-Type", "application/json");
+                    // Backend enforces an AJAX/CSRF guard and rejects requests without this header (HTTP 403).
+                    request.SetRequestHeader("X-Requested-With", "XMLHttpRequest");
 
                     yield return request.SendWebRequest();
 

@@ -171,9 +171,18 @@ namespace TEVR
 
         private void OnRemotePointToReceived(string name, Vector3? position, Quaternion? rotation)
         {
+            // An empty point-to with no coordinates means the admin cleared the selection.
+            if (string.IsNullOrEmpty(name) && !position.HasValue)
+            {
+                qrManager?.ClearFocus();
+                statusUI?.ShowMessage("", "");
+                return;
+            }
+
             if (position.HasValue)
             {
-                // Enriched point-to with real-world coordinates
+                // Enriched point-to with real-world coordinates (separate highlight system).
+                qrManager?.ClearFocus();
                 UIManager.Instance?.remoteHighlight?.HighlightPosition(
                     name, 
                     position.Value, 
@@ -193,6 +202,7 @@ namespace TEVR
                         return;
                     }
                 }
+                qrManager?.ClearFocus();
                 statusUI?.ShowMessage($"Admin pointing to: {name}", "(Object not found in room)");
             }
         }
@@ -315,6 +325,9 @@ namespace TEVR
 
         public void PointToQRCode(QrCodeManager.QRCodeInstance qr)
         {
+            if (qr == null) return;
+            // Surround the pointed-at code with the pulsing focus glow until the selection is cleared.
+            qrManager?.FocusQRCode(qr);
             if (qr.visualObject != null)
             {
                 statusUI?.HighlightTarget(qr.visualObject.transform);

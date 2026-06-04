@@ -196,7 +196,12 @@ public RawImage remoteVideoImage;
             SetupInputFieldKeyboard(loginCustomerIdInput);
             SetupInputFieldKeyboard(loginLocationIdInput);
 
-            if (webAppManager != null) webAppManager.StartLocalPreview();
+            // IMPORTANT: Do NOT open the physical Passthrough Camera here.
+            // With videoSource = PassthroughCamera, StartLocalPreview() opens a WebCamTexture on the
+            // headset cameras. Doing that at launch (before Camera permission is granted, and while the
+            // OVRPassthroughLayer is initializing) contends with the system passthrough and blacks out
+            // the user's view. Local capture is now started only when a remote session goes LIVE
+            // (see OnConnected), by which point passthrough is rendering and permissions are resolved.
 
             // Handle initial state manually
             if (UIManager.Instance != null)
@@ -417,6 +422,9 @@ public RawImage remoteVideoImage;
         private IEnumerator OpenKeyboard(TMP_InputField input)
         {
             yield return new WaitForSeconds(0.1f);
+            // No software keyboard on this platform (e.g. the Editor without a device). Opening it
+            // returns an object whose native handle is invalid, so reading .status throws an NRE.
+            if (!TouchScreenKeyboard.isSupported) yield break;
             TouchScreenKeyboard keyboard = TouchScreenKeyboard.Open(input.text, TouchScreenKeyboardType.Default);
             while (keyboard != null && keyboard.status == TouchScreenKeyboard.Status.Visible)
             {
@@ -532,6 +540,11 @@ public RawImage remoteVideoImage;
         {
             if (connectionStatusText != null) connectionStatusText.text = "Status: LIVE";
             AppendChatMessage("--- Connected ---");
+
+            // Now that a session is live (passthrough is already rendering and Camera permission has
+            // been resolved by the startup permission flow), it is safe to open the Passthrough Camera
+            // and begin the local preview / outgoing video stream to the remote expert.
+            if (webAppManager != null) webAppManager.StartLocalPreview();
         }
 
         private void OnDisconnected()
@@ -637,8 +650,13 @@ public RawImage remoteVideoImage;
             {
                 var data = JsonUtility.FromJson<PulledCalibration>(json);
                 if (data == null || data.qrCodes == null) return 0;
+                var valid = new List<string>();
                 foreach (var q in data.qrCodes)
+                {
                     qrManager.UpdateQRCodeFromRemote(q.qrValue, q.position, q.rotation);
+                    if (!string.IsNullOrEmpty(q.qrValue)) valid.Add(q.qrValue);
+                }
+                qrManager.AddValidPayloads(valid);
                 return data.qrCodes.Count;
             }
             catch (Exception e)
@@ -660,6 +678,7 @@ public RawImage remoteVideoImage;
         {
             if (index == 0)
             {
+                qrManager?.ClearFocus();
                 statusUI?.ClearHighlight();
                 statusUI?.ShowMessage("", "");
                 return;

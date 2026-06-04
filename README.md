@@ -9,6 +9,7 @@ Welcome to the **TrueEchoVR** project. This application is a professional-grade 
 
 - **MR Spatial Awareness**: Full passthrough integration with physical room awareness. **Pure AR Locomotion**: No virtual locomotion (teleport/snap-turn) is enabled; movement is 1:1 with the headset's physical movement in the real world.
 - **QR Calibration & Persistence**: Align the virtual coordinate system with the physical world using a dedicated "Room Anchor" QR code. Calibration is persistent and multi-tenant aware.
+- **QR Detection Markers & Point-At Focus**: Every detected QR code shows a small colour-coded pip (green/red/blue/orange) that fades away after a few seconds to avoid clutter, and a discernible pulsing glow surrounds whichever code is currently "pointed at" by the operator or remote expert. See _QR Detection Markers_ below.
 - **Anchor-Relative Hierarchy**: Virtual objects are parented to physical anchors, ensuring they stay locked in place even if the headset re-localizes.
 - **Remote Expert Streaming**: Real-time video and audio via **WebRTC**. An expert can view the operator's perspective and "point" to physical objects. Video defaults to the **Meta Passthrough Camera** (real-world view) and automatically falls back to the Unity-rendered view if the passthrough camera is unavailable.
 - **Unified Permission Flow**: A startup `PermissionsBootstrapper` requests every runtime permission the app needs (Scene/spatial data for QR tracking, Camera for passthrough streaming) in a single prompt the first time the app launches.
@@ -91,6 +92,8 @@ The active backend settings live in the **`BackendConfig` ScriptableObject** at 
 - **PassthroughCamera** (default): streams the real-world view via the Meta Passthrough Camera Access (`WebCamTexture`). Requires the Camera permission + developer mode.
 - **RenderedCamera**: streams only the Unity-rendered eye view (virtual content). Used automatically as a fallback when the passthrough camera cannot start within `passthroughStartTimeout` seconds.
 
+> ⚠️ **Passthrough Camera startup timing (critical):** Do **not** open the Passthrough Camera (`StartLocalPreview()` / `WebCamTexture`) at app launch. Grabbing the physical headset cameras while the `OVRPassthroughLayer` is still initializing — and before the Camera permission is granted — contends with the system passthrough layer and **blacks out the entire view** (and can hide the OS permission dialog). The local camera capture is therefore started only when a remote session goes **LIVE** (`SessionUiController.OnConnected`), by which point passthrough is rendering and permissions are resolved. During login/calibration the headset shows normal passthrough. If you add new code paths that stream video, gate them the same way.
+
 ---
 
 ## 🔐 Permissions (Quest)
@@ -108,6 +111,51 @@ Declaring a permission in the manifest is **necessary but not sufficient** — t
 - **Passthrough Camera Access** is enabled in `OculusProjectConfig` (`isPassthroughCameraAccessEnabled`). Camera access on Quest requires the app to run in **developer mode** until it is approved for the camera permission, and the headset must be on **Horizon OS v74+**.
 
 > ⚠️ **Why QR scanning failed previously:** the scene permission was declared but never requested at runtime, so no prompt appeared and MRUK never received QR trackables. The unified `PermissionsBootstrapper` resolves this.
+
+---
+
+## 🟢 QR Detection Markers & Point-At Focus
+
+A lightweight visualization layer in **`QrCodeManager`** makes QR tracking easy to test on-device. It is designed to stay cheap with **hundreds** of codes in view.
+
+### Colour categories (the single, unified indicator)
+Every detected code is classified and coloured by one scheme used everywhere (the small detection pip *and* the heavier post-calibration visual):
+
+| Colour | Category | Meaning |
+| --- | --- | --- |
+| 🟢 Green | **Target** | What the app is actively looking for — the **RoomAnchor**, or a valid **login setup code** (`{ "customerId": "...", "locationId": "..." }`). |
+| 🔴 Red | **Invalid** | Empty/whitespace payload, or a JSON-looking payload that fails to parse into a setup code. |
+| 🔵 Blue | **ValidListed** | Payload is present in the server-provided **valid QR list**. |
+| 🟠 Orange | **Unlisted** | A readable code that is neither a target nor in the valid list. |
+
+### Valid-payload pool
+Classification uses an O(1) `HashSet` of known-good payloads so it scales to large rooms. It is populated automatically from the backend:
+- `SessionUiController.OnStartupDataReceived` → `QrCodeManager.SetValidPayloads(...)` (server `StartupData.qrCodes[].qrValue`).
+- The **Pull** calibration action → `QrCodeManager.AddValidPayloads(...)`.
+- When the list arrives after codes are already visible, existing pips recolour automatically (e.g. orange → blue).
+- API: `SetValidPayloads`, `AddValidPayloads`, `AddValidPayload`, `ClearValidPayloads`, `IsValidListed`.
+
+### Fade behaviour (avoids scene clutter)
+A detection pip appears at full opacity when a code is **detected/loaded**, holds for `markerHoldSeconds`, then fades to invisible over `markerFadeSeconds`. This lets the operator *see* the detect/load event without leaving markers scattered everywhere. A pip **reappears** when:
+- the code is re-detected, or
+- the code becomes the focused/"pointed-at" selection.
+
+Fading is driven per-renderer via a `MaterialPropertyBlock` (one shared transparent material per colour, no per-marker material allocation). A fully-faded marker disables its own renderer and `Update` until shown again.
+
+### Point-At focus glow
+When a code is "pointed at", a single reusable **pulsing glow halo** surrounds it (and its pip is held visible) until the selection is cleared:
+- **Triggered by**: the QR-code dropdown (`SessionUiController.OnQRCodeSelected` → `SessionFlowManager.PointToQRCode` → `QrCodeManager.FocusQRCode`), or a remote **`point-to`** command from the web app.
+- **Cleared by**: selecting "None" in the dropdown, a remote `point-to` with an empty name, a position-based highlight, or the focused code being removed. All call `QrCodeManager.ClearFocus()`.
+- The glow follows the live trackable when the code is physically tracked, or its placed visual object otherwise, so it works both during scanning and post-calibration.
+
+### Robust / frequent scanning
+- `StartQRCodeDetection()` re-asserts the MRUK tracker config so scanning reliably (re)starts.
+- A low-frequency safeguard re-enables QR tracking if the runtime ever drops it (only acts when actually disabled).
+- **Payload race fix**: MRUK often raises `TrackableAdded` before the QR string is decoded. Codes with an empty payload are deferred and re-read in `Update()` until the string is available, then processed normally. (This fixed the "it read once, then never again" behaviour — previously a code was processed with an empty payload and never re-read, since `TrackableAdded` does not fire again for an already-tracked code.)
+
+### Tuning & toggles (on the `QrCodeManager` component)
+- `showDetectionMarkers` (bool) — master on/off for pips. Also `SetDetectionMarkersVisible(bool)` / `ToggleDetectionMarkers()` at runtime.
+- `markerSize` (m), `markerHoldSeconds`, `markerFadeSeconds` — pip size and fade timing.
 
 ---
 
@@ -158,6 +206,8 @@ A dependency-driven audit confirmed the two shipping scenes (`Bootstrap`, `Troub
 **Remaining optional candidates** (deliberately kept — they may be needed): the disabled demo scene `_TrueEchoVR_StartScene_Demo-XRIT-Rig.unity` (your own dev scene) and `Speech Bubble` (a speech-bubble/label system that may support the planned "show message" training step type). Remove them later if they go unused.
 
 > **Tip:** Keep one config source of truth — edit backend settings on `BackendConfig.asset`, not the script defaults, to avoid drift (the asset had gone stale against the script schema and was repaired during this work).
+
+> **Note:** If an editor Undo (Ctrl+Z) is pressed after these folders are deleted, Unity restores them (some, e.g. `MRUKSamples` and `Simple Garage`, contain corrupt `.png` files that then log `Could not create asset … File could not be read`). They were re-deleted; the build-scene dependency set is unaffected either way (verified at 282 assets). If they reappear, simply delete them again.
 
 ## 📈 Suggested Next Steps
 1. **Item Search**: Implement a search filter for the item dictionary dropdown as location databases grow.

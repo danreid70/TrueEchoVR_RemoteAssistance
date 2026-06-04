@@ -33,6 +33,21 @@ public class QRPayloadAction
         public bool autoSaveLoad = true;
         public string saveFileName = "QRDetectedData.json";
 
+        [Header("Detection Markers (testing aid)")]
+        [Tooltip("Show a small colored pip above every detected QR code. " +
+                 "Green = target (RoomAnchor / login setup code), Red = invalid, " +
+                 "Blue = in the valid QR list, Orange = unlisted.")]
+        public bool showDetectionMarkers = true;
+
+        [Tooltip("World size (in meters) of the detection pip.")]
+        public float markerSize = 0.03f;
+
+        [Tooltip("Seconds a detection marker stays fully visible after being detected/loaded before it starts to fade.")]
+        public float markerHoldSeconds = 3f;
+
+        [Tooltip("Seconds over which a detection marker fades from visible to invisible (after the hold time).")]
+        public float markerFadeSeconds = 1.5f;
+
         public bool IsDetecting { get; private set; } = true;
 
         private bool _isSubscribedToMRUK = false;
@@ -68,6 +83,14 @@ public class QRPayloadAction
         public QRCodeInstance RoomAnchorInstance { get; private set; }
         private bool _isAnchorSet => RoomAnchorInstance != null;
         private List<CalibrationQRData> _dormantQRCodes = new List<CalibrationQRData>();
+
+        // QR marker payloads are frequently NOT decoded on the same frame MRUK raises TrackableAdded;
+        // the string arrives a few frames later. We defer such trackables here and re-read the payload
+        // in Update() so we never process a QR with an empty payload. (This was the cause of "it read
+        // once, then never again": detection only succeeded when the payload happened to be ready on
+        // the very first frame, and a tracked code never re-fires TrackableAdded.)
+        private readonly Dictionary<MRUKTrackable, float> _pendingPayloadTrackables = new Dictionary<MRUKTrackable, float>();
+        private const float PendingPayloadTimeoutSeconds = 5f;
 
         public void SetAnchorEstablished(bool established)
         {
@@ -200,7 +223,15 @@ public class QRPayloadAction
                 RegisterWithMRUK();
             }
 
+            // Focus glow must keep tracking its target even while detection is paused.
+            UpdateFocusGlow();
+
             if (!IsDetecting) return;
+
+            RetryPendingPayloadTrackables();
+            EnsureTrackingPeriodically();
+            UpdateDetectionMarkers();
+
             foreach (var inst in _trackedQRCodes.Values)
             {
                 if (inst.trackable != null && inst.visualObject != null)
@@ -217,6 +248,47 @@ public class QRPayloadAction
                     }
                 }
             }
+        }
+
+        /// <summary>
+        /// Re-reads marker payloads for trackables that were added before their QR string was decoded.
+        /// Once a payload is available we run the normal add path; entries that never resolve a string
+        /// payload within the timeout are dropped so we don't poll forever.
+        /// </summary>
+        private void RetryPendingPayloadTrackables()
+        {
+            if (_pendingPayloadTrackables.Count == 0) return;
+
+            List<MRUKTrackable> ready = null;
+            List<MRUKTrackable> expired = null;
+
+            foreach (var kvp in _pendingPayloadTrackables)
+            {
+                MRUKTrackable t = kvp.Key;
+                if (t == null)
+                {
+                    (expired ??= new List<MRUKTrackable>()).Add(kvp.Key);
+                }
+                else if (!string.IsNullOrEmpty(t.MarkerPayloadString))
+                {
+                    (ready ??= new List<MRUKTrackable>()).Add(t);
+                }
+                else if (Time.time - kvp.Value > PendingPayloadTimeoutSeconds)
+                {
+                    (expired ??= new List<MRUKTrackable>()).Add(t);
+                    Debug.LogWarning("[QrCodeManager] QR payload never decoded within timeout; dropping pending trackable.");
+                }
+            }
+
+            if (expired != null)
+                foreach (var t in expired) _pendingPayloadTrackables.Remove(t);
+
+            if (ready != null)
+                foreach (var t in ready)
+                {
+                    _pendingPayloadTrackables.Remove(t);
+                    OnTrackableAdded(t); // payload is ready now; runs the full add path
+                }
         }
 
         private void RegisterWithMRUK()
@@ -333,12 +405,33 @@ else if (_isAnchorSet)
             if (!IsDetecting || trackable == null || trackable.TrackableType != OVRAnchor.TrackableType.QRCode) return;
 
             string fullPayload = trackable.MarkerPayloadString ?? "";
+
+            // The QR string is often not decoded yet on the frame the trackable is first added; MRUK
+            // fills it in a few frames later. Defer until it is available (polled in Update) instead of
+            // processing an empty payload — otherwise the code is added with a null key and the real
+            // payload is never read (TrackableAdded does not fire again for an already-tracked code).
+            if (string.IsNullOrEmpty(fullPayload))
+            {
+                if (!_pendingPayloadTrackables.ContainsKey(trackable))
+                {
+                    _pendingPayloadTrackables[trackable] = Time.time;
+                    Debug.Log("[QrCodeManager] QR trackable added but payload not decoded yet — deferring until ready.");
+                }
+                return;
+            }
+            _pendingPayloadTrackables.Remove(trackable);
+
             string key = GetIdentifierKey(fullPayload);
             bool isAnchor = fullPayload.Contains(qrRoomAnchorLabel);
+
+            Debug.Log($"[QrCodeManager] QRCode detected. Payload=\"{fullPayload}\"");
 
             // Always announce the raw detection (even for codes that will go dormant before calibration).
             // This is what drives the login/setup-code scan + on-screen detection feedback.
             OnRawQRDetected?.Invoke(fullPayload, trackable.transform.position, trackable.transform.rotation);
+
+            // Testing aid: drop/refresh the colored 4-category pip over this code (works pre-calibration too).
+            CreateOrUpdateDetectionMarker(trackable, fullPayload);
 
             if (_trackedQRCodes.TryGetValue(key, out QRCodeInstance existing))
             {
@@ -378,6 +471,9 @@ else if (_isAnchorSet)
         public void OnTrackableRemoved(MRUKTrackable trackable)
         {
             if (!IsDetecting || trackable == null || trackable.TrackableType != OVRAnchor.TrackableType.QRCode) return;
+            _pendingPayloadTrackables.Remove(trackable);
+            RemoveDetectionMarker(trackable);
+            if (_focusTrackable == trackable) ClearFocus();
             string key = GetIdentifierKey(trackable.MarkerPayloadString ?? "");
             if (_trackedQRCodes.TryGetValue(key, out QRCodeInstance instance))
             {
@@ -483,8 +579,8 @@ else if (_isAnchorSet)
             if (sphere.TryGetComponent<Collider>(out var sCol)) Destroy(sCol);
             sphere.GetComponent<Renderer>().material = renderer.material;
 
-            var pulse = bg.AddComponent<QRPulseEffect>();
-            pulse.targetColor = baseColor;
+            // Note: no constant pulse here anymore — only the focused/"pointed-at" code pulses
+            // (see FocusQRCode / UpdateFocusGlow). Detection markers fade out to avoid scene clutter.
 
             GameObject textObj = new GameObject("PayloadLabel");
             textObj.transform.SetParent(root.transform);
@@ -534,6 +630,504 @@ else if (_isAnchorSet)
             }
         }
 
+        #region Detection Markers & Classification (testing aid)
+
+        /// <summary>
+        /// Category of a detected QR payload, used to colour the on-headset detection pips.
+        /// Target = something the app is actively looking for (RoomAnchor or a login setup code).
+        /// ValidListed = a payload present in the server-provided valid QR list.
+        /// Unlisted = a readable code that is neither a target nor in the valid list.
+        /// Invalid = empty/whitespace, or a JSON-looking payload that failed to parse.
+        /// </summary>
+        public enum QrMarkerCategory { Target, Invalid, ValidListed, Unlisted }
+
+        // Pool of known-valid payloads (populated from the server StartupData / pulled calibration).
+        // A HashSet keeps classification O(1) even with hundreds of codes in view.
+        private readonly HashSet<string> _validPayloads = new HashSet<string>();
+
+        private class DetectionMarker { public GameObject go; public QrMarkerCategory category; public QrFadeMarker fade; }
+        private readonly Dictionary<MRUKTrackable, DetectionMarker> _detectionMarkers = new Dictionary<MRUKTrackable, DetectionMarker>();
+        // One shared material per category — avoids allocating a material per marker.
+        private readonly Dictionary<QrMarkerCategory, Material> _markerMaterials = new Dictionary<QrMarkerCategory, Material>();
+        private float _nextTrackingAssertTime;
+
+        // ---- Focus glow (single, reusable pulsing halo for the "pointed-at" code) ----
+        private GameObject _focusGlow;            // the pulsing halo object
+        private Renderer _focusGlowRenderer;
+        private MaterialPropertyBlock _focusGlowMpb;
+        private Transform _focusFollow;           // transform the glow tracks (trackable or visualObject)
+        private MRUKTrackable _focusTrackable;    // pip to keep force-visible while focused (may be null)
+        private QrMarkerCategory _focusCategory = QrMarkerCategory.Target;
+        public bool HasFocus => _focusFollow != null;
+
+        [Serializable] private class SetupQrPayload { public string customerId; public string locationId; }
+
+        // ---- Valid-payload pool API (call from the networking layer when StartupData arrives) ----
+
+        /// <summary>Replaces the valid-payload pool (authoritative server list).</summary>
+        public void SetValidPayloads(IEnumerable<string> payloads)
+        {
+            _validPayloads.Clear();
+            if (payloads != null)
+                foreach (var p in payloads) if (!string.IsNullOrEmpty(p)) _validPayloads.Add(p);
+            RefreshAllMarkerColors();
+        }
+
+        /// <summary>Adds payloads to the valid pool without clearing existing entries.</summary>
+        public void AddValidPayloads(IEnumerable<string> payloads)
+        {
+            if (payloads == null) return;
+            foreach (var p in payloads) if (!string.IsNullOrEmpty(p)) _validPayloads.Add(p);
+            RefreshAllMarkerColors();
+        }
+
+        public void AddValidPayload(string payload)
+        {
+            if (string.IsNullOrEmpty(payload)) return;
+            _validPayloads.Add(payload);
+            RefreshAllMarkerColors();
+        }
+
+        public void ClearValidPayloads()
+        {
+            _validPayloads.Clear();
+            RefreshAllMarkerColors();
+        }
+
+        public bool IsValidListed(string payload) => !string.IsNullOrEmpty(payload) && _validPayloads.Contains(payload);
+
+        // ---- Classification ----
+
+        public QrMarkerCategory ClassifyPayload(string payload)
+        {
+            if (string.IsNullOrWhiteSpace(payload)) return QrMarkerCategory.Invalid;
+            if (payload.Contains(qrRoomAnchorLabel)) return QrMarkerCategory.Target;     // RoomAnchor
+            if (TryParseLoginCode(payload)) return QrMarkerCategory.Target;              // login setup code
+            if (_validPayloads.Contains(payload)) return QrMarkerCategory.ValidListed;   // known good
+            if (payload.TrimStart().StartsWith("{")) return QrMarkerCategory.Invalid;    // looks like JSON but isn't a valid setup code
+            return QrMarkerCategory.Unlisted;
+        }
+
+        public static Color GetCategoryColor(QrMarkerCategory cat)
+        {
+            switch (cat)
+            {
+                case QrMarkerCategory.Target:      return Color.green;
+                case QrMarkerCategory.Invalid:     return Color.red;
+                case QrMarkerCategory.ValidListed: return new Color(0.2f, 0.5f, 1f);  // blue
+                default:                           return new Color(1f, 0.55f, 0f);   // orange
+            }
+        }
+
+        private bool TryParseLoginCode(string payload)
+        {
+            if (string.IsNullOrEmpty(payload)) return false;
+            if (!payload.TrimStart().StartsWith("{")) return false;
+            try
+            {
+                var d = JsonUtility.FromJson<SetupQrPayload>(payload);
+                return d != null && !string.IsNullOrEmpty(d.customerId) && !string.IsNullOrEmpty(d.locationId);
+            }
+            catch { return false; }
+        }
+
+        // ---- Marker lifecycle ----
+
+        public bool DetectionMarkersVisible => showDetectionMarkers;
+
+        public void SetDetectionMarkersVisible(bool visible)
+        {
+            showDetectionMarkers = visible;
+            foreach (var kvp in _detectionMarkers)
+                if (kvp.Value.go != null) kvp.Value.go.SetActive(visible);
+        }
+
+        public void ToggleDetectionMarkers() => SetDetectionMarkersVisible(!showDetectionMarkers);
+
+        private Material GetCategoryMaterial(QrMarkerCategory cat)
+        {
+            if (_markerMaterials.TryGetValue(cat, out var existing) && existing != null) return existing;
+            var sh = Shader.Find("Universal Render Pipeline/Unlit");
+            if (sh == null) sh = Shader.Find("Unlit/Color");
+            if (sh == null) sh = Shader.Find("Sprites/Default");
+            var m = new Material(sh) { name = "QRMarker_" + cat };
+            Color c = GetCategoryColor(cat);
+            ConfigureTransparent(m, c);
+            // Allow per-renderer color/alpha overrides via MaterialPropertyBlock while sharing one material.
+            m.enableInstancing = true;
+            _markerMaterials[cat] = m;
+            return m;
+        }
+
+        /// <summary>Configures a URP/Unlit (or fallback) material for alpha-blended transparency.</summary>
+        private static void ConfigureTransparent(Material m, Color c)
+        {
+            m.color = c;
+            if (m.HasProperty("_BaseColor")) m.SetColor("_BaseColor", c);
+            if (m.HasProperty("_Surface")) m.SetFloat("_Surface", 1f);   // 0 = opaque, 1 = transparent
+            if (m.HasProperty("_Blend")) m.SetFloat("_Blend", 0f);       // 0 = alpha
+            if (m.HasProperty("_SrcBlend")) m.SetFloat("_SrcBlend", (float)UnityEngine.Rendering.BlendMode.SrcAlpha);
+            if (m.HasProperty("_DstBlend")) m.SetFloat("_DstBlend", (float)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+            if (m.HasProperty("_ZWrite")) m.SetFloat("_ZWrite", 0f);
+            m.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
+            m.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;
+        }
+
+        private void CreateOrUpdateDetectionMarker(MRUKTrackable trackable, string payload)
+        {
+            if (trackable == null) return;
+            var cat = ClassifyPayload(payload);
+
+            // Renderers of the heavier per-QR visual (if a tracked instance exists) so the whole
+            // representation fades together and shares the unified 4-category colour.
+            var vizRenderers = GetInstanceVisualRenderers(payload);
+
+            if (_detectionMarkers.TryGetValue(trackable, out var entry) && entry.go != null)
+            {
+                if (entry.category != cat)
+                {
+                    entry.category = cat;
+                    entry.go.GetComponent<Renderer>().sharedMaterial = GetCategoryMaterial(cat);
+                    entry.fade?.SetColor(GetCategoryColor(cat));
+                }
+                entry.fade?.SetExtraRenderers(vizRenderers);
+                // Re-detection counts as a "detected" event -> show again, then fade.
+                if (_focusTrackable != trackable) entry.fade?.Show();
+                return;
+            }
+
+            var go = GameObject.CreatePrimitive(PrimitiveType.Quad);
+            go.name = "QRDetectMarker";
+            if (go.TryGetComponent<Collider>(out var col)) Destroy(col);
+            go.transform.localScale = new Vector3(markerSize, markerSize, markerSize);
+            var rend = go.GetComponent<Renderer>();
+            rend.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            rend.receiveShadows = false;
+            rend.sharedMaterial = GetCategoryMaterial(cat);
+            go.SetActive(showDetectionMarkers);
+
+            var fade = go.AddComponent<QrFadeMarker>();
+            fade.Init(rend, GetCategoryColor(cat), markerHoldSeconds, markerFadeSeconds);
+            fade.SetExtraRenderers(vizRenderers);
+
+            _detectionMarkers[trackable] = new DetectionMarker { go = go, category = cat, fade = fade };
+        }
+
+        /// <summary>Returns the renderers of the heavy per-QR visual for the given payload, or null.</summary>
+        private List<Renderer> GetInstanceVisualRenderers(string payload)
+        {
+            string key = GetIdentifierKey(payload);
+            if (_trackedQRCodes.TryGetValue(key, out var inst) && inst.visualObject != null)
+            {
+                var list = new List<Renderer>();
+                inst.visualObject.GetComponentsInChildren(true, list);
+                return list;
+            }
+            return null;
+        }
+
+        private void RemoveDetectionMarker(MRUKTrackable trackable)
+        {
+            if (trackable != null && _detectionMarkers.TryGetValue(trackable, out var e))
+            {
+                if (e.go != null) Destroy(e.go);
+                _detectionMarkers.Remove(trackable);
+            }
+        }
+
+        /// <summary>Keeps each pip floating just above its (moving) QR code, and prunes dead trackables.</summary>
+        private void UpdateDetectionMarkers()
+        {
+            if (_detectionMarkers.Count == 0) return;
+            List<MRUKTrackable> dead = null;
+            foreach (var kvp in _detectionMarkers)
+            {
+                var t = kvp.Key;
+                var e = kvp.Value;
+                if (t == null || e.go == null) { (dead ??= new List<MRUKTrackable>()).Add(kvp.Key); continue; }
+                if (e.go.activeSelf != showDetectionMarkers) e.go.SetActive(showDetectionMarkers);
+                if (!showDetectionMarkers) continue;
+                var tr = t.transform;
+                e.go.transform.SetPositionAndRotation(tr.position + tr.up * (markerSize * 1.5f), tr.rotation);
+            }
+            if (dead != null)
+                foreach (var k in dead)
+                {
+                    if (_detectionMarkers[k].go != null) Destroy(_detectionMarkers[k].go);
+                    _detectionMarkers.Remove(k);
+                }
+        }
+
+        private void RefreshAllMarkerColors()
+        {
+            foreach (var kvp in _detectionMarkers)
+            {
+                var t = kvp.Key;
+                var e = kvp.Value;
+                if (t == null || e.go == null) continue;
+                var cat = ClassifyPayload(t.MarkerPayloadString ?? "");
+                if (cat != e.category)
+                {
+                    e.category = cat;
+                    var rr = e.go.GetComponent<Renderer>();
+                    if (rr != null) rr.sharedMaterial = GetCategoryMaterial(cat);
+                    e.fade?.SetColor(GetCategoryColor(cat));
+                }
+            }
+        }
+
+        /// <summary>Low-frequency safeguard: re-assert QR tracking if the runtime dropped it.</summary>
+        private void EnsureTrackingPeriodically()
+        {
+            if (Time.time < _nextTrackingAssertTime) return;
+            _nextTrackingAssertTime = Time.time + 2f;
+            if (MRUK.Instance == null) return;
+            try
+            {
+                var config = MRUK.Instance.SceneSettings.TrackerConfiguration;
+                if (!config.QRCodeTrackingEnabled)
+                {
+                    config.QRCodeTrackingEnabled = true;
+                    MRUK.Instance.SceneSettings.TrackerConfiguration = config;
+                    Debug.Log("[QrCodeManager] Re-asserted QR tracking (was disabled).");
+                }
+            }
+            catch { }
+        }
+
+        // ---- Focus / "point-at" glow ----
+
+        /// <summary>
+        /// Highlights a QR code as the current "pointed-at" target: a discernible pulsing glow
+        /// surrounds it (and its detection pip is kept visible) until <see cref="ClearFocus"/> is called.
+        /// Works whether the code is physically tracked (follows the live trackable) or only known from
+        /// the calibration/dropdown (follows its placed visual object).
+        /// </summary>
+        public void FocusQRCode(QRCodeInstance instance)
+        {
+            if (instance == null) { ClearFocus(); return; }
+
+            Transform follow = instance.trackable != null ? instance.trackable.transform
+                             : (instance.visualObject != null ? instance.visualObject.transform : null);
+            if (follow == null) { ClearFocus(); return; }
+
+            BeginFocus(follow, instance.trackable, ClassifyPayload(instance.fullPayload));
+        }
+
+        /// <summary>Focus by live trackable (e.g. from a raw physical detection).</summary>
+        public void FocusTrackable(MRUKTrackable trackable)
+        {
+            if (trackable == null) { ClearFocus(); return; }
+            BeginFocus(trackable.transform, trackable, ClassifyPayload(trackable.MarkerPayloadString ?? ""));
+        }
+
+        private void BeginFocus(Transform follow, MRUKTrackable trackable, QrMarkerCategory category)
+        {
+            // Release the previously focused pip back to normal fade behaviour.
+            if (_focusTrackable != null && _focusTrackable != trackable
+                && _detectionMarkers.TryGetValue(_focusTrackable, out var prev))
+                prev.fade?.SetForceVisible(false);
+
+            _focusFollow = follow;
+            _focusTrackable = trackable;
+            _focusCategory = category;
+
+            // Keep the focused pip visible while it is the selection.
+            if (trackable != null && _detectionMarkers.TryGetValue(trackable, out var cur))
+                cur.fade?.SetForceVisible(true);
+
+            EnsureFocusGlow();
+            ApplyFocusGlowColor(GetCategoryColor(category));
+            _focusGlow.SetActive(true);
+        }
+
+        /// <summary>Clears the current point-at selection and stops the glow.</summary>
+        public void ClearFocus()
+        {
+            if (_focusTrackable != null && _detectionMarkers.TryGetValue(_focusTrackable, out var cur))
+                cur.fade?.SetForceVisible(false);
+            _focusFollow = null;
+            _focusTrackable = null;
+            if (_focusGlow != null) _focusGlow.SetActive(false);
+        }
+
+        private void EnsureFocusGlow()
+        {
+            if (_focusGlow != null) return;
+            _focusGlow = new GameObject("QRFocusGlow");
+            _focusGlowMpb = new MaterialPropertyBlock();
+
+            var halo = GameObject.CreatePrimitive(PrimitiveType.Quad);
+            halo.name = "Halo";
+            halo.transform.SetParent(_focusGlow.transform, false);
+            if (halo.TryGetComponent<Collider>(out var col)) Destroy(col);
+            halo.transform.localScale = Vector3.one * (markerSize * 3f);
+            _focusGlowRenderer = halo.GetComponent<Renderer>();
+            _focusGlowRenderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            _focusGlowRenderer.receiveShadows = false;
+
+            var sh = Shader.Find("Universal Render Pipeline/Unlit");
+            if (sh == null) sh = Shader.Find("Unlit/Color");
+            if (sh == null) sh = Shader.Find("Sprites/Default");
+            var m = new Material(sh) { name = "QRFocusGlow_Mat" };
+            ConfigureTransparent(m, GetCategoryColor(QrMarkerCategory.Target));
+            m.enableInstancing = true;
+            _focusGlowRenderer.sharedMaterial = m;
+
+            _focusGlow.SetActive(false);
+        }
+
+        private void ApplyFocusGlowColor(Color c)
+        {
+            if (_focusGlowRenderer == null) return;
+            _focusGlowRenderer.GetPropertyBlock(_focusGlowMpb);
+            _focusGlowMpb.SetColor("_BaseColor", c);
+            _focusGlowMpb.SetColor("_Color", c);
+            _focusGlowRenderer.SetPropertyBlock(_focusGlowMpb);
+        }
+
+        /// <summary>Positions and animates the focus glow; auto-clears if its target disappears.</summary>
+        private void UpdateFocusGlow()
+        {
+            if (_focusFollow == null)
+            {
+                if (_focusGlow != null && _focusGlow.activeSelf) _focusGlow.SetActive(false);
+                return;
+            }
+            if (!_focusFollow) // Unity-null (destroyed) target
+            {
+                ClearFocus();
+                return;
+            }
+            if (_focusGlow == null) return;
+
+            // Sit slightly in front of the code so the glow reads clearly.
+            _focusGlow.transform.SetPositionAndRotation(
+                _focusFollow.position - _focusFollow.forward * 0.01f, _focusFollow.rotation);
+
+            // Pulse: scale + alpha driven by a sine wave -> a discernible "breathing" glow.
+            float p = (Mathf.Sin(Time.time * 6f) + 1f) * 0.5f;          // 0..1
+            float scale = markerSize * (2.4f + p * 1.8f);               // grows/shrinks
+            _focusGlow.transform.localScale = Vector3.one;
+            if (_focusGlowRenderer != null)
+            {
+                _focusGlowRenderer.transform.localScale = Vector3.one * scale;
+                Color baseC = GetCategoryColor(_focusCategory);
+                baseC.a = 0.25f + p * 0.45f;                            // 0.25..0.70
+                ApplyFocusGlowColor(baseC);
+            }
+        }
+
+        #endregion
+
+        /// <summary>
+        /// Per-marker fade controller. Drives the detection pip's alpha (and any linked heavy-visual
+        /// renderers) via a MaterialPropertyBlock so all markers share one material per category.
+        /// Full opacity on Show(), holds, then fades out; SetForceVisible(true) holds it on (used while
+        /// the code is the focused/pointed-at selection). Disables itself once fully faded to stay cheap
+        /// with hundreds of codes in view.
+        /// </summary>
+        private class QrFadeMarker : MonoBehaviour
+        {
+            private static readonly int BaseColorId = Shader.PropertyToID("_BaseColor");
+            private static readonly int ColorId = Shader.PropertyToID("_Color");
+
+            private Renderer _renderer;
+            private MaterialPropertyBlock _mpb;
+            private List<Renderer> _extra;
+            private Color _baseColor = Color.white;
+            private float _hold = 3f;
+            private float _fade = 1.5f;
+            private float _shownAt = -999f;
+            private bool _forceVisible;
+
+            public void Init(Renderer r, Color color, float hold, float fade)
+            {
+                _renderer = r;
+                _mpb = new MaterialPropertyBlock();
+                _baseColor = color;
+                _hold = hold;
+                _fade = Mathf.Max(0.0001f, fade);
+                Show();
+            }
+
+            public void SetColor(Color color) { _baseColor = color; Apply(CurrentAlpha()); }
+
+            public void SetExtraRenderers(List<Renderer> extra) { _extra = extra; }
+
+            public void Show()
+            {
+                _forceVisible = false;
+                _shownAt = Time.time;
+                enabled = true;
+                SetRenderersEnabled(true);
+                Apply(1f);
+            }
+
+            public void SetForceVisible(bool on)
+            {
+                _forceVisible = on;
+                if (on)
+                {
+                    enabled = true;
+                    SetRenderersEnabled(true);
+                    Apply(1f);
+                }
+                else
+                {
+                    // Resume the normal hold+fade from now.
+                    _shownAt = Time.time;
+                    enabled = true;
+                }
+            }
+
+            private float CurrentAlpha()
+            {
+                if (_forceVisible) return 1f;
+                float t = Time.time - _shownAt;
+                if (t <= _hold) return 1f;
+                return Mathf.Clamp01(1f - (t - _hold) / _fade);
+            }
+
+            private void Update()
+            {
+                if (_forceVisible) { Apply(1f); return; }
+                float a = CurrentAlpha();
+                Apply(a);
+                if (a <= 0f)
+                {
+                    SetRenderersEnabled(false); // invisible -> stop drawing
+                    enabled = false;            // and stop updating until shown again
+                }
+            }
+
+            private void SetRenderersEnabled(bool on)
+            {
+                if (_renderer != null) _renderer.enabled = on;
+                if (_extra != null)
+                    for (int i = 0; i < _extra.Count; i++)
+                        if (_extra[i] != null) _extra[i].enabled = on;
+            }
+
+            private void Apply(float alpha)
+            {
+                ApplyTo(_renderer, alpha);
+                if (_extra != null)
+                    for (int i = 0; i < _extra.Count; i++)
+                        ApplyTo(_extra[i], alpha);
+            }
+
+            private void ApplyTo(Renderer r, float alpha)
+            {
+                if (r == null) return;
+                Color c = _baseColor; c.a = alpha;
+                r.GetPropertyBlock(_mpb);
+                _mpb.SetColor(BaseColorId, c);
+                _mpb.SetColor(ColorId, c);
+                r.SetPropertyBlock(_mpb);
+            }
+        }
+
         private void SaveToDisk()
         {
             var list = new List<SerializableQRData>();
@@ -563,12 +1157,11 @@ else if (_isAnchorSet)
 
         private string GetIdentifierKey(string p) => string.IsNullOrEmpty(p) ? "null" : (p.Length <= 20 ? p : p.Substring(0, 20));
 
-        private class QRPulseEffect : MonoBehaviour { public Color targetColor; private Material _mat; private float _time; void Start() { var r = GetComponent<Renderer>(); if (r != null) _mat = r.material; } void Update() { if (_mat == null) return; _time += Time.deltaTime * 2f; float p = (Mathf.Sin(_time) + 1f) * 0.5f; _mat.color = new Color(targetColor.r, targetColor.g, targetColor.b, 0.1f + (p * 0.2f)); } }
-        [Serializable] private class CalibrationQRData { public string qrValue; public Vector3 position; public Quaternion rotation; }
+[Serializable] private class CalibrationQRData { public string qrValue; public Vector3 position; public Quaternion rotation; }
         [Serializable] private class CalibrationWrapper { public string headsetId; public List<CalibrationQRData> qrCodes; }
         [Serializable] private class SerializableQRData { public string identifierKey; public string fullPayload; public Vector3 position; public Quaternion rotation; }
         [Serializable] private class Wrapper { public List<SerializableQRData> data; }
-        public void StartQRCodeDetection() => IsDetecting = true;
+        public void StartQRCodeDetection() { IsDetecting = true; EnsureQrTrackingEnabled(); }
         public void StopQRCodeDetection() => IsDetecting = false;
         public void ManualSave() => SaveToDisk();
         public void ManualLoad() => LoadFromDiskAndRestore();
