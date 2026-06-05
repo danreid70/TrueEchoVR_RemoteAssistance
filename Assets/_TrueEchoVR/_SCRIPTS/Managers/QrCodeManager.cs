@@ -758,7 +758,17 @@ else if (_isAnchorSet)
         private float _focusBaseSize = 0.1f;   // largest dimension of the focused code (meters)
         public bool HasFocus => _focusFollow != null;
 
-        [Serializable] private class SetupQrPayload { public string customerId; public string locationId; }
+        // Recognised Setup/Login QR shapes. EITHER form classifies a code as a Target (green):
+        //   Legacy: { "customerId": "...", "locationId": "..." }
+        //   New:    { "setupCode": "...", "apiBaseUrl": "https://.../api" }
+        [Serializable]
+        private class SetupQrPayload
+        {
+            public string customerId;
+            public string locationId;
+            public string setupCode;
+            public string apiBaseUrl;
+        }
 
         // ---- Valid-payload pool API (call from the networking layer when StartupData arrives) ----
 
@@ -824,7 +834,12 @@ else if (_isAnchorSet)
             try
             {
                 var d = JsonUtility.FromJson<SetupQrPayload>(payload);
-                return d != null && !string.IsNullOrEmpty(d.customerId) && !string.IsNullOrEmpty(d.locationId);
+                if (d == null) return false;
+                // Legacy format: explicit customerId + locationId.
+                bool legacy = !string.IsNullOrEmpty(d.customerId) && !string.IsNullOrEmpty(d.locationId);
+                // New format: setupCode + apiBaseUrl (resolved against the backend after the scan).
+                bool setupCodeFormat = !string.IsNullOrEmpty(d.setupCode) && !string.IsNullOrEmpty(d.apiBaseUrl);
+                return legacy || setupCodeFormat;
             }
             catch { return false; }
         }

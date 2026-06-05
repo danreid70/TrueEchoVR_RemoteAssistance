@@ -337,10 +337,13 @@ public RawImage remoteVideoImage;
             if (label != null) label.text = scanning ? "Cancel Scan" : "Scan Login Code";
         }
 
-        // Schema the headset expects from the Setup/Login QR code. customerId + locationId are required;
-        // the rest are OPTIONAL and let a private backend authenticate the not-yet-logged-in headset:
+        // Schema the headset accepts from the Setup/Login QR code. TWO shapes are supported:
+        //   Legacy: customerId + locationId are required (the rest optional).
+        //   New:    setupCode + apiBaseUrl are required; the headset resolves customerId/locationId
+        //           from the backend (GET {apiBaseUrl}/setup/{setupCode}) after the scan.
+        // Optional fields let a private backend authenticate the not-yet-logged-in headset:
         //   token      - bearer/access token sent as "Authorization: Bearer <token>" on every REST call.
-        //   apiBaseUrl - overrides the backend host (e.g. when moving Replit -> AWS) for this device.
+        //   apiBaseUrl - overrides the backend base URL (e.g. when moving Replit -> AWS) for this device.
         //   roomCode   - pre-fills the room to join after sign-in.
         [Serializable] public class SetupQR
         {
@@ -349,6 +352,7 @@ public RawImage remoteVideoImage;
             public string token;
             public string apiBaseUrl;
             public string roomCode;
+            public string setupCode;
         }
 
         /// <summary>
@@ -380,45 +384,99 @@ public RawImage remoteVideoImage;
             try { data = JsonUtility.FromJson<SetupQR>(payload); }
             catch { data = null; }
 
-            if (data != null && !string.IsNullOrEmpty(data.customerId) && !string.IsNullOrEmpty(data.locationId))
+            bool legacy = data != null && !string.IsNullOrEmpty(data.customerId) && !string.IsNullOrEmpty(data.locationId);
+            bool newFormat = data != null && !string.IsNullOrEmpty(data.setupCode) && !string.IsNullOrEmpty(data.apiBaseUrl);
+
+            if (newFormat) { AcceptNewSetupScan(data); return; }
+            if (legacy) { AcceptLegacySetupScan(data); return; }
+
+            // A code was seen but it is neither shape of valid setup code -> tell the user explicitly.
+            if (loginStatusText != null)
+                loginStatusText.text = $"<color=orange>Not a valid Setup code. Read: {Truncate(payload, 40)}</color>";
+        }
+
+        /// <summary>
+        /// New setup QR ({"setupCode","apiBaseUrl"}): override + persist the backend URL, then resolve
+        /// the setup code against the backend to obtain customerId + locationId before sign-in.
+        /// </summary>
+        private void AcceptNewSetupScan(SetupQR data)
+        {
+            // Override the backend URL at runtime AND persist (apiBaseUrl + setupCode) so the QR only
+            // needs to be scanned once. Does NOT touch BackendConfig.asset on disk.
+            webAppManager.SaveSetupProvisioning(data.apiBaseUrl.Trim(), data.setupCode.Trim());
+            if (!string.IsNullOrEmpty(data.token))
+                webAppManager.SetAuthToken(data.token.Trim());
+
+            StopLoginScan();
+            PopulateLoginConfigTexts();
+            PopulateLoginExtraTexts();
+            if (loginStatusText != null)
+                loginStatusText.text = "<color=#22D3EE>Setup code accepted. Resolving with server…</color>";
+
+            // Resolve the setup code -> customerId + locationId from the backend, then the normal
+            // Sign In (RegisterAndBoot) proceeds from there.
+            webAppManager.ResolveSetup(data.setupCode.Trim(), (ok) =>
             {
-                // Persist immediately so the device remembers this setup and the fields prepopulate
-                // on every subsequent launch (no need to re-scan the setup QR).
-                webAppManager.SaveConnectionInfo(data.customerId, data.locationId);
-
-                // Optional fields let a protected backend authenticate this not-yet-logged-in headset.
-                // Each is PERSISTED so a single Sign In scan is remembered across app restarts and the
-                // user never has to re-scan the setup QR before signing in.
-                if (!string.IsNullOrEmpty(data.apiBaseUrl))
-                    webAppManager.SaveApiHost(data.apiBaseUrl.Trim());
-                if (!string.IsNullOrEmpty(data.token))
-                    webAppManager.SetAuthToken(data.token.Trim());
-                if (!string.IsNullOrEmpty(data.roomCode))
-                    webAppManager.SaveRoomCode(data.roomCode.Trim());
-
-                _isScanningLoginCode = false;
-                if (qrManager != null)
+                if (ok)
                 {
-                    qrManager.StopQRCodeDetection();
-                    qrManager.ClearDetectionMarkers(); // clear the visual-reference boxes; next phase is sign-in
+                    var cfg = webAppManager.config;
+                    if (loginCustomerIdInput != null) loginCustomerIdInput.text = cfg.customerId;
+                    if (loginLocationIdInput != null) loginLocationIdInput.text = cfg.locationId;
+                    if (roomCodeInput != null && !string.IsNullOrEmpty(webAppManager.currentRoomCode))
+                        roomCodeInput.text = webAppManager.currentRoomCode;
+                    PopulateLoginConfigTexts();
+                    PopulateLoginExtraTexts();
+                    if (loginStatusText != null)
+                        loginStatusText.text = "<color=#22D3EE>Setup resolved. Press Sign In to continue.</color>";
                 }
-                // Reflect the accepted values in the editable input fields and labels.
-                if (loginCustomerIdInput != null) loginCustomerIdInput.text = data.customerId;
-                if (loginLocationIdInput != null) loginLocationIdInput.text = data.locationId;
-                // Pre-fill the room code so the user can join immediately after signing in.
-                if (roomCodeInput != null && !string.IsNullOrEmpty(data.roomCode)) roomCodeInput.text = data.roomCode.Trim();
-                PopulateLoginConfigTexts();
-                PopulateLoginExtraTexts();
-                if (loginStatusText != null) loginStatusText.text = "<color=#22D3EE>Setup code accepted. Press Sign In to continue.</color>";
-                if (scanLoginCodeButton != null) scanLoginCodeButton.interactable = true;
-                UpdateScanButtonLabel(false);
-            }
-            else
+                else
+                {
+                    string detail = !string.IsNullOrEmpty(webAppManager.LastError) ? webAppManager.LastError : "Unknown error.";
+                    if (loginStatusText != null)
+                        loginStatusText.text = $"<color=red>Setup resolve failed:</color> {Truncate(detail, 100)}";
+                    Debug.LogError($"[SessionUI] Setup resolve failed: {detail}");
+                }
+            });
+        }
+
+        /// <summary>Legacy setup QR ({"customerId","locationId", ...}) — unchanged behavior.</summary>
+        private void AcceptLegacySetupScan(SetupQR data)
+        {
+            // Persist immediately so the device remembers this setup and the fields prepopulate
+            // on every subsequent launch (no need to re-scan the setup QR).
+            webAppManager.SaveConnectionInfo(data.customerId, data.locationId);
+
+            // Optional fields let a protected backend authenticate this not-yet-logged-in headset.
+            if (!string.IsNullOrEmpty(data.apiBaseUrl))
+                webAppManager.SaveApiHost(data.apiBaseUrl.Trim());
+            if (!string.IsNullOrEmpty(data.token))
+                webAppManager.SetAuthToken(data.token.Trim());
+            if (!string.IsNullOrEmpty(data.roomCode))
+                webAppManager.SaveRoomCode(data.roomCode.Trim());
+
+            StopLoginScan();
+            // Reflect the accepted values in the editable input fields and labels.
+            if (loginCustomerIdInput != null) loginCustomerIdInput.text = data.customerId;
+            if (loginLocationIdInput != null) loginLocationIdInput.text = data.locationId;
+            // Pre-fill the room code so the user can join immediately after signing in.
+            if (roomCodeInput != null && !string.IsNullOrEmpty(data.roomCode)) roomCodeInput.text = data.roomCode.Trim();
+            PopulateLoginConfigTexts();
+            PopulateLoginExtraTexts();
+            if (loginStatusText != null)
+                loginStatusText.text = "<color=#22D3EE>Setup code accepted. Press Sign In to continue.</color>";
+        }
+
+        /// <summary>Stops the login-phase QR scan and clears the visual-reference markers.</summary>
+        private void StopLoginScan()
+        {
+            _isScanningLoginCode = false;
+            if (qrManager != null)
             {
-                // A code was seen but it is not a valid setup code -> tell the user explicitly.
-                if (loginStatusText != null)
-                    loginStatusText.text = $"<color=orange>Not a valid Setup code. Read: {Truncate(payload, 40)}</color>";
+                qrManager.StopQRCodeDetection();
+                qrManager.ClearDetectionMarkers(); // clear the visual-reference boxes; next phase is sign-in
             }
+            if (scanLoginCodeButton != null) scanLoginCodeButton.interactable = true;
+            UpdateScanButtonLabel(false);
         }
 
         private static string Truncate(string s, int max)

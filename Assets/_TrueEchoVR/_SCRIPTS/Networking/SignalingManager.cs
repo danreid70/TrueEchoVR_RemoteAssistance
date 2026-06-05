@@ -159,9 +159,14 @@ namespace TEVR
 
                     // Also restore the optional setup-QR values so a single scan persists across
                     // restarts and the user never has to re-scan the Sign In code.
+                    // The NEW setup-code format (apiBaseUrl includes /api) takes precedence; fall back to
+                    // the legacy apiHost key so previously-provisioned headsets keep working.
+                    string savedApiBaseUrl = PlayerPrefs.GetString(PrefApiBaseUrl, "");
                     string savedHost = PlayerPrefs.GetString(PrefApiHost, "");
-                    if (!string.IsNullOrEmpty(savedHost)) config.apiHost = savedHost;
+                    if (!string.IsNullOrEmpty(savedApiBaseUrl)) SetBackendUrl(savedApiBaseUrl);
+                    else if (!string.IsNullOrEmpty(savedHost)) config.apiHost = savedHost;
                 }
+                SetupCode = PlayerPrefs.GetString(PrefSetupCode, "");
                 string savedRoom = PlayerPrefs.GetString(PrefRoomCode, "");
                 if (!string.IsNullOrEmpty(savedRoom)) currentRoomCode = savedRoom;
             }
@@ -200,6 +205,117 @@ namespace TEVR
             currentRoomCode = roomCode == null ? "" : roomCode.Trim();
             if (!string.IsNullOrEmpty(currentRoomCode)) PlayerPrefs.SetString(PrefRoomCode, currentRoomCode);
             PlayerPrefs.Save();
+        }
+
+        // ---- New setup-code provisioning ({"setupCode","apiBaseUrl"} QR) ----
+
+        // PlayerPrefs keys for the new setup-QR format. Loaded on launch so a single scan persists.
+        private const string PrefApiBaseUrl = "tevr_apiBaseUrl";
+        private const string PrefSetupCode = "tevr_setupCode";
+
+        /// <summary>The setup code from the most recent setup QR (used to resolve customer/location).</summary>
+        public string SetupCode { get; private set; }
+
+        /// <summary>
+        /// Runtime override of the backend base URL (from the setup QR's apiBaseUrl), e.g.
+        /// "https://host/api". A trailing "/api" is split into apiPath so REST calls
+        /// ({apiHost}{apiPath}/endpoint) build correctly while the websocket (socket.io lives at the
+        /// host root, derived from apiHost) stays valid. Does NOT modify BackendConfig.asset on disk —
+        /// only the in-memory config for this session.
+        /// </summary>
+        public void SetBackendUrl(string apiBaseUrl)
+        {
+            if (string.IsNullOrWhiteSpace(apiBaseUrl) || config == null) return;
+            string full = apiBaseUrl.Trim().TrimEnd('/');
+            string host = full;
+            string path = string.IsNullOrEmpty(config.apiPath) ? "/api" : config.apiPath;
+
+            if (full.EndsWith("/api", StringComparison.OrdinalIgnoreCase))
+            {
+                host = full.Substring(0, full.Length - 4).TrimEnd('/');
+                path = "/api";
+            }
+            config.apiHost = host;
+            config.apiPath = path;
+        }
+
+        /// <summary>Stores the setup code in memory for later REST use.</summary>
+        public void SetSetupCode(string setupCode)
+        {
+            SetupCode = string.IsNullOrWhiteSpace(setupCode) ? "" : setupCode.Trim();
+        }
+
+        /// <summary>
+        /// Applies AND persists the new setup-QR provisioning (apiBaseUrl + setupCode) so it survives
+        /// app restarts — the setup QR only needs to be scanned once. The full apiBaseUrl (as scanned,
+        /// including /api) is stored so reload reproduces the exact backend.
+        /// </summary>
+        public void SaveSetupProvisioning(string apiBaseUrl, string setupCode)
+        {
+            if (!string.IsNullOrWhiteSpace(apiBaseUrl))
+            {
+                SetBackendUrl(apiBaseUrl);
+                PlayerPrefs.SetString(PrefApiBaseUrl, apiBaseUrl.Trim());
+            }
+            if (!string.IsNullOrWhiteSpace(setupCode))
+            {
+                SetSetupCode(setupCode);
+                PlayerPrefs.SetString(PrefSetupCode, SetupCode);
+            }
+            PlayerPrefs.Save();
+        }
+
+        /// <summary>
+        /// Resolves a scanned setupCode against the backend (GET {apiBaseUrl}/setup/{setupCode}) to
+        /// retrieve this headset's customerId + locationId, then stores them like a normal sign-in
+        /// (via SaveConnectionInfo). Call SetBackendUrl/SaveSetupProvisioning first so the request
+        /// targets the correct backend.
+        /// </summary>
+        public void ResolveSetup(string setupCode, Action<bool> onComplete)
+        {
+            if (string.IsNullOrWhiteSpace(setupCode))
+            {
+                LastError = "No setup code to resolve.";
+                onComplete?.Invoke(false);
+                return;
+            }
+            if (Application.internetReachability == NetworkReachability.NotReachable)
+            {
+                LastError = "No internet connection.";
+                onComplete?.Invoke(false);
+                return;
+            }
+
+            Status($"Resolving setup code '{setupCode}' ...");
+            GetData($"setup/{setupCode.Trim()}", (res) =>
+            {
+                SetupResolveResponse r = null;
+                try { r = JsonUtility.FromJson<SetupResolveResponse>(res); } catch { r = null; }
+                if (r != null && !string.IsNullOrEmpty(r.customerId) && !string.IsNullOrEmpty(r.locationId))
+                {
+                    SaveConnectionInfo(r.customerId, r.locationId);
+                    if (!string.IsNullOrEmpty(r.roomCode)) SaveRoomCode(r.roomCode);
+                    Status("Setup resolved.");
+                    onComplete?.Invoke(true);
+                }
+                else
+                {
+                    LastError = "Setup response missing customerId/locationId.";
+                    onComplete?.Invoke(false);
+                }
+            }, (err) =>
+            {
+                LastError = err;
+                onComplete?.Invoke(false);
+            });
+        }
+
+        [Serializable]
+        public class SetupResolveResponse
+        {
+            public string customerId;
+            public string locationId;
+            public string roomCode;
         }
 
         public bool HasCredentials => !string.IsNullOrEmpty(tevrHeadsetId) && !string.IsNullOrEmpty(tevrLocationId);
