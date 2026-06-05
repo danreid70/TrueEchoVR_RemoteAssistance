@@ -246,6 +246,31 @@ namespace TEVR
         }
 
         /// <summary>
+        /// The effective backend base URL (apiHost + apiPath, e.g. "https://host/api"). Used to
+        /// pre-populate the editable Backend URL field on the login panel.
+        /// </summary>
+        public string GetBackendUrl()
+        {
+            if (config == null) return "";
+            string host = config.apiHost == null ? "" : config.apiHost.TrimEnd('/');
+            string path = string.IsNullOrEmpty(config.apiPath) ? "" : config.apiPath;
+            return host + path;
+        }
+
+        /// <summary>
+        /// Applies AND persists a backend base URL typed by the user on the headset (default value can be
+        /// overridden here). Splits a trailing "/api" into apiPath (see SetBackendUrl) and remembers it in
+        /// PlayerPrefs so it pre-populates on every launch. Does NOT modify BackendConfig.asset on disk.
+        /// </summary>
+        public void SaveBackendUrl(string apiBaseUrl)
+        {
+            if (string.IsNullOrWhiteSpace(apiBaseUrl)) return;
+            SetBackendUrl(apiBaseUrl);
+            PlayerPrefs.SetString(PrefApiBaseUrl, apiBaseUrl.Trim());
+            PlayerPrefs.Save();
+        }
+
+        /// <summary>
         /// Applies AND persists the new setup-QR provisioning (apiBaseUrl + setupCode) so it survives
         /// app restarts — the setup QR only needs to be scanned once. The full apiBaseUrl (as scanned,
         /// including /api) is stored so reload reproduces the exact backend.

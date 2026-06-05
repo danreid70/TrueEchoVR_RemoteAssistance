@@ -11495,6 +11495,8 @@ MonoBehaviour:
   signInButton: {fileID: 1056395574}
   scanLoginCodeButton: {fileID: 2115843963}
   loginStatusText: {fileID: 2075155498}
+  loginDetectionStatusText: {fileID: 0}
+  sessionDetectionStatusText: {fileID: 0}
   loginCustomerIdInput: {fileID: 364107254}
   loginLocationIdInput: {fileID: 1525169746}
   loginApiUrlText: {fileID: 0}
@@ -65967,6 +65969,9 @@ MonoBehaviour:
   markerHoldSeconds: 3
   markerFadeSeconds: 1.5
   fadeQrDetectionMarkerTransparency: 0.2
+  autoStartDetection: 1
+  showPayloadLabels: 1
+  showDebugCenter: 0
 --- !u!114 &1664912827
 MonoBehaviour:
   m_ObjectHideFlags: 0

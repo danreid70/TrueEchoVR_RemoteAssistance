@@ -3,6 +3,7 @@
 This document outlines the communication protocol between the Unity application (TrueEchoVR) and the Replit backend. This is used by the **SignalingManager** to coordinate WebRTC, chat, and spatial data.
 
 ## 1. Connection Endpoints
+The base URL is **stored on the device** (`BackendConfig.apiHost` default, overridable via the Login panel's Backend URL field and persisted to `tevr_apiBaseUrl`). `SignalingManager.SetBackendUrl` splits a trailing `/api` into `apiPath` so REST and the root-level WebSocket both resolve correctly. Example (default):
 - **WebSocket (Socket.io):** `wss://live-troubleshooting-app.replit.app/socket.io/?EIO=4&transport=websocket`
 - **REST API (Persistence):** `https://live-troubleshooting-app.replit.app/api`
 
@@ -46,7 +47,9 @@ Persistence is handled via standard HTTP requests to the Replit API.
 
 | Method | Endpoint | Description |
 | :--- | :--- | :--- |
+| `GET` | `/api/setup/{setupCode}` | **Resolves a Sign In setup code** → `{ customerId, locationId, roomCode? }`. Drives the minimal-QR handshake (see §6). |
 | `GET` | `/api/headsets/{id}/startup-data` | Fetches name dictionary + spatial QRs. |
+| `POST` | `/api/headsets/register` | Registers the device → `{ id }` (headset id). |
 | `POST` | `/api/locations/{id}/qr-codes` | Uploads current location calibration (Atomic). |
 | `GET` | `/api/locations/{id}/qr-codes` | Fetches latest calibration for a location. |
 
@@ -60,18 +63,37 @@ Persistence is handled via standard HTTP requests to the Replit API.
 - **RoomCode:** Transient session identifier for signaling routing.
 
 ## 6. Provisioning & Login Flow (Login Panel)
-The **Login Panel** drives device provisioning before a session can start. It is wired in `SessionUiController`:
+The **Login Panel** drives device provisioning before a session can start (wired in `SessionUiController`). Scan the setup QR **once**; everything needed is then stored on the device and pre-populated on every launch.
 
-| Button | Method | Behaviour |
+| Button / Field | Method | Behaviour |
 | :--- | :--- | :--- |
-| **Scan Login Code** | `OnScanLoginCodePressed` | Enables QR detection and waits for a **Setup QR**. Press again to cancel. |
+| **Scan Login Code** | `OnScanLoginCodePressed` | Manual scan toggle. Not required — detection auto-starts at launch (see §8). Press again to cancel. |
+| **Backend URL** (input) | `loginApiUrlInput` → `SaveBackendUrl` | Editable backend base URL with a **default**, **overridable** on-device, **persisted** locally, and **pre-populated** every launch. The QR no longer carries the URL. |
 | **Sign In** | `OnSignInPressed` | Calls `RegisterAndBoot(customerId, locationId)` → `POST /api/headsets/register`, then the boot sequence. |
 
-**Setup QR payload** (generated on the admin Locations page, e.g. `…/admin/cust-004/settings/locations`):
-```json
-{ "customerId": "cust-004", "locationId": "loc-xyz" }
+### Minimal Setup QR (preferred — smallest/least-dense payload)
+To keep the QR easy for the Quest 3 passthrough cameras to detect, the web app should encode **only a short setup code** (≈8 alphanumeric chars), nothing else:
 ```
-When scanned, `HandleLoginQRScan` parses this JSON and populates `BackendConfig.customerId` / `locationId`, after which **Sign In** completes registration. If the backend is unreachable, the system falls back to **Demo Mode**.
+YT5A5XL3
+```
+Flow when scanned (`HandleLoginQRScan` → `AcceptSetupCode`):
+1. The bare code is recognised by `QrCodeManager.IsBareSetupCode` (non-JSON, alphanumeric, length within `setupCodeMin/MaxLength`). It is classified **Target** (green) during the SignIn phase.
+2. The device persists the code and calls `GET /api/setup/{setupCode}` against its **stored/default Backend URL** (`SignalingManager.ResolveSetup`).
+3. The response `{ customerId, locationId, roomCode? }` is stored via `SaveConnectionInfo` (room code pre-fills the join field).
+4. **Sign In** then registers + boots normally. If the backend is unreachable, the system falls back to **Demo Mode**.
+
+### Backwards-compatible QR formats (still accepted)
+- **JSON setup code:** `{ "setupCode": "YT5A5XL3", "apiBaseUrl": "https://host/api" }` — also overrides + persists the backend URL.
+- **Legacy:** `{ "customerId": "cust-004", "locationId": "loc-xyz" }` — populates IDs directly (no `/api/setup` call).
+
+### Persistence keys (PlayerPrefs)
+`tevr_setupCode`, `tevr_apiBaseUrl` (new), plus `TEVR_CUSTOMER_ID`, `TEVR_LOCATION_ID`, `TEVR_HEADSET_ID`, `TEVR_ROOM_CODE`, `TEVR_AUTH_TOKEN`.
+
+## 8. QR Detection: Auto-Start, States & Performance
+- **Auto-start:** `QrCodeManager.autoStartDetection` (default **true**) begins detection at launch / on scene-permission grant, so the Sign In code is found without pressing Scan.
+- **States:** `QrCodeManager.State` = `Off | SignIn | Session` (event `OnDetectionStateChanged`). A persistent **"● QR Detection: ON"** indicator is shown on both the Login and Session panels with a live count.
+- **Markers:** every detected code shows a colour-coded status pip (green=Target/setup, blue=ValidListed, orange=Unlisted, red=Invalid) that settles to `fadeQrDetectionMarkerTransparency` (default 0.2) so continued tracking stays visible.
+- **Scales to 50+ codes:** toggle `showPayloadLabels` (TextMeshPro is the heaviest per-code object) and `showDebugCenter` (off by default) on `QrCodeManager` to keep frame-rate stable with many codes.
 
 ## 7. Calibration Persistence (Session Panel)
 | Button | Method | Endpoint |

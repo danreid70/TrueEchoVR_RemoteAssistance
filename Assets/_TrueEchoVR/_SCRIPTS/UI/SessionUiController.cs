@@ -62,16 +62,21 @@ public RawImage remoteVideoImage;
         public Button scanLoginCodeButton;
         public TMP_Text loginStatusText;
 
+        [Header("QR Detection Indicator (persistent ON/OFF status)")]
+        [Tooltip("Shows whether QR detection is running and in which phase (SignIn/Session) plus a live count. " +
+                 "One label on the Login panel, one on the Session panel.")]
+        public TMP_Text loginDetectionStatusText;
+        public TMP_Text sessionDetectionStatusText;
+
         [Header("Login Manual Entry (fallback to scanning)")]
         public TMP_InputField loginCustomerIdInput;
         public TMP_InputField loginLocationIdInput;
 
-        [Header("Login QR Extra Values (read-only display)")]
-        [Tooltip("Read-only labels showing the additional values captured from the Sign In QR code so " +
-                 "the user can verify a single scan stored everything needed to sign in later.")]
-        public TMP_Text loginApiUrlText;
-        public TMP_Text loginRoomCodeText;
-        public TMP_Text loginTokenText;
+        [Header("Backend URL (default + editable, stored on device)")]
+        [Tooltip("Editable backend base URL (e.g. https://host/api). The Sign In QR no longer carries the " +
+                 "URL — it is stored on the device with a default and can be overridden here. It is persisted " +
+                 "locally and pre-populated on every launch.")]
+        public TMP_InputField loginApiUrlInput;
 
         private bool _isScanningLoginCode = false;
 
@@ -147,8 +152,19 @@ public RawImage remoteVideoImage;
             // Room code: confirming the field (keyboard "done"/enter) connects to the remote session.
             if (roomCodeInput != null) roomCodeInput.onSubmit.AddListener((_) => OnJoinPressed());
 
+            // Backend URL: editing it overrides + persists the device's backend base URL.
+            if (loginApiUrlInput != null)
+                loginApiUrlInput.onEndEdit.AddListener((v) =>
+                {
+                    if (webAppManager != null && !string.IsNullOrWhiteSpace(v))
+                    {
+                        webAppManager.SaveBackendUrl(v.Trim());
+                        PopulateLoginConfigTexts();
+                        AppendChatMessage($"<color=#22D3EE>[Backend]</color> URL set to {Truncate(v.Trim(), 60)}");
+                    }
+                });
+
             PopulateLoginConfigTexts();
-            PopulateLoginExtraTexts();
             PrefillLoginInputs();
             
             // Start with both video surfaces hidden. They are shown only when a real video texture is
@@ -189,12 +205,14 @@ public RawImage remoteVideoImage;
                 // calibration would otherwise go dormant and never raise OnQRCodeAdded.
                 qrManager.OnRawQRDetected += OnRawQRDetected;
                 qrManager.OnScenePermissionResult += OnScenePermissionResult;
+                qrManager.OnDetectionStateChanged += OnDetectionStateChanged;
                 qrManager.OnQRCodeAdded += (qr) => {
                     AppendChatMessage($"[QR Added] {GetColoredPayload(qr)}");
                     RefreshQRCodeDropdown();
+                    UpdateDetectionIndicator();
                 };
                 qrManager.OnQRCodeUpdated += (qr) => AppendChatMessage($"[QR Updated] {GetColoredPayload(qr)}");
-                qrManager.OnQRCodeRemoved += (key) => { AppendChatMessage($"[QR Removed] {key}"); RefreshQRCodeDropdown(); };
+                qrManager.OnQRCodeRemoved += (key) => { AppendChatMessage($"[QR Removed] {key}"); RefreshQRCodeDropdown(); UpdateDetectionIndicator(); };
                 qrManager.OnRoomAnchorDiscovered += (qr) => {
                     AppendChatMessage($"[Anchor Discovered] <color=green>{qr.fullPayload}</color>");
                     if (joinButtonText != null && joinButtonText.text.Contains("Calibration")) {
@@ -205,10 +223,12 @@ public RawImage remoteVideoImage;
             }
 
             AppendChatMessage("<color=green>[System]</color> Session UI Initialized.");
+            UpdateDetectionIndicator();
             SetupInputFieldKeyboard(roomCodeInput);
             SetupInputFieldKeyboard(chatInputField);
             SetupInputFieldKeyboard(loginCustomerIdInput);
             SetupInputFieldKeyboard(loginLocationIdInput);
+            SetupInputFieldKeyboard(loginApiUrlInput);
 
             // IMPORTANT: Do NOT open the physical Passthrough Camera here.
             // With videoSource = PassthroughCamera, StartLocalPreview() opens a WebCamTexture on the
@@ -235,6 +255,17 @@ public RawImage remoteVideoImage;
             // Make the panel ready to sign in again.
             if (signInButton != null) signInButton.interactable = true;
             if (loginStatusText != null) loginStatusText.text = "Ready to Sign In.";
+
+            // Re-arm SignIn-phase detection so the Sign In QR is auto-detected on this screen (e.g. after
+            // leaving a session). The headset is always looking for the setup code while the login panel
+            // is shown, and the indicator reflects it.
+            if (qrManager != null && qrManager.autoStartDetection)
+            {
+                qrManager.SetScanMode(QrCodeManager.ScanMode.LoginOnly);
+                if (!qrManager.IsDetecting) qrManager.StartQRCodeDetection();
+                qrManager.EnsureQrTrackingEnabled();
+            }
+            UpdateDetectionIndicator();
         }
 
         /// <summary>Shows/hides a video RawImage (used to make empty streams disappear instead of going black).</summary>
@@ -361,13 +392,20 @@ public RawImage remoteVideoImage;
         /// </summary>
         private void OnRawQRDetected(string payload, Vector3 pos, Quaternion rot)
         {
-            if (_isScanningLoginCode)
+            // Keep the live "QR Detection ON (N seen)" indicator current on every detection.
+            UpdateDetectionIndicator();
+
+            bool signInPhase = qrManager != null && qrManager.State == QrCodeManager.DetectionState.SignIn;
+
+            // SignIn phase: the headset auto-processes the setup/login code WITHOUT requiring the user to
+            // press "Scan Login Code" (detection runs from launch). When the user explicitly pressed Scan
+            // (_isScanningLoginCode) we also echo the raw read and announce invalid codes; in passive
+            // auto mode we stay quiet on non-setup codes so random QRs don't spam the status line.
+            if (_isScanningLoginCode || signInPhase)
             {
-                // Login phase: visual confirmation is handled by QrCodeManager's scaled detection box.
-                // Show what was actually read (helps diagnose wrong/!valid codes on device).
-                if (loginStatusText != null)
+                if (_isScanningLoginCode && loginStatusText != null)
                     loginStatusText.text = $"Detected QR: <color=#22D3EE>{Truncate(payload, 48)}</color>";
-                HandleLoginQRScan(payload);
+                HandleLoginQRScan(payload, announceInvalid: _isScanningLoginCode);
                 return;
             }
 
@@ -377,7 +415,42 @@ public RawImage remoteVideoImage;
             RefreshQRCodeDropdown();
         }
 
-        private void HandleLoginQRScan(string payload)
+        private void OnDetectionStateChanged(QrCodeManager.DetectionState state)
+        {
+            UpdateDetectionIndicator();
+            AppendChatMessage($"<color=#22D3EE>[Detection]</color> Phase: <b>{state}</b>");
+        }
+
+        /// <summary>Refreshes the persistent "QR Detection ON/OFF" indicator on both panels.</summary>
+        private void UpdateDetectionIndicator()
+        {
+            string text;
+            if (qrManager == null)
+            {
+                text = "<color=#A0A0A0>○ QR Detection: unavailable</color>";
+            }
+            else
+            {
+                switch (qrManager.State)
+                {
+                    case QrCodeManager.DetectionState.SignIn:
+                        text = $"<color=#22D3EE>● QR Detection: ON</color>  SignIn — looking for Sign In code ({qrManager.DetectionMarkerCount} seen)";
+                        break;
+                    case QrCodeManager.DetectionState.Session:
+                        text = $"<color=#22D3EE>● QR Detection: ON</color>  Session — {qrManager.TrackedQRCodes.Count} tracked";
+                        break;
+                    default:
+                        text = "<color=#A0A0A0>○ QR Detection: OFF</color>";
+                        break;
+                }
+                if (!qrManager.HasScenePermission)
+                    text += "  <color=orange>(scene permission needed)</color>";
+            }
+            if (loginDetectionStatusText != null) loginDetectionStatusText.text = text;
+            if (sessionDetectionStatusText != null) sessionDetectionStatusText.text = text;
+        }
+
+        private void HandleLoginQRScan(string payload, bool announceInvalid = true)
         {
             if (string.IsNullOrEmpty(payload) || webAppManager == null || webAppManager.config == null) return;
             SetupQR data = null;
@@ -385,37 +458,44 @@ public RawImage remoteVideoImage;
             catch { data = null; }
 
             bool legacy = data != null && !string.IsNullOrEmpty(data.customerId) && !string.IsNullOrEmpty(data.locationId);
-            bool newFormat = data != null && !string.IsNullOrEmpty(data.setupCode) && !string.IsNullOrEmpty(data.apiBaseUrl);
+            bool jsonSetupCode = data != null && !string.IsNullOrEmpty(data.setupCode) && !string.IsNullOrEmpty(data.apiBaseUrl);
+            // Smallest payload: a BARE alphanumeric code (no JSON). The backend URL is NOT in the QR — the
+            // device uses its stored/default URL to resolve it.
+            bool bareSetupCode = qrManager != null && qrManager.IsBareSetupCode(payload);
 
-            if (newFormat) { AcceptNewSetupScan(data); return; }
+            if (jsonSetupCode) { AcceptSetupCode(data.setupCode.Trim(), data.apiBaseUrl.Trim(), data.token); return; }
+            if (bareSetupCode) { AcceptSetupCode(payload.Trim(), null, null); return; }
             if (legacy) { AcceptLegacySetupScan(data); return; }
 
-            // A code was seen but it is neither shape of valid setup code -> tell the user explicitly.
-            if (loginStatusText != null)
+            // A code was seen but it is no recognised setup shape. Only announce when the user explicitly
+            // initiated a scan (otherwise passive auto-detection would spam this for every QR).
+            if (announceInvalid && loginStatusText != null)
                 loginStatusText.text = $"<color=orange>Not a valid Setup code. Read: {Truncate(payload, 40)}</color>";
         }
 
         /// <summary>
-        /// New setup QR ({"setupCode","apiBaseUrl"}): override + persist the backend URL, then resolve
-        /// the setup code against the backend to obtain customerId + locationId before sign-in.
+        /// Accepts a setup code (bare or JSON). If apiBaseUrl is provided it overrides + persists the
+        /// backend URL; otherwise the device's stored/default URL is used (the minimal-QR flow). The setup
+        /// code is then resolved against the backend to obtain customerId + locationId before sign-in.
         /// </summary>
-        private void AcceptNewSetupScan(SetupQR data)
+        private void AcceptSetupCode(string setupCode, string apiBaseUrlOrNull, string tokenOrNull)
         {
-            // Override the backend URL at runtime AND persist (apiBaseUrl + setupCode) so the QR only
-            // needs to be scanned once. Does NOT touch BackendConfig.asset on disk.
-            webAppManager.SaveSetupProvisioning(data.apiBaseUrl.Trim(), data.setupCode.Trim());
-            if (!string.IsNullOrEmpty(data.token))
-                webAppManager.SetAuthToken(data.token.Trim());
+            // Persist setupCode (+ apiBaseUrl only if the QR carried one) so a single scan survives restarts.
+            // Does NOT touch BackendConfig.asset on disk.
+            webAppManager.SaveSetupProvisioning(apiBaseUrlOrNull, setupCode);
+            if (!string.IsNullOrEmpty(tokenOrNull))
+                webAppManager.SetAuthToken(tokenOrNull.Trim());
 
             StopLoginScan();
             PopulateLoginConfigTexts();
-            PopulateLoginExtraTexts();
+            if (loginApiUrlInput != null) loginApiUrlInput.text = webAppManager.GetBackendUrl();
             if (loginStatusText != null)
-                loginStatusText.text = "<color=#22D3EE>Setup code accepted. Resolving with server…</color>";
+                loginStatusText.text = $"<color=#22D3EE>Setup code '{Truncate(setupCode, 12)}' accepted. Resolving with server…</color>";
+            AppendChatMessage($"<color=#22D3EE>[Setup]</color> Resolving code '{Truncate(setupCode, 12)}' via {Truncate(webAppManager.GetBackendUrl(), 50)}");
 
             // Resolve the setup code -> customerId + locationId from the backend, then the normal
             // Sign In (RegisterAndBoot) proceeds from there.
-            webAppManager.ResolveSetup(data.setupCode.Trim(), (ok) =>
+            webAppManager.ResolveSetup(setupCode, (ok) =>
             {
                 if (ok)
                 {
@@ -425,7 +505,6 @@ public RawImage remoteVideoImage;
                     if (roomCodeInput != null && !string.IsNullOrEmpty(webAppManager.currentRoomCode))
                         roomCodeInput.text = webAppManager.currentRoomCode;
                     PopulateLoginConfigTexts();
-                    PopulateLoginExtraTexts();
                     if (loginStatusText != null)
                         loginStatusText.text = "<color=#22D3EE>Setup resolved. Press Sign In to continue.</color>";
                 }
@@ -448,7 +527,7 @@ public RawImage remoteVideoImage;
 
             // Optional fields let a protected backend authenticate this not-yet-logged-in headset.
             if (!string.IsNullOrEmpty(data.apiBaseUrl))
-                webAppManager.SaveApiHost(data.apiBaseUrl.Trim());
+                webAppManager.SaveBackendUrl(data.apiBaseUrl.Trim());
             if (!string.IsNullOrEmpty(data.token))
                 webAppManager.SetAuthToken(data.token.Trim());
             if (!string.IsNullOrEmpty(data.roomCode))
@@ -458,10 +537,10 @@ public RawImage remoteVideoImage;
             // Reflect the accepted values in the editable input fields and labels.
             if (loginCustomerIdInput != null) loginCustomerIdInput.text = data.customerId;
             if (loginLocationIdInput != null) loginLocationIdInput.text = data.locationId;
+            if (loginApiUrlInput != null) loginApiUrlInput.text = webAppManager.GetBackendUrl();
             // Pre-fill the room code so the user can join immediately after signing in.
             if (roomCodeInput != null && !string.IsNullOrEmpty(data.roomCode)) roomCodeInput.text = data.roomCode.Trim();
             PopulateLoginConfigTexts();
-            PopulateLoginExtraTexts();
             if (loginStatusText != null)
                 loginStatusText.text = "<color=#22D3EE>Setup code accepted. Press Sign In to continue.</color>";
         }
@@ -775,6 +854,11 @@ public RawImage remoteVideoImage;
             if (roomCodeInput != null && string.IsNullOrEmpty(roomCodeInput.text)
                 && webAppManager != null && !string.IsNullOrEmpty(webAppManager.currentRoomCode))
                 roomCodeInput.text = webAppManager.currentRoomCode;
+
+            // Pre-populate the editable Backend URL with the device's stored/default value (the QR no
+            // longer carries it). Editing the field overrides + persists it (see onEndEdit wiring).
+            if (loginApiUrlInput != null && string.IsNullOrEmpty(loginApiUrlInput.text) && webAppManager != null)
+                loginApiUrlInput.text = webAppManager.GetBackendUrl();
         }
 
         /// <summary>Shows the current backend host / customer / location on the Login panel.</summary>
@@ -785,25 +869,6 @@ public RawImage remoteVideoImage;
             if (apiHostText != null) apiHostText.text = $"Host: {cfg.apiHost}";
             if (customerIdText != null) customerIdText.text = $"Customer: {(string.IsNullOrEmpty(cfg.customerId) ? "(scan or set)" : cfg.customerId)}";
             if (locationIdText != null) locationIdText.text = $"Location: {(string.IsNullOrEmpty(cfg.locationId) ? "(scan or set)" : cfg.locationId)}";
-        }
-
-        /// <summary>
-        /// Shows the extra values captured from the Sign In QR code (API URL, room code, token) as
-        /// read-only labels so the user can confirm a single scan stored everything needed to sign in.
-        /// </summary>
-        private void PopulateLoginExtraTexts()
-        {
-            var cfg = webAppManager != null ? webAppManager.config : null;
-            string host = cfg != null ? cfg.apiHost : "";
-            string room = webAppManager != null ? webAppManager.currentRoomCode : "";
-            string token = webAppManager != null ? webAppManager.AuthToken : "";
-
-            if (loginApiUrlText != null)
-                loginApiUrlText.text = $"API URL: {(string.IsNullOrEmpty(host) ? "(scan or set)" : host)}";
-            if (loginRoomCodeText != null)
-                loginRoomCodeText.text = $"Room: {(string.IsNullOrEmpty(room) ? "(scan or set)" : room)}";
-            if (loginTokenText != null)
-                loginTokenText.text = $"Token: {(string.IsNullOrEmpty(token) ? "(none)" : "stored " + Truncate(token, 16))}";
         }
 
         /// <summary>Uploads the current local QR calibration to the backend for this location.</summary>
@@ -911,6 +976,7 @@ public RawImage remoteVideoImage;
             {
                 qrManager.OnRawQRDetected -= OnRawQRDetected;
                 qrManager.OnScenePermissionResult -= OnScenePermissionResult;
+                qrManager.OnDetectionStateChanged -= OnDetectionStateChanged;
             }
             if (_scanHighlight != null) Destroy(_scanHighlight);
         }

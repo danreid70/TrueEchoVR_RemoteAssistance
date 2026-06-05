@@ -10,7 +10,7 @@
 - **Enterprise Ready:** LMS tracking and persistent session progress.
 
 ## 2. Gameplay Flow / User Loop
-1.  **Boot & Provisioning:** The app starts in the `Bootstrap` scene. `SignalingManager` registers the headset serial with the backend and fetches `StartupData`.
+1.  **Boot & Provisioning:** The app starts in the `Bootstrap` scene. QR detection **auto-starts** (SignIn phase). The user scans a small **setup-code QR once**; the device resolves it via `GET /api/setup/{code}`, stores customer/location, then `SignalingManager` registers the headset and fetches `StartupData`. The backend URL is stored on-device (default + editable, no URL in the QR).
 2.  **Connection:** User enters a room code to join a live session or starts a local demo.
 3.  **Calibration:** User scans a designated "Room Anchor" QR code. This aligns the MR coordinates with the remote expert's view.
 4.  **Task Session:** The `TaskManager` activates the first step. The user sees instructions on their VR HUD and spatial arrows pointing toward target objects.
@@ -45,6 +45,10 @@ Synchronizes the physical world with the digital session using Meta's MR Utility
 -   `QrCodeManager`: Interfaces with MRUK to detect QR trackables. It manages a "Room Anchor" that serves as the zero-point for all other relative spatial data.
 -   `QRAnchorData`: Data structure for storing and syncing QR positions.
 -   **Pattern:** Uses a "Dormant Activation" pattern where QR codes detected before the Room Anchor is established are held in a list and repositioned once the anchor is found.
+-   **Auto-start + States:** `autoStartDetection` (default true) starts detection at launch. `State` = `Off | SignIn | Session` (event `OnDetectionStateChanged`) drives a persistent on-panel "QR Detection: ON" indicator.
+-   **Setup code (Sign In):** A bare ~8-char alphanumeric QR is recognised by `IsBareSetupCode` and classified Target (green) in the SignIn phase — the smallest/least-dense payload. The backend URL is **not** in the QR.
+-   **Classification colours:** Target=green, ValidListed=blue, Unlisted=orange, Invalid=red. Markers fade to `fadeQrDetectionMarkerTransparency` (0.2) so tracking stays visible.
+-   **Performance:** `showPayloadLabels` / `showDebugCenter` toggles keep frame-rate stable at 50+ codes.
 `Location: Assets/_TrueEchoVR/_SCRIPTS/Managers`
 
 ### Spatial Interaction System
@@ -82,3 +86,6 @@ The UI is built using **Unity UI (uGUI)** and optimized for Mixed Reality.
 -   **Calibration Order:** The system requires the "Room Anchor" QR code to be scanned before other QR-based objects will be correctly positioned relative to the environment.
 -   **Socket.IO Version:** The `SignalingManager` is specifically tuned for **Socket.IO v4** (Engine.IO v4). It uses a hardcoded `40` handshake prefix. Changing the backend version will break the connection.
 -   **Lazy Follow Lock:** Users can drag panels to a fixed position. To resume the "Lazy Follow" behavior, a "Resume Follow" action (often a tap on the panel background) must be triggered via `UIManager.ResumeFollow()`.
+-   **Setup QR must stay small:** Quest 3 passthrough cameras struggle with dense QRs. The web app should encode **only** a short setup code (≈8 chars) — never the full URL/payload — so the code is the least dense possible. The device resolves the rest via `GET /api/setup/{code}`.
+-   **Backend URL on device:** Stored as `BackendConfig.apiHost` default, overridable via the Login panel's Backend URL field, persisted to `tevr_apiBaseUrl`, and pre-populated each launch. `SetBackendUrl` splits a trailing `/api` so the root-level WebSocket still resolves.
+-   **One-time setup:** After a single successful setup-code scan, `tevr_setupCode`, customer/location, and the backend URL are persisted; subsequent launches sign in without re-scanning.

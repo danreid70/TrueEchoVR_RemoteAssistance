@@ -1,5 +1,7 @@
 # Refactor Plan for Meta XR Building Blocks
 
+> **Addendum (current QR Sign In):** Provisioning now uses a minimal **bare setup-code QR** resolved via `GET /api/setup/{code}`; the backend URL is stored on-device (default + editable, not in the QR). `QrCodeManager` auto-starts detection with `Off/SignIn/Session` states. See `_SCRIPTS/WebAppManager_Communication_Doc.md`.
+
 ## Goals
 - Transition core managers to work with Meta XR Building Blocks.
 - Remove redundant Unity XR/deprecated components.

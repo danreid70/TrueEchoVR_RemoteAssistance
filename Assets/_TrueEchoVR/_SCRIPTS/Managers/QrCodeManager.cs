@@ -26,6 +26,14 @@ public class QRPayloadAction
         public float positionThreshold = 0.01f;
         public float rotationThreshold = 0.2f;
 
+        [Header("Setup Code (smallest Sign In QR payload)")]
+        [Tooltip("A bare (non-JSON) alphanumeric QR payload whose length is within this range is treated " +
+                 "as a Sign In setup code (Target/green) during the SignIn phase. This lets the web app " +
+                 "encode JUST a short code (e.g. 8 chars) so the QR is the least dense possible. The backend " +
+                 "URL is NOT carried in the QR — it is stored on the device (default + editable).")]
+        public int setupCodeMinLength = 6;
+        public int setupCodeMaxLength = 16;
+
         [Header("Visualization & Prefabs")]
         public List<QRPayloadAction> payloadActions = new List<QRPayloadAction>();
 
@@ -55,8 +63,23 @@ public class QRPayloadAction
         [Range(0f, 1f)]
         public float fadeQrDetectionMarkerTransparency = 0.2f;
 
-        // Detection is OFF until a phase explicitly starts it (login scan, or the post-sign-in
-        // RoomAnchor/item scan). This keeps QR markers from appearing before the user asks to scan.
+        [Header("Startup")]
+        [Tooltip("Begin QR detection automatically when the app starts (in the SignIn phase), so the " +
+                 "headset is immediately looking for the Sign In setup code without the user pressing Scan. " +
+                 "Detection markers (status pips) appear for every code seen.")]
+        public bool autoStartDetection = true;
+
+        [Header("Performance (scales to 50+ codes)")]
+        [Tooltip("Draw the per-code TextMeshPro payload label on the heavy session visual. TMP is the most " +
+                 "expensive part per code; turn OFF to track many codes (50+) without frame drops. Status is " +
+                 "still shown by the colored detection marker regardless of this setting.")]
+        public bool showPayloadLabels = true;
+
+        [Tooltip("Draw the small debug sphere at each code's center. Off by default (it is only a debug aid).")]
+        public bool showDebugCenter = false;
+
+        // Detection starts automatically at app launch when autoStartDetection is true (SignIn phase),
+        // otherwise it stays off until a phase explicitly starts it.
         public bool IsDetecting { get; private set; } = false;
 
         /// <summary>
@@ -67,11 +90,50 @@ public class QRPayloadAction
         public enum ScanMode { LoginOnly, Full }
         public ScanMode Mode { get; private set; } = ScanMode.LoginOnly;
 
+        /// <summary>
+        /// High-level, UI-facing detection phase derived from IsDetecting + Mode:
+        ///   Off     = not scanning.
+        ///   SignIn  = pre-sign-in, looking for the setup/login QR code (ScanMode.LoginOnly).
+        ///   Session = post-sign-in, RoomAnchor + item tracking (ScanMode.Full).
+        /// </summary>
+        public enum DetectionState { Off, SignIn, Session }
+
+        /// <summary>Current detection phase. Drives the on-screen "QR Detection ON/OFF" indicator.</summary>
+        public DetectionState State => !IsDetecting
+            ? DetectionState.Off
+            : (Mode == ScanMode.Full ? DetectionState.Session : DetectionState.SignIn);
+
+        /// <summary>Fires whenever the detection phase changes (Off / SignIn / Session) so UI can update.</summary>
+        public Action<DetectionState> OnDetectionStateChanged;
+
+        private DetectionState _lastRaisedState = DetectionState.Off;
+
+        private void RaiseDetectionState()
+        {
+            var s = State;
+            if (s == _lastRaisedState) return;
+            _lastRaisedState = s;
+            OnDetectionStateChanged?.Invoke(s);
+        }
+
+        /// <summary>Number of QR codes currently showing a detection marker (status pip) in the scene.</summary>
+        public int DetectionMarkerCount => _detectionMarkers.Count;
+
+        /// <summary>Auto-starts detection in the SignIn phase at launch (idempotent).</summary>
+        private void MaybeAutoStartDetection()
+        {
+            if (!autoStartDetection || IsDetecting) return;
+            SetScanMode(ScanMode.LoginOnly); // SignIn phase
+            StartQRCodeDetection();
+            Debug.Log("[QrCodeManager] Auto-started QR detection (SignIn phase).");
+        }
+
         /// <summary>Switches scan phase. Full mode is entered only after a valid sign-in.</summary>
         public void SetScanMode(ScanMode mode)
         {
             Mode = mode;
             Debug.Log("[QrCodeManager] Scan mode -> " + mode);
+            RaiseDetectionState();
         }
 
         /// <summary>
@@ -220,6 +282,7 @@ public class QRPayloadAction
             {
                 Debug.Log("[QrCodeManager] Scene permission GRANTED: " + p);
                 EnsureQrTrackingEnabled();
+                MaybeAutoStartDetection();
                 OnScenePermissionResult?.Invoke(true);
             };
             callbacks.PermissionDenied += p =>
@@ -668,31 +731,40 @@ else if (_isAnchorSet)
 
             CreateVisualBorder(root.transform, scale, baseColor);
 
-            GameObject sphere = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-            sphere.name = "DebugCenter";
-            sphere.transform.SetParent(root.transform);
-            sphere.transform.localScale = new Vector3(0.015f, 0.015f, 0.015f);
-            sphere.transform.localPosition = Vector3.zero;
-            if (sphere.TryGetComponent<Collider>(out var sCol)) Destroy(sCol);
-            sphere.GetComponent<Renderer>().material = renderer.material;
+            // Optional debug sphere (off by default — purely a debug aid, saves a primitive per code).
+            if (showDebugCenter)
+            {
+                GameObject sphere = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                sphere.name = "DebugCenter";
+                sphere.transform.SetParent(root.transform);
+                sphere.transform.localScale = new Vector3(0.015f, 0.015f, 0.015f);
+                sphere.transform.localPosition = Vector3.zero;
+                if (sphere.TryGetComponent<Collider>(out var sCol)) Destroy(sCol);
+                sphere.GetComponent<Renderer>().material = renderer.material;
+            }
 
             // Note: no constant pulse here anymore — only the focused/"pointed-at" code pulses
             // (see FocusQRCode / UpdateFocusGlow). Detection markers fade out to avoid scene clutter.
 
-            GameObject textObj = new GameObject("PayloadLabel");
-            textObj.transform.SetParent(root.transform);
-            textObj.transform.localPosition = new Vector3(0, 0, -0.015f);
-            textObj.transform.localRotation = Quaternion.identity;
+            // Optional payload label (TextMeshPro is the most expensive per-code object). Skipping it lets
+            // the scene track 50+ codes without frame drops; status is still conveyed by marker color.
+            if (showPayloadLabels)
+            {
+                GameObject textObj = new GameObject("PayloadLabel");
+                textObj.transform.SetParent(root.transform);
+                textObj.transform.localPosition = new Vector3(0, 0, -0.015f);
+                textObj.transform.localRotation = Quaternion.identity;
 
-            var tmp = textObj.AddComponent<TextMeshPro>();
-            tmp.text = $"{labelPrefix}{payload}";
-            tmp.fontSize = 0.15f;
-            tmp.alignment = TextAlignmentOptions.Center;
-            tmp.color = Color.white;
-            tmp.rectTransform.sizeDelta = new Vector2(scale.x * 3.0f, scale.y * 3.0f);
-            tmp.enableAutoSizing = true;
-            tmp.fontSizeMin = 0.05f;
-            tmp.fontSizeMax = 0.5f;
+                var tmp = textObj.AddComponent<TextMeshPro>();
+                tmp.text = $"{labelPrefix}{payload}";
+                tmp.fontSize = 0.15f;
+                tmp.alignment = TextAlignmentOptions.Center;
+                tmp.color = Color.white;
+                tmp.rectTransform.sizeDelta = new Vector2(scale.x * 3.0f, scale.y * 3.0f);
+                tmp.enableAutoSizing = true;
+                tmp.fontSizeMin = 0.05f;
+                tmp.fontSizeMax = 0.5f;
+            }
         }
 
         private void CreateVisualBorder(Transform parent, Vector3 scale, Color color)
@@ -810,8 +882,11 @@ else if (_isAnchorSet)
         {
             if (string.IsNullOrWhiteSpace(payload)) return QrMarkerCategory.Invalid;
             if (payload.Contains(qrRoomAnchorLabel)) return QrMarkerCategory.Target;     // RoomAnchor
-            if (TryParseLoginCode(payload)) return QrMarkerCategory.Target;              // login setup code
+            if (TryParseLoginCode(payload)) return QrMarkerCategory.Target;              // JSON login setup code
             if (_validPayloads.Contains(payload)) return QrMarkerCategory.ValidListed;   // known good
+            // Bare alphanumeric setup code (smallest QR). Only a Target during the SignIn phase so that
+            // short item codes in the Session phase are not all coloured green.
+            if (Mode != ScanMode.Full && IsBareSetupCode(payload)) return QrMarkerCategory.Target;
             if (payload.TrimStart().StartsWith("{")) return QrMarkerCategory.Invalid;    // looks like JSON but isn't a valid setup code
             return QrMarkerCategory.Unlisted;
         }
@@ -842,6 +917,24 @@ else if (_isAnchorSet)
                 return legacy || setupCodeFormat;
             }
             catch { return false; }
+        }
+
+        /// <summary>
+        /// True if the payload is a BARE setup code: a non-JSON, non-RoomAnchor, alphanumeric string
+        /// whose length is within [setupCodeMinLength, setupCodeMaxLength]. This is the smallest possible
+        /// Sign In QR payload (e.g. an 8-char handshake code). The backend URL is NOT in the QR — the
+        /// device uses its stored/default URL to resolve the code into customer/location.
+        /// </summary>
+        public bool IsBareSetupCode(string payload)
+        {
+            if (string.IsNullOrWhiteSpace(payload)) return false;
+            string p = payload.Trim();
+            if (p.StartsWith("{")) return false;                 // JSON, handled by TryParseLoginCode
+            if (p.Contains(qrRoomAnchorLabel)) return false;     // RoomAnchor, handled separately
+            if (p.Length < setupCodeMinLength || p.Length > setupCodeMaxLength) return false;
+            for (int i = 0; i < p.Length; i++)
+                if (!char.IsLetterOrDigit(p[i])) return false;
+            return true;
         }
 
         // ---- Marker lifecycle ----
@@ -1337,8 +1430,8 @@ else if (_isAnchorSet)
         [Serializable] private class CalibrationWrapper { public string headsetId; public List<CalibrationQRData> qrCodes; }
         [Serializable] private class SerializableQRData { public string identifierKey; public string fullPayload; public Vector3 position; public Quaternion rotation; }
         [Serializable] private class Wrapper { public List<SerializableQRData> data; }
-        public void StartQRCodeDetection() { IsDetecting = true; EnsureQrTrackingEnabled(); }
-        public void StopQRCodeDetection() => IsDetecting = false;
+        public void StartQRCodeDetection() { IsDetecting = true; EnsureQrTrackingEnabled(); RaiseDetectionState(); }
+        public void StopQRCodeDetection() { IsDetecting = false; RaiseDetectionState(); }
         public void ManualSave() => SaveToDisk();
         public void ManualLoad() => LoadFromDiskAndRestore();
         public void ManualLoadFromJson(string json)

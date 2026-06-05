@@ -1,5 +1,7 @@
 # Task List: Scene Cleanup & UI Reorganization
 
+> **Addendum (current Login UI):** The `TEVR_UI_System` Login panel now has an editable **Backend URL** field (default + override, persisted, pre-populated) and a persistent **QR Detection ON/OFF** indicator (also on the Session panel). The Sign In QR is a minimal bare setup code; obsolete read-only API/Room/Token labels were removed. See `_SCRIPTS/WebAppManager_Communication_Doc.md` §6/§8.
+
 ## Status Tracking
 - [ ] Analysis: Confirm hierarchy and redundant elements. (pending)
 - [ ] Analysis: Identify UI scripts and dependencies. (pending)

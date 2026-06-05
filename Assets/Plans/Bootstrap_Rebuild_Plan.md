@@ -1,5 +1,7 @@
 # TrueEchoVR — Bootstrap Scene Rebuild Plan (Meta MRUK)
 
+> **Addendum (current QR Sign In):** `MRUK_QRCodeManager` auto-starts detection at launch (`autoStartDetection`, SignIn phase) with a persistent on-panel ON/OFF indicator. The Sign In QR is a minimal **bare ~8-char setup code** (no URL); the device resolves it via `GET /api/setup/{code}` using its stored/default Backend URL (editable on the Login panel, persisted to `tevr_apiBaseUrl`). See `_SCRIPTS/WebAppManager_Communication_Doc.md` §6/§8.
+
 > Persistent plan so work can resume after any editor crash / disconnect.
 > Foundation: **Meta XR SDK All v201 (Building Blocks + MRUK)**. Unity 6000.4.10f1, URP, New Input System, Android/Quest 3.
 > Rule: after EVERY step, verify compile + console error-free + (where possible) a Play Mode check, BEFORE moving on.
