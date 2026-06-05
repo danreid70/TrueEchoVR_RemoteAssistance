@@ -48,7 +48,46 @@ public class QRPayloadAction
         [Tooltip("Seconds over which a detection marker fades from visible to invisible (after the hold time).")]
         public float markerFadeSeconds = 1.5f;
 
-        public bool IsDetecting { get; private set; } = true;
+        [Tooltip("Resting alpha a detection marker settles to AFTER the fade, instead of vanishing. " +
+                 "0 = fade fully out after detection (markers disappear). " +
+                 "0.2 = keep markers at 20% opacity so you can confirm a QR code is STILL being tracked " +
+                 "after its initial detection. Markers follow the live trackable while detection is active.")]
+        [Range(0f, 1f)]
+        public float fadeQrDetectionMarkerTransparency = 0.2f;
+
+        // Detection is OFF until a phase explicitly starts it (login scan, or the post-sign-in
+        // RoomAnchor/item scan). This keeps QR markers from appearing before the user asks to scan.
+        public bool IsDetecting { get; private set; } = false;
+
+        /// <summary>
+        /// LoginOnly: pre-sign-in. Detected codes only show a (scaled) visual box + raise OnRawQRDetected
+        /// for the login-code parse. No RoomAnchor handling and no persistent item instances are created.
+        /// Full: post valid sign-in. RoomAnchor is established first, then item codes are synced/persisted.
+        /// </summary>
+        public enum ScanMode { LoginOnly, Full }
+        public ScanMode Mode { get; private set; } = ScanMode.LoginOnly;
+
+        /// <summary>Switches scan phase. Full mode is entered only after a valid sign-in.</summary>
+        public void SetScanMode(ScanMode mode)
+        {
+            Mode = mode;
+            Debug.Log("[QrCodeManager] Scan mode -> " + mode);
+        }
+
+        /// <summary>
+        /// Real-world box scale for a detected QR, taken from its tracked plane rectangle so the
+        /// visualization border lines up with the physical code (instead of an arbitrary fixed size).
+        /// </summary>
+        private static Vector3 GetTrackableBoxScale(MRUKTrackable t, float thickness = 0.005f, float fallback = 0.1f)
+        {
+            if (t != null && t.PlaneRect.HasValue)
+            {
+                Vector2 s = t.PlaneRect.Value.size;
+                if (Mathf.Abs(s.x) > 0.001f && Mathf.Abs(s.y) > 0.001f)
+                    return new Vector3(Mathf.Abs(s.x), Mathf.Abs(s.y), thickness);
+            }
+            return new Vector3(fallback, fallback, thickness);
+        }
 
         private bool _isSubscribedToMRUK = false;
 
@@ -315,6 +354,38 @@ public class QRPayloadAction
             if (autoSaveLoad) SaveToDisk();
         }
 
+        /// <summary>
+        /// Removes every transient detection frame currently in the scene (the colored boxes drawn
+        /// over detected codes) and clears any focus glow. Used by "Cancel Scan" so the login-phase
+        /// visual references don't linger as clutter. Does not touch persisted RoomAnchor/item data.
+        /// </summary>
+        public void ClearDetectionMarkers()
+        {
+            foreach (var kvp in _detectionMarkers)
+                if (kvp.Value != null && kvp.Value.go != null) Destroy(kvp.Value.go);
+            _detectionMarkers.Clear();
+            _pendingPayloadTrackables.Clear();
+            ClearFocus();
+        }
+
+        /// <summary>
+        /// Thoroughly removes ALL QR-related visuals from the scene, including detection pips,
+        /// persistent item visuals, and dormant codes. Used when the user explicitly cancels
+        /// a scan or wants to reset the room view.
+        /// </summary>
+        public void ClearAllVisuals()
+        {
+            ClearDetectionMarkers();
+            foreach (var inst in _trackedQRCodes.Values)
+            {
+                if (inst.visualObject != null) Destroy(inst.visualObject);
+            }
+            _trackedQRCodes.Clear();
+            _dormantQRCodes.Clear();
+            RoomAnchorInstance = null;
+            if (autoSaveLoad) SaveToDisk();
+        }
+
         public string GetQRCodeDataAsJson(string headsetId)
         {
             var list = new List<CalibrationQRData>();
@@ -421,17 +492,26 @@ else if (_isAnchorSet)
             }
             _pendingPayloadTrackables.Remove(trackable);
 
-            string key = GetIdentifierKey(fullPayload);
-            bool isAnchor = fullPayload.Contains(qrRoomAnchorLabel);
-
-            Debug.Log($"[QrCodeManager] QRCode detected. Payload=\"{fullPayload}\"");
-
             // Always announce the raw detection (even for codes that will go dormant before calibration).
             // This is what drives the login/setup-code scan + on-screen detection feedback.
             OnRawQRDetected?.Invoke(fullPayload, trackable.transform.position, trackable.transform.rotation);
 
-            // Testing aid: drop/refresh the colored 4-category pip over this code (works pre-calibration too).
+            // Testing aid: drop/refresh the colored 4-category pip over this code.
+            // Sized correctly to the physical QR code bounds.
             CreateOrUpdateDetectionMarker(trackable, fullPayload);
+
+            // In LoginOnly mode, we stop here. We only want visual pips and raw detection events.
+            // We do NOT want to establish a RoomAnchor or create persistent item instances yet.
+            if (Mode == ScanMode.LoginOnly)
+            {
+                Debug.Log($"[QrCodeManager] [LoginOnly] Raw detection: {fullPayload}");
+                return;
+            }
+
+            string key = GetIdentifierKey(fullPayload);
+            bool isAnchor = fullPayload.Contains(qrRoomAnchorLabel);
+
+            Debug.Log($"[QrCodeManager] QRCode detected. Payload=\"{fullPayload}\"");
 
             if (_trackedQRCodes.TryGetValue(key, out QRCodeInstance existing))
             {
@@ -451,14 +531,16 @@ else if (_isAnchorSet)
 
             if (isAnchor)
             {
-                RoomAnchorInstance = CreateAndAddInstance(fullPayload, trackable.transform.position, trackable.transform.rotation, QRStatus.Official, trackable.transform.localScale, true);
+                // FIX: Use GetTrackableBoxScale instead of transform.localScale (which is usually (1,1,1))
+                // so the green anchor box hits the border of the detected QR code.
+                RoomAnchorInstance = CreateAndAddInstance(fullPayload, trackable.transform.position, trackable.transform.rotation, QRStatus.Official, GetTrackableBoxScale(trackable), true);
                 RoomAnchorInstance.trackable = trackable;
                 OnRoomAnchorDiscovered?.Invoke(RoomAnchorInstance);
                 ActivateDormantQRCodes();
             }
             else if (_isAnchorSet)
             {
-                var inst = CreateAndAddInstance(fullPayload, trackable.transform.position, trackable.transform.rotation, QRStatus.Unknown, trackable.transform.localScale, true);
+                var inst = CreateAndAddInstance(fullPayload, trackable.transform.position, trackable.transform.rotation, QRStatus.Unknown, GetTrackableBoxScale(trackable), true);
                 inst.trackable = trackable;
             }
             else
@@ -474,12 +556,26 @@ else if (_isAnchorSet)
             _pendingPayloadTrackables.Remove(trackable);
             RemoveDetectionMarker(trackable);
             if (_focusTrackable == trackable) ClearFocus();
-            string key = GetIdentifierKey(trackable.MarkerPayloadString ?? "");
-            if (_trackedQRCodes.TryGetValue(key, out QRCodeInstance instance))
+            
+            // For removal, we need to match the key if possible, but MRUK doesn't give us the payload on removal.
+            // We'll search by trackable reference.
+            QRCodeInstance instanceToRemove = null;
+            string keyToRemove = null;
+            foreach (var kvp in _trackedQRCodes)
             {
-                if (instance.visualObject != null) Destroy(instance.visualObject);
-                _trackedQRCodes.Remove(key);
-                OnQRCodeRemoved?.Invoke(key);
+                if (kvp.Value.trackable == trackable)
+                {
+                    keyToRemove = kvp.Key;
+                    instanceToRemove = kvp.Value;
+                    break;
+                }
+            }
+
+            if (instanceToRemove != null)
+            {
+                if (instanceToRemove.visualObject != null) Destroy(instanceToRemove.visualObject);
+                _trackedQRCodes.Remove(keyToRemove);
+                OnQRCodeRemoved?.Invoke(keyToRemove);
                 if (autoSaveLoad) SaveToDisk();
             }
         }
@@ -550,7 +646,8 @@ else if (_isAnchorSet)
 
         private void CreateDefaultVisualization(GameObject root, string payload, QRStatus status, Vector3 scale)
         {
-            Color baseColor = status == QRStatus.Official ? Color.green : Color.yellow;
+            // Unified 4-category colour (green=target, red=invalid, blue=valid-listed, orange=unlisted).
+            Color baseColor = GetCategoryColor(ClassifyPayload(payload));
             bool isLegit = payload.Contains(qrRoomAnchorLabel) || payload.Contains("TrueEchoVR") || (payload.Length <= 2 && payload != "null");
             string labelPrefix = isLegit ? "[Legit] " : "[Unknown] ";
 
@@ -645,7 +742,7 @@ else if (_isAnchorSet)
         // A HashSet keeps classification O(1) even with hundreds of codes in view.
         private readonly HashSet<string> _validPayloads = new HashSet<string>();
 
-        private class DetectionMarker { public GameObject go; public QrMarkerCategory category; public QrFadeMarker fade; }
+        private class DetectionMarker { public GameObject go; public QrMarkerCategory category; public QrFadeMarker fade; public List<Renderer> frameRenderers; }
         private readonly Dictionary<MRUKTrackable, DetectionMarker> _detectionMarkers = new Dictionary<MRUKTrackable, DetectionMarker>();
         // One shared material per category — avoids allocating a material per marker.
         private readonly Dictionary<QrMarkerCategory, Material> _markerMaterials = new Dictionary<QrMarkerCategory, Material>();
@@ -658,6 +755,7 @@ else if (_isAnchorSet)
         private Transform _focusFollow;           // transform the glow tracks (trackable or visualObject)
         private MRUKTrackable _focusTrackable;    // pip to keep force-visible while focused (may be null)
         private QrMarkerCategory _focusCategory = QrMarkerCategory.Target;
+        private float _focusBaseSize = 0.1f;   // largest dimension of the focused code (meters)
         public bool HasFocus => _focusFollow != null;
 
         [Serializable] private class SetupQrPayload { public string customerId; public string locationId; }
@@ -778,39 +876,66 @@ else if (_isAnchorSet)
             if (trackable == null) return;
             var cat = ClassifyPayload(payload);
 
-            // Renderers of the heavier per-QR visual (if a tracked instance exists) so the whole
-            // representation fades together and shares the unified 4-category colour.
-            var vizRenderers = GetInstanceVisualRenderers(payload);
-
             if (_detectionMarkers.TryGetValue(trackable, out var entry) && entry.go != null)
             {
                 if (entry.category != cat)
                 {
                     entry.category = cat;
-                    entry.go.GetComponent<Renderer>().sharedMaterial = GetCategoryMaterial(cat);
+                    var mat = GetCategoryMaterial(cat);
+                    if (entry.frameRenderers != null)
+                        foreach (var r in entry.frameRenderers) if (r != null) r.sharedMaterial = mat;
                     entry.fade?.SetColor(GetCategoryColor(cat));
                 }
-                entry.fade?.SetExtraRenderers(vizRenderers);
                 // Re-detection counts as a "detected" event -> show again, then fade.
                 if (_focusTrackable != trackable) entry.fade?.Show();
                 return;
             }
 
-            var go = GameObject.CreatePrimitive(PrimitiveType.Quad);
-            go.name = "QRDetectMarker";
-            if (go.TryGetComponent<Collider>(out var col)) Destroy(col);
-            go.transform.localScale = new Vector3(markerSize, markerSize, markerSize);
-            var rend = go.GetComponent<Renderer>();
-            rend.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-            rend.receiveShadows = false;
-            rend.sharedMaterial = GetCategoryMaterial(cat);
+            // Build a thin outline frame sized to the QR's real plane rect so the border lines up
+            // with the physical code (4 bars forming a rectangle).
+            Vector3 box = GetTrackableBoxScale(trackable);
+            var go = new GameObject("QRDetectMarker");
+            var mat0 = GetCategoryMaterial(cat);
+            var renderers = BuildMarkerFrame(go.transform, box.x, box.y, mat0);
             go.SetActive(showDetectionMarkers);
 
             var fade = go.AddComponent<QrFadeMarker>();
-            fade.Init(rend, GetCategoryColor(cat), markerHoldSeconds, markerFadeSeconds);
-            fade.SetExtraRenderers(vizRenderers);
+            // Primary renderer + the rest as "extra" so the whole frame fades together.
+            Renderer primary = renderers.Count > 0 ? renderers[0] : null;
+            var extra = renderers.Count > 1 ? renderers.GetRange(1, renderers.Count - 1) : null;
+            fade.Init(primary, GetCategoryColor(cat), markerHoldSeconds, markerFadeSeconds, fadeQrDetectionMarkerTransparency);
+            fade.SetExtraRenderers(extra);
 
-            _detectionMarkers[trackable] = new DetectionMarker { go = go, category = cat, fade = fade };
+            _detectionMarkers[trackable] = new DetectionMarker { go = go, category = cat, fade = fade, frameRenderers = renderers };
+        }
+
+        /// <summary>Creates a rectangular outline (4 thin bars) of width x height under <paramref name="parent"/>.</summary>
+        private List<Renderer> BuildMarkerFrame(Transform parent, float width, float height, Material mat)
+        {
+            var renderers = new List<Renderer>(4);
+            float t = Mathf.Clamp(Mathf.Min(width, height) * 0.06f, 0.003f, 0.02f); // border thickness
+            const float depth = 0.002f;
+            renderers.Add(AddFrameBar(parent, new Vector3(0f, height / 2f, 0f), new Vector3(width + t, t, depth), mat));
+            renderers.Add(AddFrameBar(parent, new Vector3(0f, -height / 2f, 0f), new Vector3(width + t, t, depth), mat));
+            renderers.Add(AddFrameBar(parent, new Vector3(-width / 2f, 0f, 0f), new Vector3(t, height + t, depth), mat));
+            renderers.Add(AddFrameBar(parent, new Vector3(width / 2f, 0f, 0f), new Vector3(t, height + t, depth), mat));
+            return renderers;
+        }
+
+        private Renderer AddFrameBar(Transform parent, Vector3 localPos, Vector3 localScale, Material mat)
+        {
+            var bar = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            bar.name = "FrameBar";
+            bar.transform.SetParent(parent, false);
+            bar.transform.localPosition = localPos;
+            bar.transform.localScale = localScale;
+            bar.transform.localRotation = Quaternion.identity;
+            if (bar.TryGetComponent<Collider>(out var col)) Destroy(col);
+            var r = bar.GetComponent<Renderer>();
+            r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            r.receiveShadows = false;
+            r.sharedMaterial = mat;
+            return r;
         }
 
         /// <summary>Returns the renderers of the heavy per-QR visual for the given payload, or null.</summary>
@@ -835,7 +960,7 @@ else if (_isAnchorSet)
             }
         }
 
-        /// <summary>Keeps each pip floating just above its (moving) QR code, and prunes dead trackables.</summary>
+        /// <summary>Keeps each outline frame aligned to its (moving) QR code, and prunes dead trackables.</summary>
         private void UpdateDetectionMarkers()
         {
             if (_detectionMarkers.Count == 0) return;
@@ -848,7 +973,8 @@ else if (_isAnchorSet)
                 if (e.go.activeSelf != showDetectionMarkers) e.go.SetActive(showDetectionMarkers);
                 if (!showDetectionMarkers) continue;
                 var tr = t.transform;
-                e.go.transform.SetPositionAndRotation(tr.position + tr.up * (markerSize * 1.5f), tr.rotation);
+                // Sit just in front of the QR plane so the outline reads clearly without z-fighting.
+                e.go.transform.SetPositionAndRotation(tr.position - tr.forward * 0.003f, tr.rotation);
             }
             if (dead != null)
                 foreach (var k in dead)
@@ -869,8 +995,9 @@ else if (_isAnchorSet)
                 if (cat != e.category)
                 {
                     e.category = cat;
-                    var rr = e.go.GetComponent<Renderer>();
-                    if (rr != null) rr.sharedMaterial = GetCategoryMaterial(cat);
+                    var mat = GetCategoryMaterial(cat);
+                    if (e.frameRenderers != null)
+                        foreach (var r in e.frameRenderers) if (r != null) r.sharedMaterial = mat;
                     e.fade?.SetColor(GetCategoryColor(cat));
                 }
             }
@@ -931,6 +1058,17 @@ else if (_isAnchorSet)
             _focusFollow = follow;
             _focusTrackable = trackable;
             _focusCategory = category;
+
+            // Size the glow to the focused code so it visually wraps it.
+            if (trackable != null)
+            {
+                Vector3 b = GetTrackableBoxScale(trackable);
+                _focusBaseSize = Mathf.Max(b.x, b.y);
+            }
+            else
+            {
+                _focusBaseSize = 0.12f;
+            }
 
             // Keep the focused pip visible while it is the selection.
             if (trackable != null && _detectionMarkers.TryGetValue(trackable, out var cur))
@@ -1005,9 +1143,10 @@ else if (_isAnchorSet)
             _focusGlow.transform.SetPositionAndRotation(
                 _focusFollow.position - _focusFollow.forward * 0.01f, _focusFollow.rotation);
 
-            // Pulse: scale + alpha driven by a sine wave -> a discernible "breathing" glow.
+            // Pulse: scale + alpha driven by a sine wave -> a discernible "breathing" glow that
+            // wraps the focused code (sized to the code, with a margin that breathes).
             float p = (Mathf.Sin(Time.time * 6f) + 1f) * 0.5f;          // 0..1
-            float scale = markerSize * (2.4f + p * 1.8f);               // grows/shrinks
+            float scale = _focusBaseSize * (1.4f + p * 0.6f);           // grows/shrinks around the code
             _focusGlow.transform.localScale = Vector3.one;
             if (_focusGlowRenderer != null)
             {
@@ -1038,17 +1177,25 @@ else if (_isAnchorSet)
             private Color _baseColor = Color.white;
             private float _hold = 3f;
             private float _fade = 1.5f;
+            private float _restAlpha = 0f;
             private float _shownAt = -999f;
             private bool _forceVisible;
 
-            public void Init(Renderer r, Color color, float hold, float fade)
+            public void Init(Renderer r, Color color, float hold, float fade, float restAlpha = 0f)
             {
                 _renderer = r;
                 _mpb = new MaterialPropertyBlock();
                 _baseColor = color;
                 _hold = hold;
                 _fade = Mathf.Max(0.0001f, fade);
+                _restAlpha = Mathf.Clamp01(restAlpha);
                 Show();
+            }
+
+            public void SetRestAlpha(float restAlpha)
+            {
+                _restAlpha = Mathf.Clamp01(restAlpha);
+                enabled = true; // re-evaluate the fade with the new resting alpha
             }
 
             public void SetColor(Color color) { _baseColor = color; Apply(CurrentAlpha()); }
@@ -1086,7 +1233,9 @@ else if (_isAnchorSet)
                 if (_forceVisible) return 1f;
                 float t = Time.time - _shownAt;
                 if (t <= _hold) return 1f;
-                return Mathf.Clamp01(1f - (t - _hold) / _fade);
+                float a = 1f - (t - _hold) / _fade;
+                // Settle at the configured resting alpha instead of always fading to 0.
+                return Mathf.Clamp(a, _restAlpha, 1f);
             }
 
             private void Update()
@@ -1094,10 +1243,22 @@ else if (_isAnchorSet)
                 if (_forceVisible) { Apply(1f); return; }
                 float a = CurrentAlpha();
                 Apply(a);
-                if (a <= 0f)
+
+                // Once the fade has fully run, stop updating to save cost.
+                bool fadeComplete = (Time.time - _shownAt) > (_hold + _fade);
+                if (fadeComplete)
                 {
-                    SetRenderersEnabled(false); // invisible -> stop drawing
-                    enabled = false;            // and stop updating until shown again
+                    if (_restAlpha <= 0f)
+                    {
+                        SetRenderersEnabled(false); // invisible -> stop drawing
+                        enabled = false;            // and stop updating until shown again
+                    }
+                    else
+                    {
+                        // Keep renderers on at the resting alpha so the user can still see the
+                        // code is being tracked. The MaterialPropertyBlock already holds restAlpha.
+                        enabled = false;
+                    }
                 }
             }
 

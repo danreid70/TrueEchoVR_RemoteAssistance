@@ -66,6 +66,13 @@ public RawImage remoteVideoImage;
         public TMP_InputField loginCustomerIdInput;
         public TMP_InputField loginLocationIdInput;
 
+        [Header("Login QR Extra Values (read-only display)")]
+        [Tooltip("Read-only labels showing the additional values captured from the Sign In QR code so " +
+                 "the user can verify a single scan stored everything needed to sign in later.")]
+        public TMP_Text loginApiUrlText;
+        public TMP_Text loginRoomCodeText;
+        public TMP_Text loginTokenText;
+
         private bool _isScanningLoginCode = false;
 
         private void HandleUIStateChanged(UIManager.UIState newState)
@@ -141,21 +148,31 @@ public RawImage remoteVideoImage;
             if (roomCodeInput != null) roomCodeInput.onSubmit.AddListener((_) => OnJoinPressed());
 
             PopulateLoginConfigTexts();
+            PopulateLoginExtraTexts();
             PrefillLoginInputs();
             
-            if (noSignalTexture != null)
-            {
-                if (localVideoImage != null) localVideoImage.texture = noSignalTexture;
-                if (remoteVideoImage != null) remoteVideoImage.texture = noSignalTexture;
-            }
+            // Start with both video surfaces hidden. They are shown only when a real video texture is
+            // applied, so an inactive stream shows nothing instead of an empty black rectangle.
+            SetVideoImageVisible(localVideoImage, false);
+            SetVideoImageVisible(remoteVideoImage, false);
 
             if (webAppManager != null)
             {
                 webAppManager.OnConnected += OnConnected;
                 webAppManager.OnDisconnected += OnDisconnected;
                 webAppManager.OnChatMessageReceived += OnChatReceived;
-                webAppManager.OnRemoteStreamStarted += (tex) => { if (remoteVideoImage != null) remoteVideoImage.texture = tex; };
-                webAppManager.OnLocalStreamStarted += (tex) => { if (localVideoImage != null) { localVideoImage.texture = tex; localVideoImage.color = Color.white; } };
+                webAppManager.OnRemoteStreamStarted += (tex) => {
+                    if (remoteVideoImage == null) return;
+                    remoteVideoImage.texture = tex;
+                    remoteVideoImage.color = Color.white;
+                    SetVideoImageVisible(remoteVideoImage, tex != null);
+                };
+                webAppManager.OnLocalStreamStarted += (tex) => {
+                    if (localVideoImage == null) return;
+                    localVideoImage.texture = tex;
+                    localVideoImage.color = Color.white;
+                    SetVideoImageVisible(localVideoImage, tex != null);
+                };
                 webAppManager.OnStartupDataReceived += OnStartupDataReceived;
                 webAppManager.OnStatusUpdate += OnBackendStatus;
                 webAppManager.OnConnectionError += (err) => {
@@ -187,9 +204,6 @@ public RawImage remoteVideoImage;
                 };
             }
 
-            if (localVideoImage != null && localVideoImage.texture == null) localVideoImage.color = Color.black;
-            if (remoteVideoImage != null && remoteVideoImage.texture == null) remoteVideoImage.color = Color.black;
-
             AppendChatMessage("<color=green>[System]</color> Session UI Initialized.");
             SetupInputFieldKeyboard(roomCodeInput);
             SetupInputFieldKeyboard(chatInputField);
@@ -213,6 +227,21 @@ public RawImage remoteVideoImage;
             if (sessionUIPanel != null) sessionUIPanel.SetActive(true);
             if (loginPanel != null) loginPanel.SetActive(true);
             if (sessionPanel != null) sessionPanel.SetActive(false);
+
+            // No video should be visible on the login screen.
+            SetVideoImageVisible(localVideoImage, false);
+            SetVideoImageVisible(remoteVideoImage, false);
+
+            // Make the panel ready to sign in again.
+            if (signInButton != null) signInButton.interactable = true;
+            if (loginStatusText != null) loginStatusText.text = "Ready to Sign In.";
+        }
+
+        /// <summary>Shows/hides a video RawImage (used to make empty streams disappear instead of going black).</summary>
+        private void SetVideoImageVisible(RawImage img, bool visible)
+        {
+            if (img == null) return;
+            if (img.gameObject.activeSelf != visible) img.gameObject.SetActive(visible);
         }
 
         private void OnSignInPressed()
@@ -255,10 +284,18 @@ public RawImage remoteVideoImage;
 
         private void OnScanLoginCodePressed()
         {
-            // Toggle: a second press cancels scanning.
+            // Toggle: a second press cancels scanning AND removes all detection/item markers drawn so far.
             if (_isScanningLoginCode)
             {
                 _isScanningLoginCode = false;
+                if (qrManager != null)
+                {
+                    qrManager.StopQRCodeDetection();
+                    // FIX: Use ClearAllVisuals to ensure EVERYTHING (pips and any accidental instances) 
+                    // is removed from the scene when the user clicks "Cancel Scan".
+                    qrManager.ClearAllVisuals();
+                }
+                HideScanHighlight();
                 if (loginStatusText != null) loginStatusText.text = "Scan cancelled.";
                 UpdateScanButtonLabel(false);
                 return;
@@ -274,9 +311,10 @@ public RawImage remoteVideoImage;
             }
 
             _isScanningLoginCode = true;
-            // Ensure the QR detector is actively looking for the setup code.
+            // Login phase: visual-only scanning (no RoomAnchor / item processing yet).
             if (qrManager != null)
             {
+                qrManager.SetScanMode(QrCodeManager.ScanMode.LoginOnly);
                 qrManager.StartQRCodeDetection();
                 qrManager.EnsureQrTrackingEnabled();
             }
@@ -299,7 +337,19 @@ public RawImage remoteVideoImage;
             if (label != null) label.text = scanning ? "Cancel Scan" : "Scan Login Code";
         }
 
-        [Serializable] public class SetupQR { public string customerId; public string locationId; }
+        // Schema the headset expects from the Setup/Login QR code. customerId + locationId are required;
+        // the rest are OPTIONAL and let a private backend authenticate the not-yet-logged-in headset:
+        //   token      - bearer/access token sent as "Authorization: Bearer <token>" on every REST call.
+        //   apiBaseUrl - overrides the backend host (e.g. when moving Replit -> AWS) for this device.
+        //   roomCode   - pre-fills the room to join after sign-in.
+        [Serializable] public class SetupQR
+        {
+            public string customerId;
+            public string locationId;
+            public string token;
+            public string apiBaseUrl;
+            public string roomCode;
+        }
 
         /// <summary>
         /// Raw QR detection callback (fires for every detected code, even before calibration).
@@ -307,16 +357,20 @@ public RawImage remoteVideoImage;
         /// </summary>
         private void OnRawQRDetected(string payload, Vector3 pos, Quaternion rot)
         {
-            if (!_isScanningLoginCode) return;
+            if (_isScanningLoginCode)
+            {
+                // Login phase: visual confirmation is handled by QrCodeManager's scaled detection box.
+                // Show what was actually read (helps diagnose wrong/!valid codes on device).
+                if (loginStatusText != null)
+                    loginStatusText.text = $"Detected QR: <color=#22D3EE>{Truncate(payload, 48)}</color>";
+                HandleLoginQRScan(payload);
+                return;
+            }
 
-            // Visual confirmation: draw a box at the detected code so the user knows it was seen.
-            ShowScanHighlight(pos, rot);
-
-            // Show what was actually read (helps diagnose wrong/!valid codes on device).
-            if (loginStatusText != null)
-                loginStatusText.text = $"Detected QR: <color=#22D3EE>{Truncate(payload, 48)}</color>";
-
-            HandleLoginQRScan(payload);
+            // Session/calibration phase: surface every detection in the log so the user can confirm the
+            // camera is actually seeing/tracking codes (even ones that are dormant until a RoomAnchor is set).
+            AppendChatMessage($"<color=#22D3EE>[Detected]</color> {Truncate(payload, 60)}");
+            RefreshQRCodeDropdown();
         }
 
         private void HandleLoginQRScan(string payload)
@@ -331,12 +385,30 @@ public RawImage remoteVideoImage;
                 // Persist immediately so the device remembers this setup and the fields prepopulate
                 // on every subsequent launch (no need to re-scan the setup QR).
                 webAppManager.SaveConnectionInfo(data.customerId, data.locationId);
+
+                // Optional fields let a protected backend authenticate this not-yet-logged-in headset.
+                // Each is PERSISTED so a single Sign In scan is remembered across app restarts and the
+                // user never has to re-scan the setup QR before signing in.
+                if (!string.IsNullOrEmpty(data.apiBaseUrl))
+                    webAppManager.SaveApiHost(data.apiBaseUrl.Trim());
+                if (!string.IsNullOrEmpty(data.token))
+                    webAppManager.SetAuthToken(data.token.Trim());
+                if (!string.IsNullOrEmpty(data.roomCode))
+                    webAppManager.SaveRoomCode(data.roomCode.Trim());
+
                 _isScanningLoginCode = false;
-                if (qrManager != null) qrManager.StopQRCodeDetection();
+                if (qrManager != null)
+                {
+                    qrManager.StopQRCodeDetection();
+                    qrManager.ClearDetectionMarkers(); // clear the visual-reference boxes; next phase is sign-in
+                }
                 // Reflect the accepted values in the editable input fields and labels.
                 if (loginCustomerIdInput != null) loginCustomerIdInput.text = data.customerId;
                 if (loginLocationIdInput != null) loginLocationIdInput.text = data.locationId;
+                // Pre-fill the room code so the user can join immediately after signing in.
+                if (roomCodeInput != null && !string.IsNullOrEmpty(data.roomCode)) roomCodeInput.text = data.roomCode.Trim();
                 PopulateLoginConfigTexts();
+                PopulateLoginExtraTexts();
                 if (loginStatusText != null) loginStatusText.text = "<color=#22D3EE>Setup code accepted. Press Sign In to continue.</color>";
                 if (scanLoginCodeButton != null) scanLoginCodeButton.interactable = true;
                 UpdateScanButtonLabel(false);
@@ -476,6 +548,29 @@ public RawImage remoteVideoImage;
             if (sessionUIPanel != null) sessionUIPanel.SetActive(true);
             if (loginPanel != null) loginPanel.SetActive(false);
             if (sessionPanel != null) sessionPanel.SetActive(true);
+
+            // The local passthrough preview should ALWAYS stream while the session panel is open so the
+            // user can confirm the headset is capturing the passthrough camera, even before a remote
+            // expert connects. StartLocalPreview() is a no-op if the local track is already running.
+            if (webAppManager != null) webAppManager.StartLocalPreview();
+
+            // Make sure QR detection is actually running (Full mode) while the session panel is open so
+            // codes get tracked and added to the "Look At" list.
+            if (qrManager != null)
+            {
+                qrManager.SetScanMode(QrCodeManager.ScanMode.Full);
+                if (!qrManager.IsDetecting) qrManager.StartQRCodeDetection();
+                qrManager.EnsureQrTrackingEnabled();
+                RefreshQRCodeDropdown();
+            }
+            UpdateDetectionButtonLabel();
+        }
+
+        private void UpdateDetectionButtonLabel()
+        {
+            if (toggleDetectionButtonText == null) return;
+            bool detecting = qrManager != null && qrManager.IsDetecting;
+            toggleDetectionButtonText.text = detecting ? "Stop Detection" : "Start Detection";
         }
 
         public void ShowJoinScreen() => ShowSessionScreen();
@@ -497,7 +592,7 @@ public RawImage remoteVideoImage;
             qrCodeDropdown.ClearOptions();
             
             List<TMP_Dropdown.OptionData> options = new List<TMP_Dropdown.OptionData>();
-            options.Add(new TMP_Dropdown.OptionData("Stop Pointing"));
+            options.Add(NewBlackOption("Stop Pointing"));
             
             qrCodeList.Clear();
             foreach (var kvp in qrManager.TrackedQRCodes)
@@ -506,9 +601,19 @@ public RawImage remoteVideoImage;
                 qrCodeList.Add(kvp.Value);
                 string displayName = !string.IsNullOrEmpty(kvp.Value.identifierKey) ? kvp.Value.identifierKey : kvp.Value.fullPayload;
                 if (displayName.Length > 30) displayName = displayName.Substring(0, 27) + "...";
-                options.Add(new TMP_Dropdown.OptionData(displayName));
+                options.Add(NewBlackOption(displayName));
             }
             qrCodeDropdown.AddOptions(options);
+
+            // The dropdown caption shows the current selection; keep it black too.
+            if (qrCodeDropdown.captionText != null) qrCodeDropdown.captionText.color = Color.black;
+        }
+
+        // TMP_Dropdown.OptionData.color defaults to white and overrides the item label color, which
+        // would make the text invisible on the light dropdown background. Force every option black.
+        private static TMP_Dropdown.OptionData NewBlackOption(string text)
+        {
+            return new TMP_Dropdown.OptionData(text) { color = Color.black };
         }
 
         public void AddQRListItem(QrCodeManager.QRCodeInstance qr) { }
@@ -532,8 +637,12 @@ public RawImage remoteVideoImage;
 
         private void OnLeaveSession()
         {
+            // Tear down the live session (network + local capture) and return to the Sign In panel,
+            // ready to sign in again.
             webAppManager?.Disconnect();
-            UIManager.Instance?.SetState(UIManager.UIState.Session);
+            if (qrManager != null) qrManager.StopQRCodeDetection();
+            AppendChatMessage("<color=orange>[Session] Left session — returning to Sign In.</color>");
+            UIManager.Instance?.SetState(UIManager.UIState.Login);
         }
 
         private void OnConnected()
@@ -550,6 +659,9 @@ public RawImage remoteVideoImage;
         private void OnDisconnected()
         {
             if (connectionStatusText != null) connectionStatusText.text = "Status: DISCONNECTED";
+            // The remote feed is gone -> hide its surface (the local preview keeps running).
+            if (remoteVideoImage != null) remoteVideoImage.texture = null;
+            SetVideoImageVisible(remoteVideoImage, false);
         }
 
         private void OnChatReceived(string msg) => AppendChatMessage($"Admin: {msg}");
@@ -557,14 +669,28 @@ public RawImage remoteVideoImage;
         private void OnToggleDetectQR()
         {
             if (qrManager == null) return;
-            if (qrManager.IsDetecting) qrManager.StopQRCodeDetection();
-            else qrManager.StartQRCodeDetection();
+            if (qrManager.IsDetecting)
+            {
+                qrManager.StopQRCodeDetection();
+                AppendChatMessage("<color=orange>[Detection] STOPPED.</color>");
+            }
+            else
+            {
+                qrManager.SetScanMode(QrCodeManager.ScanMode.Full);
+                qrManager.StartQRCodeDetection();
+                qrManager.EnsureQrTrackingEnabled();
+                AppendChatMessage("<color=green>[Detection] STARTED.</color> Look at the RoomAnchor first, then QR codes.");
+            }
+            UpdateDetectionButtonLabel();
         }
 
         private void OnClearQRPressed()
         {
-            qrManager?.ClearQRCodes();
+            if (qrManager == null) return;
+            int count = qrManager.TrackedQRCodes.Count;
+            qrManager.ClearQRCodes();
             RefreshQRCodeDropdown();
+            AppendChatMessage($"<color=green>[Clear]</color> Cleared {count} QR code(s) from the list.");
         }
 
         /// <summary>
@@ -586,6 +712,11 @@ public RawImage remoteVideoImage;
             // The session-screen Location field (used for QR push/pull) is also seeded.
             if (locationIdInput != null && string.IsNullOrEmpty(locationIdInput.text) && !string.IsNullOrEmpty(cfg.locationId))
                 locationIdInput.text = cfg.locationId;
+
+            // Seed the room code from the remembered setup-QR value so the user can join immediately.
+            if (roomCodeInput != null && string.IsNullOrEmpty(roomCodeInput.text)
+                && webAppManager != null && !string.IsNullOrEmpty(webAppManager.currentRoomCode))
+                roomCodeInput.text = webAppManager.currentRoomCode;
         }
 
         /// <summary>Shows the current backend host / customer / location on the Login panel.</summary>
@@ -598,6 +729,25 @@ public RawImage remoteVideoImage;
             if (locationIdText != null) locationIdText.text = $"Location: {(string.IsNullOrEmpty(cfg.locationId) ? "(scan or set)" : cfg.locationId)}";
         }
 
+        /// <summary>
+        /// Shows the extra values captured from the Sign In QR code (API URL, room code, token) as
+        /// read-only labels so the user can confirm a single scan stored everything needed to sign in.
+        /// </summary>
+        private void PopulateLoginExtraTexts()
+        {
+            var cfg = webAppManager != null ? webAppManager.config : null;
+            string host = cfg != null ? cfg.apiHost : "";
+            string room = webAppManager != null ? webAppManager.currentRoomCode : "";
+            string token = webAppManager != null ? webAppManager.AuthToken : "";
+
+            if (loginApiUrlText != null)
+                loginApiUrlText.text = $"API URL: {(string.IsNullOrEmpty(host) ? "(scan or set)" : host)}";
+            if (loginRoomCodeText != null)
+                loginRoomCodeText.text = $"Room: {(string.IsNullOrEmpty(room) ? "(scan or set)" : room)}";
+            if (loginTokenText != null)
+                loginTokenText.text = $"Token: {(string.IsNullOrEmpty(token) ? "(none)" : "stored " + Truncate(token, 16))}";
+        }
+
         /// <summary>Uploads the current local QR calibration to the backend for this location.</summary>
         private void OnPushQRPressed()
         {
@@ -605,11 +755,12 @@ public RawImage remoteVideoImage;
             string locId = GetActiveLocationId();
             if (string.IsNullOrEmpty(locId)) { AppendChatMessage("<color=red>[Push] No Location ID set.</color>"); return; }
 
+            int count = qrManager.TrackedQRCodes.Count;
             string json = qrManager.GetQRCodeDataAsJson(webAppManager.tevrHeadsetId);
-            AppendChatMessage("[Push] Uploading calibration...");
+            AppendChatMessage($"[Push] Uploading {count} detected QR Code(s)...");
             if (pushQRButton != null) pushQRButton.interactable = false;
             webAppManager.PostData($"locations/{locId}/qr-codes", json,
-                (res) => { AppendChatMessage("<color=green>[Push] Calibration uploaded.</color>"); if (pushQRButton != null) pushQRButton.interactable = true; },
+                (res) => { AppendChatMessage($"<color=green>[Push] Pushed {count} detected QR Code(s) to the server.</color>"); if (pushQRButton != null) pushQRButton.interactable = true; },
                 (err) => { AppendChatMessage($"<color=red>[Push] Failed: {err}</color>"); if (pushQRButton != null) pushQRButton.interactable = true; });
         }
 
@@ -626,7 +777,7 @@ public RawImage remoteVideoImage;
                 (res) => {
                     int count = ApplyPulledCalibration(res);
                     RefreshQRCodeDropdown();
-                    AppendChatMessage($"<color=green>[Pull] Loaded {count} QR code(s).</color>");
+                    AppendChatMessage($"<color=green>[Pull] Pulled/downloaded {count} QR code(s) from the server.</color>");
                     if (pullQRButton != null) pullQRButton.interactable = true;
                 },
                 (err) => { AppendChatMessage($"<color=red>[Pull] Failed: {err}</color>"); if (pullQRButton != null) pullQRButton.interactable = true; });

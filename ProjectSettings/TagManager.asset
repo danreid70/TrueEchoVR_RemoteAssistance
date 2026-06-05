@@ -75,7 +75,7 @@ TagManager:
   - 
   - 
   - XR Simulation
-  - 
+  - MRCapture
   m_SortingLayers:
   - name: Default
     uniqueID: 0

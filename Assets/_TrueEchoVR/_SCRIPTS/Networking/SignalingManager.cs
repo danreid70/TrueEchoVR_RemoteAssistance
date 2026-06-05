@@ -19,6 +19,20 @@ namespace TEVR
         public string tevrHeadsetId; 
         public string tevrLocationId;
         public string currentRoomCode;
+
+        // Optional bearer/access token used to authenticate the headset against a protected backend.
+        // Supplied by the setup QR code (see SessionUiController.SetupQR.token) or set programmatically.
+        [SerializeField] private string authToken = "";
+        public bool HasAuthToken => !string.IsNullOrEmpty(authToken);
+        /// <summary>The stored bearer token (for read-only display/verification on the login panel).</summary>
+        public string AuthToken => authToken;
+        public void SetAuthToken(string token)
+        {
+            authToken = token ?? "";
+            if (!string.IsNullOrEmpty(authToken)) PlayerPrefs.SetString("TEVR_AUTH_TOKEN", authToken);
+            PlayerPrefs.Save();
+        }
+
         public bool IsConnected => _ws != null && _ws.State == WebSocketState.Open;
         public float currentLatency { get; private set; }
         
@@ -46,17 +60,27 @@ namespace TEVR
 
         public enum VideoSource
         {
-            /// <summary>Capture the headset passthrough camera (real world) via WebCamTexture. Requires CAMERA permission.</summary>
+            /// <summary>
+            /// EXACTLY what the user sees: the real-world passthrough camera as the background
+            /// COMPOSITED with the Unity-rendered virtual content (UI panels, QR markers, etc.) on top.
+            /// This is what should be streamed/recorded for remote assistance.
+            /// </summary>
+            Composite,
+            /// <summary>Capture the headset passthrough camera (real world only) via WebCamTexture. Requires CAMERA permission.</summary>
             PassthroughCamera,
             /// <summary>Capture the Unity rendered eye view (virtual content only). No real-world imagery.</summary>
             RenderedCamera
         }
 
+        // Layer used exclusively by the composite-capture background quad so it is rendered into the
+        // streamed RenderTexture but never shown to the user's own eyes.
+        private const string CompositeLayerName = "MRCapture";
+
         [Header("Video Settings")]
         [Tooltip("PassthroughCamera streams the real world (requires Camera permission + passthrough camera access). " +
                  "RenderedCamera streams only Unity-rendered content. If passthrough is unavailable at runtime, " +
                  "the system automatically falls back to the rendered camera.")]
-        public VideoSource videoSource = VideoSource.PassthroughCamera;
+        public VideoSource videoSource = VideoSource.Composite;
 
         [Tooltip("Legacy flag kept for compatibility. When true, forces the PassthroughCamera (WebCamTexture) source.")]
         public bool useWebcam = false;
@@ -73,6 +97,15 @@ namespace TEVR
         private WebCamTexture _webcamTexture;
         private RenderTexture _captureRT;
         private Camera _internalCaptureCamera;
+
+        // Composite capture (real-world passthrough + virtual content).
+        private Camera _compositeCamera;
+        private RenderTexture _compositeRT;
+        private GameObject _compositeQuad;
+        private Material _compositeBgMaterial;
+        private Camera _compositeEye;        // the user's eye camera we mirror
+        private int _compositeRestoreMask;   // eye cullingMask to restore on teardown
+        private bool _compositeMaskModified;
 
         public Action OnConnected;
         public Action OnDisconnected;
@@ -111,6 +144,8 @@ namespace TEVR
                 DontDestroyOnLoad(gameObject);
                 tevrHeadsetId = PlayerPrefs.GetString("TEVR_HEADSET_ID", "");
                 tevrLocationId = PlayerPrefs.GetString("TEVR_LOCATION_ID", "");
+                if (string.IsNullOrEmpty(authToken))
+                    authToken = PlayerPrefs.GetString("TEVR_AUTH_TOKEN", "");
 
                 // Restore the last-used connection info so the login fields prepopulate with what the
                 // device remembers (from a prior QR setup or manual sign-in) instead of the baked
@@ -121,7 +156,14 @@ namespace TEVR
                     string savedLocation = PlayerPrefs.GetString("TEVR_LOCATION_ID", "");
                     if (!string.IsNullOrEmpty(savedCustomer)) config.customerId = savedCustomer;
                     if (!string.IsNullOrEmpty(savedLocation)) config.locationId = savedLocation;
+
+                    // Also restore the optional setup-QR values so a single scan persists across
+                    // restarts and the user never has to re-scan the Sign In code.
+                    string savedHost = PlayerPrefs.GetString(PrefApiHost, "");
+                    if (!string.IsNullOrEmpty(savedHost)) config.apiHost = savedHost;
                 }
+                string savedRoom = PlayerPrefs.GetString(PrefRoomCode, "");
+                if (!string.IsNullOrEmpty(savedRoom)) currentRoomCode = savedRoom;
             }
             else
             {
@@ -138,6 +180,27 @@ namespace TEVR
 
         // PlayerPrefs key for the remembered customer id (headset & location reuse their existing keys).
         private const string PrefCustomerId = "TEVR_CUSTOMER_ID";
+        // Optional setup-QR values persisted so a single Sign In scan survives app restarts.
+        private const string PrefApiHost = "TEVR_API_HOST";
+        private const string PrefRoomCode = "TEVR_ROOM_CODE";
+
+        /// <summary>Persists the backend API host (from the setup QR's apiBaseUrl) and applies it to config.</summary>
+        public void SaveApiHost(string host)
+        {
+            if (string.IsNullOrWhiteSpace(host)) return;
+            host = host.Trim();
+            PlayerPrefs.SetString(PrefApiHost, host);
+            if (config != null) config.apiHost = host;
+            PlayerPrefs.Save();
+        }
+
+        /// <summary>Persists the room code (from the setup QR) so it pre-fills the join field on every launch.</summary>
+        public void SaveRoomCode(string roomCode)
+        {
+            currentRoomCode = roomCode == null ? "" : roomCode.Trim();
+            if (!string.IsNullOrEmpty(currentRoomCode)) PlayerPrefs.SetString(PrefRoomCode, currentRoomCode);
+            PlayerPrefs.Save();
+        }
 
         public bool HasCredentials => !string.IsNullOrEmpty(tevrHeadsetId) && !string.IsNullOrEmpty(tevrLocationId);
 
@@ -418,13 +481,13 @@ namespace TEVR
         public void Disconnect()
         {
             _ws?.Close();
-            _pc?.Close(); _pc?.Dispose();
-            _localStream?.Dispose();
-            _videoTrack?.Dispose();
-            _audioTrack?.Dispose();
-            if (_webcamTexture != null) _webcamTexture.Stop();
-            if (_internalCaptureCamera != null) Destroy(_internalCaptureCamera.gameObject);
-            if (_captureRT != null) _captureRT.Release();
+            _pc?.Close(); _pc?.Dispose(); _pc = null;
+            _localStream?.Dispose(); _localStream = null;
+            _audioTrack?.Dispose(); _audioTrack = null;
+
+            // Fully tear down + NULL the local capture so StartLocalPreview() can start fresh next time
+            // (previously these were disposed but left non-null, which permanently blocked re-preview).
+            TearDownLocalVideo();
         }
 
         private void ProcessIncomingMessage(string json)
@@ -506,6 +569,9 @@ namespace TEVR
                     request.SetRequestHeader("Content-Type", "application/json");
                     // Backend enforces an AJAX/CSRF guard and rejects requests without this header (HTTP 403).
                     request.SetRequestHeader("X-Requested-With", "XMLHttpRequest");
+                    // If a setup QR (or prior session) provided an access token, authenticate with it.
+                    if (!string.IsNullOrEmpty(authToken))
+                        request.SetRequestHeader("Authorization", "Bearer " + authToken);
 
                     yield return request.SendWebRequest();
 
@@ -553,6 +619,15 @@ namespace TEVR
         {
             if (_videoTrack != null) yield break;
 
+            // Preferred: composite of real-world passthrough + virtual content (what the user sees).
+            if (!useWebcam && videoSource == VideoSource.Composite)
+            {
+                bool composed = false;
+                yield return StartCoroutine(SetupCompositeCamera(success => composed = success));
+                if (composed) yield break;
+                Debug.LogWarning("[SignalingManager] Composite capture unavailable — falling back.");
+            }
+
             bool wantPassthrough = useWebcam || videoSource == VideoSource.PassthroughCamera;
 
             if (wantPassthrough)
@@ -572,7 +647,7 @@ namespace TEVR
         /// Requires the CAMERA + HEADSET_CAMERA permissions and "Passthrough Camera Access" enabled
         /// in the Oculus project config (both are configured in this project).
         /// </summary>
-        private IEnumerator SetupPassthroughCamera(Action<bool> onComplete)
+        private IEnumerator SetupPassthroughCamera(Action<bool> onComplete, bool createTrack = true)
         {
             float deadline = Time.time + Mathf.Max(2f, passthroughStartTimeout);
 
@@ -620,10 +695,145 @@ namespace TEVR
                 yield break;
             }
 
-            _videoTrack = new VideoStreamTrack(_webcamTexture);
-            Status($"Streaming passthrough camera: {chosen} ({_webcamTexture.width}x{_webcamTexture.height}).");
-            OnLocalStreamStarted?.Invoke(_webcamTexture);
+            if (createTrack)
+            {
+                _videoTrack = new VideoStreamTrack(_webcamTexture);
+                Status($"Streaming passthrough camera: {chosen} ({_webcamTexture.width}x{_webcamTexture.height}).");
+                OnLocalStreamStarted?.Invoke(_webcamTexture);
+            }
+            else
+            {
+                Status($"Passthrough camera live: {chosen} ({_webcamTexture.width}x{_webcamTexture.height}).");
+            }
             onComplete?.Invoke(true);
+        }
+
+        /// <summary>
+        /// Builds the COMPOSITE local capture = real-world passthrough (background) + the Unity-rendered
+        /// virtual content (UI panels, QR markers, highlights) on top — i.e. exactly what the user sees.
+        /// A dedicated capture camera mirrors the user's eye every frame and renders a full-screen quad
+        /// (showing the live passthrough WebCamTexture, on the MRCapture layer) behind all world content
+        /// into a RenderTexture. The MRCapture layer is removed from the eye's culling mask so the quad
+        /// is only visible in the stream, never doubled-up in the headset view.
+        /// </summary>
+        private IEnumerator SetupCompositeCamera(Action<bool> onComplete)
+        {
+            // 1. Start the passthrough webcam as the real-world background (no track of its own).
+            bool camOk = false;
+            yield return StartCoroutine(SetupPassthroughCamera(ok => camOk = ok, createTrack: false));
+
+            // 2. Resolve the user's eye camera.
+            float timeout = Time.time + 10f;
+            while (captureCamera == null && Camera.main == null && Time.time < timeout) yield return null;
+            Camera eye = captureCamera != null ? captureCamera : Camera.main;
+            if (eye == null)
+            {
+                Status("No eye camera available for composite capture.");
+                onComplete?.Invoke(false);
+                yield break;
+            }
+            _compositeEye = eye;
+
+            int mrLayer = LayerMask.NameToLayer(CompositeLayerName);
+            if (mrLayer < 0) mrLayer = 31; // last-resort fallback
+
+            // 3. Composite camera that mirrors the eye.
+            if (_compositeCamera == null)
+            {
+                var camObj = new GameObject("TEVR_CompositeCamera");
+                _compositeCamera = camObj.AddComponent<Camera>();
+            }
+            _compositeCamera.CopyFrom(eye);
+            _compositeCamera.stereoTargetEye = StereoTargetEyeMask.None;
+            _compositeCamera.clearFlags = CameraClearFlags.SolidColor;
+            _compositeCamera.backgroundColor = Color.black;
+            _compositeCamera.cullingMask = eye.cullingMask | (1 << mrLayer);
+            _compositeCamera.depth = eye.depth - 1;
+            _compositeCamera.transform.SetParent(eye.transform, false);
+            _compositeCamera.transform.localPosition = Vector3.zero;
+            _compositeCamera.transform.localRotation = Quaternion.identity;
+
+            // Keep the background quad out of the user's own eyes.
+            _compositeRestoreMask = eye.cullingMask;
+            eye.cullingMask &= ~(1 << mrLayer);
+            _compositeMaskModified = true;
+
+            // 4. Output RenderTexture.
+            if (_compositeRT == null)
+            {
+                _compositeRT = new RenderTexture(captureResolution.x, captureResolution.y, 24,
+                    UnityEngine.Experimental.Rendering.GraphicsFormat.B8G8R8A8_SRGB);
+                _compositeRT.Create();
+            }
+            _compositeCamera.targetTexture = _compositeRT;
+
+            // 5. Full-screen background quad showing the live passthrough.
+            if (_compositeQuad == null)
+            {
+                _compositeQuad = GameObject.CreatePrimitive(PrimitiveType.Quad);
+                _compositeQuad.name = "TEVR_PassthroughBG";
+                if (_compositeQuad.TryGetComponent<Collider>(out var col)) Destroy(col);
+                var sh = Shader.Find("Universal Render Pipeline/Unlit");
+                if (sh == null) sh = Shader.Find("Unlit/Texture");
+                _compositeBgMaterial = new Material(sh);
+                _compositeQuad.GetComponent<Renderer>().material = _compositeBgMaterial;
+                _compositeQuad.GetComponent<Renderer>().shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            }
+            _compositeQuad.layer = mrLayer;
+
+            if (_webcamTexture != null)
+            {
+                if (_compositeBgMaterial.HasProperty("_BaseMap")) _compositeBgMaterial.SetTexture("_BaseMap", _webcamTexture);
+                _compositeBgMaterial.mainTexture = _webcamTexture;
+            }
+
+            // Place the quad near the far plane and scale it to fill the eye frustum.
+            float dist = Mathf.Clamp(eye.farClipPlane * 0.5f, 5f, 100f);
+            float h = 2f * dist * Mathf.Tan(eye.fieldOfView * 0.5f * Mathf.Deg2Rad);
+            float w = h * Mathf.Max(0.1f, eye.aspect);
+            _compositeQuad.transform.SetParent(_compositeCamera.transform, false);
+            _compositeQuad.transform.localPosition = new Vector3(0f, 0f, dist);
+            // Compensate for passthrough WebCamTexture orientation (rotation + vertical mirroring).
+            float rot = _webcamTexture != null ? -_webcamTexture.videoRotationAngle : 0f;
+            _compositeQuad.transform.localRotation = Quaternion.Euler(0f, 0f, rot);
+            float flipY = (_webcamTexture != null && _webcamTexture.videoVerticallyMirrored) ? -1f : 1f;
+            _compositeQuad.transform.localScale = new Vector3(w, h * flipY, 1f);
+            _compositeQuad.SetActive(_webcamTexture != null);
+
+            // 6. Stream the composite.
+            _videoTrack = new VideoStreamTrack(_compositeRT);
+            OnLocalStreamStarted?.Invoke(_compositeRT);
+            Status(camOk
+                ? "Streaming composite view (passthrough + UI)."
+                : "Streaming composite view (UI only — passthrough unavailable).");
+            onComplete?.Invoke(true);
+        }
+
+        /// <summary>Stops the local preview/capture and releases all camera/texture resources so it can restart cleanly.</summary>
+        public void StopLocalPreview()
+        {
+            TearDownLocalVideo();
+        }
+
+        private void TearDownLocalVideo()
+        {
+            _videoTrack?.Dispose();
+            _videoTrack = null;
+
+            if (_webcamTexture != null) { _webcamTexture.Stop(); _webcamTexture = null; }
+
+            if (_compositeMaskModified && _compositeEye != null)
+            {
+                _compositeEye.cullingMask = _compositeRestoreMask;
+                _compositeMaskModified = false;
+            }
+            _compositeEye = null;
+            if (_compositeQuad != null) { Destroy(_compositeQuad); _compositeQuad = null; }
+            if (_compositeCamera != null) { Destroy(_compositeCamera.gameObject); _compositeCamera = null; }
+            if (_compositeRT != null) { _compositeRT.Release(); _compositeRT = null; }
+
+            if (_internalCaptureCamera != null) { Destroy(_internalCaptureCamera.gameObject); _internalCaptureCamera = null; }
+            if (_captureRT != null) { _captureRT.Release(); _captureRT = null; }
         }
 
         /// <summary>

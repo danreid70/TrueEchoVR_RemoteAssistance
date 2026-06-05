@@ -214,12 +214,23 @@ namespace TEVR
 
             if (webAppManager == null) yield break;
 
-            // Step 0: Check Credentials
+            // Step 0: Check Credentials (HasCredentials becomes true only after a valid sign-in /
+            // headset registration, so this gates everything below behind a legitimate login).
             if (!webAppManager.HasCredentials)
             {
                 UIManager.Instance?.SetState(UIManager.UIState.Login);
                 while (!webAppManager.HasCredentials)
                     yield return null;
+            }
+
+            // Valid sign-in achieved -> leave the login-scan phase and begin the real RoomAnchor +
+            // item scan. Clear any leftover login-phase boxes so they don't linger as clutter.
+            if (qrManager != null)
+            {
+                qrManager.ClearAllVisuals();
+                qrManager.SetScanMode(QrCodeManager.ScanMode.Full);
+                qrManager.StartQRCodeDetection();
+                qrManager.EnsureQrTrackingEnabled();
             }
 
             // Step 1: Calibration (Room Anchor)
