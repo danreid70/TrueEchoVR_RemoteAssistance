@@ -1045,15 +1045,30 @@ else if (_isAnchorSet)
 
         // ---- Classification ----
 
+        /// <summary>The current active setup code. If set, this code is always classified as Target (green)
+        /// regardless of the current ScanMode.</summary>
+        public string recognizedSetupCode { get; set; }
+
         public QrMarkerCategory ClassifyPayload(string payload)
         {
             if (string.IsNullOrWhiteSpace(payload)) return QrMarkerCategory.Invalid;
             if (payload.Contains(qrRoomAnchorLabel)) return QrMarkerCategory.Target;     // RoomAnchor
             if (TryParseLoginCode(payload)) return QrMarkerCategory.Target;              // JSON login setup code
+
+            // Explicitly recognize the active setup code as a target.
+            if (!string.IsNullOrEmpty(recognizedSetupCode) && payload == recognizedSetupCode) return QrMarkerCategory.Target;
+
             if (_validPayloads.Contains(payload)) return QrMarkerCategory.ValidListed;   // known good
-            // Bare alphanumeric setup code (smallest QR). Only a Target during the SignIn phase so that
-            // short item codes in the Session phase are not all coloured green.
-            if (Mode != ScanMode.Full && IsBareSetupCode(payload)) return QrMarkerCategory.Target;
+
+            // Bare alphanumeric setup code (smallest QR). 
+            if (IsBareSetupCode(payload))
+            {
+                // REPLIT AI SUGGESTION: Recognize 8-char alphanumeric codes as Target.
+                // We mark 8-char codes as Target regardless of mode (most likely a setup code),
+                // but only use the heuristic for other lengths during the SignIn phase.
+                if (payload.Length == 8 || Mode != ScanMode.Full) return QrMarkerCategory.Target;
+            }
+
             if (payload.TrimStart().StartsWith("{")) return QrMarkerCategory.Invalid;    // looks like JSON but isn't a valid setup code
             return QrMarkerCategory.Unlisted;
         }

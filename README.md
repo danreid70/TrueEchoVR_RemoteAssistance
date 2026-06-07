@@ -126,7 +126,7 @@ Every detected code is classified and coloured by one scheme used everywhere (th
 
 | Colour | Category | Meaning |
 | --- | --- | --- |
-| 🟢 Green | **Target** | What the app is actively looking for — the **RoomAnchor**, or a valid **login setup code** (`{ "customerId": "...", "locationId": "..." }`). |
+| 🟢 Green | **Target** | What the app is actively looking for — the **RoomAnchor**, or a valid **login setup code** (e.g. `YT5A5XL3`). Bare 8-char alphanumeric codes are always Targets. |
 | 🔴 Red | **Invalid** | Empty/whitespace payload, or a JSON-looking payload that fails to parse into a setup code. |
 | 🔵 Blue | **ValidListed** | Payload is present in the server-provided **valid QR list**. |
 | 🟠 Orange | **Unlisted** | A readable code that is neither a target nor in the valid list. |

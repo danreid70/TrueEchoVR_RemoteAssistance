@@ -476,6 +476,7 @@ public RawImage remoteVideoImage;
             // Persist setupCode (+ apiBaseUrl only if the QR carried one) so a single scan survives restarts.
             // Does NOT touch BackendConfig.asset on disk.
             webAppManager.SaveSetupProvisioning(apiBaseUrlOrNull, setupCode);
+            if (qrManager != null) qrManager.recognizedSetupCode = setupCode;
             if (!string.IsNullOrEmpty(tokenOrNull))
                 webAppManager.SetAuthToken(tokenOrNull.Trim());
 
