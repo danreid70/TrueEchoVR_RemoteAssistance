@@ -185,6 +185,55 @@ public class QRPayloadAction
         private bool _isAnchorSet => RoomAnchorInstance != null;
         private List<CalibrationQRData> _dormantQRCodes = new List<CalibrationQRData>();
 
+        // ---- Meta Spatial Anchor (RoomAnchor persistence / auto-relocalization) ----
+        // HYBRID upgrade: the RoomAnchor zero-point is backed by a Meta OVRSpatialAnchor so it is
+        // drift-free and relocalizes automatically next launch (no QR re-scan). Item poses are STILL
+        // stored relative to RoomAnchorInstance.visualObject exactly as before, so the backend coordinate
+        // sync (REST + StartupData) is completely unchanged. This is single-headset persistence only
+        // (no Shared Spatial Anchors); the create/load/erase logic is isolated behind the methods below
+        // so a future Shared-Spatial-Anchor option can be added at that single boundary.
+        [Header("Spatial Anchor (Meta) — RoomAnchor persistence")]
+        [Tooltip("Back the RoomAnchor zero-point with a Meta OVRSpatialAnchor so it is drift-free and " +
+                 "relocalizes automatically on the next launch (no need to re-scan the RoomAnchor QR). " +
+                 "Item QR positions are still stored relative to the RoomAnchor and synced to the backend " +
+                 "exactly as before. Falls back to the plain-GameObject QR path in the Editor / when the " +
+                 "device does not support spatial anchors.")]
+        public bool useSpatialAnchor = true;
+
+        private const string RoomAnchorUuidPrefKey = "tevr_roomAnchorUuid";
+        private const string RoomAnchorPayloadPrefKey = "tevr_roomAnchorPayload";
+
+        // The live spatial anchor backing the RoomAnchor zero-point (null = using plain-GameObject fallback).
+        private OVRSpatialAnchor _roomSpatialAnchor;
+        // True once the RoomAnchor transform is (or is about to be) driven by the spatial anchor. While set,
+        // the live QR-follow update is skipped for the RoomAnchor so the anchor stays authoritative (drift-free).
+        private bool _roomAnchorDrivenBySpatialAnchor;
+        private bool _spatialAnchorBusy;                 // guards against overlapping create/save
+        private bool _spatialAnchorRelocalizeAttempted;  // relocalize-on-start runs at most once
+        // When relocalizing on start, the disk RoomAnchor is deferred (kept as a fallback) so the
+        // spatial anchor can be the authority; restored only if relocalization fails.
+        private bool _deferRoomAnchorToSpatialAnchor;
+        private SerializableQRData _deferredDiskAnchor;
+
+        /// <summary>
+        /// Whether device-only Meta spatial-anchor APIs should be used. False in the Editor (XR Simulator)
+        /// so play mode never calls device-only APIs — the existing plain-GameObject QR path is used instead.
+        /// </summary>
+        private bool SpatialAnchorsSupported
+        {
+            get
+            {
+#if UNITY_EDITOR
+                return false;
+#else
+                return useSpatialAnchor;
+#endif
+            }
+        }
+
+        private bool HasStoredRoomAnchorUuid()
+            => Guid.TryParse(PlayerPrefs.GetString(RoomAnchorUuidPrefKey, ""), out _);
+
         // QR marker payloads are frequently NOT decoded on the same frame MRUK raises TrackableAdded;
         // the string arrives a few frames later. We defer such trackables here and re-read the payload
         // in Update() so we never process a QR with an empty payload. (This was the cause of "it read
@@ -294,7 +343,16 @@ public class QRPayloadAction
 
         private void Start()
         {
+            // If the RoomAnchor is persisted as a Meta spatial anchor (and supported), defer the disk-based
+            // RoomAnchor restore so the relocalized spatial anchor becomes the authoritative, drift-free
+            // zero-point. The disk anchor is only used as a fallback if relocalization fails.
+            _deferRoomAnchorToSpatialAnchor = SpatialAnchorsSupported && HasStoredRoomAnchorUuid();
+
             if (autoSaveLoad) LoadFromDiskAndRestore();
+
+            // Re-establish the RoomAnchor from its stored Meta spatial anchor (no QR re-scan required).
+            // No-op in the Editor / when unsupported / when no UUID is stored — the QR-scan path remains.
+            TryRelocalizeRoomSpatialAnchorOnStart();
 
             // CRITICAL: Quest QR / trackable detection needs the scene permission granted at RUNTIME.
             // Declaring it in the AndroidManifest is not enough — without this request MRUK receives
@@ -394,6 +452,10 @@ public class QRPayloadAction
 
             foreach (var inst in _trackedQRCodes.Values)
             {
+                // The spatial-anchored RoomAnchor is driven by the OVRSpatialAnchor (drift-free); never
+                // override its transform with the live QR pose.
+                if (inst == RoomAnchorInstance && _roomAnchorDrivenBySpatialAnchor) continue;
+
                 if (inst.trackable != null && inst.visualObject != null)
                 {
                     Vector3 tPos = inst.trackable.transform.position;
@@ -472,6 +534,11 @@ public class QRPayloadAction
             }
             _trackedQRCodes.Clear();
             RoomAnchorInstance = null;
+            // The RoomAnchor visual (with its OVRSpatialAnchor component) was destroyed above; drop the stale
+            // runtime reference. The persisted UUID is intentionally left so it can relocalize next launch
+            // (use ClearRoomSpatialAnchor() to erase persistence for re-calibration).
+            _roomSpatialAnchor = null;
+            _roomAnchorDrivenBySpatialAnchor = false;
             RequestSave();
         }
 
@@ -504,6 +571,10 @@ public class QRPayloadAction
             _trackedQRCodes.Clear();
             _dormantQRCodes.Clear();
             RoomAnchorInstance = null;
+            // Drop the stale spatial-anchor reference (its GameObject was destroyed above). Persistence is
+            // intentionally preserved; call ClearRoomSpatialAnchor() to erase it for re-calibration.
+            _roomSpatialAnchor = null;
+            _roomAnchorDrivenBySpatialAnchor = false;
             RequestSave();
         }
 
@@ -524,6 +595,32 @@ public class QRPayloadAction
                 list.Add(new CalibrationQRData { qrValue = inst.fullPayload, position = pos, rotation = rot });
             }
             return JsonUtility.ToJson(new CalibrationWrapper { headsetId = headsetId, qrCodes = list });
+        }
+
+        /// <summary>
+        /// Resolves a remote "point-to"/"look-at" command to a locally-tracked QR code. Matches by exact QR
+        /// payload (qrValue) first — the most reliable identity, since the dictionary is keyed by the payload —
+        /// then by identifierKey/payload equality, then by a payload substring (friendly-name fallback).
+        /// Returns null when no locally-represented code matches.
+        /// </summary>
+        public QRCodeInstance FindTrackedQRCode(string qrValue, string name)
+        {
+            // 1) Exact payload value (canonical lookup: the dictionary key is the truncated payload).
+            if (!string.IsNullOrEmpty(qrValue))
+            {
+                if (_trackedQRCodes.TryGetValue(GetIdentifierKey(qrValue), out var byKey)) return byKey;
+                foreach (var inst in _trackedQRCodes.Values)
+                    if (inst.fullPayload == qrValue) return inst;
+            }
+            // 2) Friendly name / identifier-key equality, then a payload substring fallback.
+            if (!string.IsNullOrEmpty(name))
+            {
+                foreach (var inst in _trackedQRCodes.Values)
+                    if (inst.identifierKey == name || inst.fullPayload == name) return inst;
+                foreach (var inst in _trackedQRCodes.Values)
+                    if (!string.IsNullOrEmpty(inst.fullPayload) && inst.fullPayload.Contains(name)) return inst;
+            }
+            return null;
         }
 
         public void UpdateQRCodeFromRemote(string payload, Vector3 pos, Quaternion rot)
@@ -637,7 +734,10 @@ else if (_isAnchorSet)
             if (_trackedQRCodes.TryGetValue(key, out QRCodeInstance existing))
             {
                 existing.trackable = trackable;
-                if (existing.visualObject != null)
+                // When the RoomAnchor is backed by a Meta spatial anchor, the anchor is authoritative —
+                // do NOT snap its visual to the live QR pose (that would reintroduce drift).
+                bool anchorDriven = isAnchor && _roomAnchorDrivenBySpatialAnchor;
+                if (existing.visualObject != null && !anchorDriven)
                 {
                     Quaternion cRot = trackable.transform.rotation * Quaternion.Euler(0, 180, 0);
                     existing.visualObject.transform.SetPositionAndRotation(trackable.transform.position, cRot);
@@ -645,7 +745,13 @@ else if (_isAnchorSet)
                     existing.lastRotation = cRot;
                     UpdateTextOnObject(existing.visualObject, fullPayload);
                 }
-                if (isAnchor) { RoomAnchorInstance = existing; OnRoomAnchorDiscovered?.Invoke(existing); ActivateDormantQRCodes(); }
+                if (isAnchor)
+                {
+                    RoomAnchorInstance = existing;
+                    OnRoomAnchorDiscovered?.Invoke(existing);
+                    ActivateDormantQRCodes();
+                    TryPersistRoomAnchorAsSpatialAnchor(); // persists once; no-op if already anchored
+                }
                 OnQRCodeUpdated?.Invoke(existing);
                 return;
             }
@@ -658,6 +764,9 @@ else if (_isAnchorSet)
                 RoomAnchorInstance.trackable = trackable;
                 OnRoomAnchorDiscovered?.Invoke(RoomAnchorInstance);
                 ActivateDormantQRCodes();
+                // HYBRID: back this fresh RoomAnchor with a persisted Meta spatial anchor (drift-free +
+                // auto-relocalize next launch). No-op in Editor / when unsupported. Backend sync unaffected.
+                TryPersistRoomAnchorAsSpatialAnchor();
             }
             else if (_isAnchorSet)
             {
@@ -929,6 +1038,10 @@ else if (_isAnchorSet)
         }
 
         public bool IsValidListed(string payload) => !string.IsNullOrEmpty(payload) && _validPayloads.Contains(payload);
+
+        /// <summary>Read-only view of the server-provided "legit" payload pool, for UI listing
+        /// (e.g. showing list entries that have not yet been discovered locally).</summary>
+        public System.Collections.Generic.IReadOnlyCollection<string> ValidPayloads => _validPayloads;
 
         // ---- Classification ----
 
@@ -1451,6 +1564,218 @@ else if (_isAnchorSet)
             }
         }
 
+        #region Meta Spatial Anchor (RoomAnchor persistence)
+
+        // All device-only Meta OVRSpatialAnchor calls live here, guarded by SpatialAnchorsSupported and
+        // try/catch so the project compiles and runs in the Editor (where these calls are skipped and the
+        // existing plain-GameObject QR path is used). This is the single boundary where a future
+        // Shared-Spatial-Anchor option would be added.
+
+        /// <summary>
+        /// Persists the freshly-detected RoomAnchor as a Meta OVRSpatialAnchor: adds the component to the
+        /// existing RoomAnchor zero-point GameObject (so its current pose — including the visual orientation
+        /// captured at scan time — becomes the anchor pose), waits for localization, saves it, and stores the
+        /// UUID + payload in PlayerPrefs. The visual frame is unchanged, so backend item coordinates (stored
+        /// relative to RoomAnchorInstance.visualObject) are preserved exactly. No-op in the Editor / when
+        /// unsupported / when an anchor already backs the RoomAnchor.
+        /// </summary>
+        private async void TryPersistRoomAnchorAsSpatialAnchor()
+        {
+            if (!SpatialAnchorsSupported) return;
+            if (_spatialAnchorBusy || _roomSpatialAnchor != null) return;
+            if (RoomAnchorInstance == null || RoomAnchorInstance.visualObject == null) return;
+
+            _spatialAnchorBusy = true;
+            // Pin the RoomAnchor immediately so the per-frame QR-follow does not move it while the anchor
+            // is being created (the anchor adopts the GameObject pose at creation time).
+            _roomAnchorDrivenBySpatialAnchor = true;
+
+            OVRSpatialAnchor sa = null;
+            try
+            {
+                GameObject go = RoomAnchorInstance.visualObject;
+                sa = go.GetComponent<OVRSpatialAnchor>();
+                if (sa == null) sa = go.AddComponent<OVRSpatialAnchor>();
+
+                if (!await sa.WhenLocalizedAsync())
+                {
+                    Debug.LogWarning("[QrCodeManager] RoomAnchor spatial anchor failed to create/localize; " +
+                                     "falling back to plain QR tracking.");
+                    if (sa != null) Destroy(sa);
+                    _roomAnchorDrivenBySpatialAnchor = false; // resume live QR-follow fallback
+                    return;
+                }
+
+                var save = await sa.SaveAnchorAsync();
+                if (!save.Success)
+                {
+                    Debug.LogWarning("[QrCodeManager] RoomAnchor SaveAnchorAsync failed: " + save.Status +
+                                     " — keeping live anchor for this session but not persisted.");
+                    _roomSpatialAnchor = sa; // still drift-free this session
+                    return;
+                }
+
+                _roomSpatialAnchor = sa;
+                PlayerPrefs.SetString(RoomAnchorUuidPrefKey, sa.Uuid.ToString());
+                PlayerPrefs.SetString(RoomAnchorPayloadPrefKey, RoomAnchorInstance.fullPayload ?? qrRoomAnchorLabel);
+                PlayerPrefs.Save();
+                Debug.Log("[QrCodeManager] RoomAnchor persisted as Meta spatial anchor. Uuid=" + sa.Uuid);
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning("[QrCodeManager] RoomAnchor spatial-anchor persist error: " + e.Message +
+                                 " — falling back to plain QR tracking.");
+                if (_roomSpatialAnchor == null) _roomAnchorDrivenBySpatialAnchor = false;
+            }
+            finally
+            {
+                _spatialAnchorBusy = false;
+            }
+        }
+
+        /// <summary>
+        /// On session start, re-establishes the RoomAnchor from its stored Meta spatial anchor so the user
+        /// does NOT have to re-scan the RoomAnchor QR. On failure (or when unsupported / no UUID), falls back
+        /// to the existing behavior: restore the disk RoomAnchor if one was deferred, otherwise leave the
+        /// QR-scan path to establish it. Runs at most once.
+        /// </summary>
+        private async void TryRelocalizeRoomSpatialAnchorOnStart()
+        {
+            if (_spatialAnchorRelocalizeAttempted) return;
+            _spatialAnchorRelocalizeAttempted = true;
+
+            if (!SpatialAnchorsSupported || !HasStoredRoomAnchorUuid() || _isAnchorSet)
+            {
+                RestoreDeferredDiskAnchorIfAny();
+                return;
+            }
+
+            bool ok = false;
+            try
+            {
+                ok = await RelocalizeRoomSpatialAnchorAsync();
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning("[QrCodeManager] RoomAnchor relocalization error: " + e.Message);
+                ok = false;
+            }
+
+            if (!ok)
+            {
+                Debug.Log("[QrCodeManager] RoomAnchor relocalization unavailable — falling back " +
+                          "(disk restore / QR re-scan).");
+                RestoreDeferredDiskAnchorIfAny();
+            }
+        }
+
+        /// <summary>Loads, localizes and binds the stored RoomAnchor spatial anchor, then re-establishes the
+        /// RoomAnchor zero-point at its physical pose and activates any dormant item codes.</summary>
+        private async System.Threading.Tasks.Task<bool> RelocalizeRoomSpatialAnchorAsync()
+        {
+            if (!Guid.TryParse(PlayerPrefs.GetString(RoomAnchorUuidPrefKey, ""), out var uuid))
+                return false;
+
+            string payload = PlayerPrefs.GetString(RoomAnchorPayloadPrefKey, qrRoomAnchorLabel);
+
+            var unbound = new List<OVRSpatialAnchor.UnboundAnchor>();
+            var result = await OVRSpatialAnchor.LoadUnboundAnchorsAsync(new[] { uuid }, unbound);
+            if (!result.Success || unbound.Count == 0)
+            {
+                Debug.LogWarning("[QrCodeManager] LoadUnboundAnchorsAsync failed/empty: " + result.Status);
+                return false;
+            }
+
+            var ua = unbound[0];
+            if (!ua.Localized && !await ua.LocalizeAsync())
+            {
+                Debug.LogWarning("[QrCodeManager] RoomAnchor LocalizeAsync failed for Uuid=" + ua.Uuid);
+                return false;
+            }
+
+            if (!ua.TryGetPose(out var pose))
+            {
+                Debug.LogWarning("[QrCodeManager] RoomAnchor TryGetPose failed for Uuid=" + ua.Uuid);
+                return false;
+            }
+
+            // Build the RoomAnchor zero-point visual, then bind the spatial anchor to it. The spatial-anchor
+            // frame is authoritative (it already encodes the orientation captured at save time), so we use the
+            // anchor pose directly rather than the extra visual flip CreateVisualObject applies for a live scan.
+            GameObject root = CreateVisualObject(payload, pose.position, pose.rotation, QRStatus.Official,
+                                                 new Vector3(0.15f, 0.15f, 0.005f), false);
+            root.transform.SetPositionAndRotation(pose.position, pose.rotation);
+
+            var sa = root.AddComponent<OVRSpatialAnchor>();
+            ua.BindTo(sa);
+            _roomSpatialAnchor = sa;
+            _roomAnchorDrivenBySpatialAnchor = true;
+
+            string key = GetIdentifierKey(payload);
+            var instance = new QRCodeInstance
+            {
+                visualObject = root,
+                fullPayload = payload,
+                identifierKey = key,
+                lastPosition = pose.position,
+                lastRotation = pose.rotation,
+                status = QRStatus.Official
+            };
+            _trackedQRCodes[key] = instance;
+            RoomAnchorInstance = instance;
+            _deferredDiskAnchor = null; // relocalization succeeded; disk fallback no longer needed
+
+            OnQRCodeAdded?.Invoke(instance);
+            OnRoomAnchorDiscovered?.Invoke(instance);
+            ActivateDormantQRCodes();
+
+            Debug.Log("[QrCodeManager] RoomAnchor relocalized from Meta spatial anchor. Uuid=" + uuid);
+            return true;
+        }
+
+        /// <summary>Restores the deferred disk RoomAnchor (existing behavior) when spatial-anchor
+        /// relocalization did not run or failed, so item codes still appear without a spatial anchor.</summary>
+        private void RestoreDeferredDiskAnchorIfAny()
+        {
+            if (_deferredDiskAnchor == null || _isAnchorSet) { _deferredDiskAnchor = null; return; }
+            var a = _deferredDiskAnchor;
+            _deferredDiskAnchor = null;
+            UpdateQRCodeFromRemote(a.fullPayload, a.position, a.rotation);
+        }
+
+        /// <summary>
+        /// Clears/erases the persisted RoomAnchor spatial anchor and its stored UUID for re-calibration.
+        /// After this, the next RoomAnchor QR scan establishes (and re-persists) a fresh spatial anchor.
+        /// </summary>
+        public async void ClearRoomSpatialAnchor()
+        {
+            try
+            {
+                if (_roomSpatialAnchor != null && SpatialAnchorsSupported)
+                {
+                    var res = await _roomSpatialAnchor.EraseAnchorAsync();
+                    if (!res.Success)
+                        Debug.LogWarning("[QrCodeManager] EraseAnchorAsync failed: " + res.Status);
+                }
+                if (_roomSpatialAnchor != null) Destroy(_roomSpatialAnchor);
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning("[QrCodeManager] ClearRoomSpatialAnchor error: " + e.Message);
+            }
+            finally
+            {
+                _roomSpatialAnchor = null;
+                _roomAnchorDrivenBySpatialAnchor = false;
+                PlayerPrefs.DeleteKey(RoomAnchorUuidPrefKey);
+                PlayerPrefs.DeleteKey(RoomAnchorPayloadPrefKey);
+                PlayerPrefs.Save();
+                Debug.Log("[QrCodeManager] Cleared persisted RoomAnchor spatial anchor.");
+            }
+        }
+
+        #endregion
+
         private void SaveToDisk()
         {
             var list = new List<SerializableQRData>();
@@ -1473,7 +1798,16 @@ else if (_isAnchorSet)
                 Wrapper w = JsonUtility.FromJson<Wrapper>(File.ReadAllText(path));
                 if (w?.data == null) return;
                 var anchor = w.data.Find(d => d.fullPayload.Contains(qrRoomAnchorLabel));
-                if (anchor != null) UpdateQRCodeFromRemote(anchor.fullPayload, anchor.position, anchor.rotation);
+                // When the RoomAnchor will be relocalized from its Meta spatial anchor, defer establishing it
+                // from disk (the spatial anchor is authoritative). Keep it as a fallback if relocalization fails.
+                if (anchor != null && _deferRoomAnchorToSpatialAnchor)
+                {
+                    _deferredDiskAnchor = anchor;
+                }
+                else if (anchor != null)
+                {
+                    UpdateQRCodeFromRemote(anchor.fullPayload, anchor.position, anchor.rotation);
+                }
                 foreach (var it in w.data) { if (it == anchor) continue; if (_isAnchorSet) UpdateQRCodeFromRemote(it.fullPayload, it.position, it.rotation); else _dormantQRCodes.Add(new CalibrationQRData { qrValue = it.fullPayload, position = it.position, rotation = it.rotation }); }
             } catch (Exception e) { Debug.LogError(e.Message); }
         }

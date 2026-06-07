@@ -111,7 +111,10 @@ namespace TEVR
         public Action OnDisconnected;
         public Action<string> OnConnectionError;
         public Action<string> OnChatMessageReceived;
-        public Action<string, Vector3?, Quaternion?> OnPointToReceived;
+        // (name, qrCode, position, rotation). qrCode is the QR payload value — the most reliable id for
+        // cross-referencing a locally-tracked code; name is the human-friendly label. position/rotation are
+        // null unless the admin's "point-to"/"look-at" command included real-world coordinates.
+        public Action<string, string, Vector3?, Quaternion?> OnPointToReceived;
         public Action<StartupData> OnStartupDataReceived;
         public Action<Texture> OnRemoteStreamStarted;
         public Action<Texture> OnLocalStreamStarted;
@@ -674,7 +677,7 @@ namespace TEVR
                     var pt = JsonUtility.FromJson<PointToPayload>(payload);
                     Vector3? pos = null; Quaternion? rot = null;
                     if (pt.pose != null && pt.pose.position != Vector3.zero) { pos = pt.pose.position; rot = pt.pose.rotation; }
-                    OnPointToReceived?.Invoke(pt.name, pos, rot); 
+                    OnPointToReceived?.Invoke(pt.name, pt.qrCode, pos, rot); 
                     break;
             }
         }

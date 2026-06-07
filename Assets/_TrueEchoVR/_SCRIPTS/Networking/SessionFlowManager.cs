@@ -24,9 +24,16 @@ namespace TEVR
 
         private void Start()
         {
-            if (qrManager == null) qrManager = GetComponent<QrCodeManager>();
-            if (statusUI == null) statusUI = GetComponent<VrHudController>();
-            if (uiManager == null) uiManager = GetComponent<SessionUiController>();
+            // These collaborators live on OTHER GameObjects (the MRUK QR manager and the UI system), not on
+            // this manager object, so a same-GameObject GetComponent resolves to null — which silently broke
+            // PointToQRCode (no focus glow because qrManager was null, no directional arrow because statusUI
+            // was null). Resolve via the QrCodeManager singleton and scene-wide lookups (include inactive).
+            if (qrManager == null)
+                qrManager = QrCodeManager.Instance != null
+                    ? QrCodeManager.Instance
+                    : FindAnyObjectByType<QrCodeManager>(FindObjectsInactive.Include);
+            if (statusUI == null) statusUI = FindAnyObjectByType<VrHudController>(FindObjectsInactive.Include);
+            if (uiManager == null) uiManager = FindAnyObjectByType<SessionUiController>(FindObjectsInactive.Include);
             if (webAppManager == null) webAppManager = SignalingManager.Instance;
             
             if (xrOrigin == null)
@@ -169,42 +176,57 @@ namespace TEVR
             qrManager.OnQRCodeRemoved += OnQRCodeRemovedNormal;
         }
 
-        private void OnRemotePointToReceived(string name, Vector3? position, Quaternion? rotation)
+        /// <summary>
+        /// Handles a remote "point-to"/"look-at" command from the admin/web app. Mirrors the dropdown
+        /// behaviour: whenever the referenced code exists locally, it is pointed at with the directional
+        /// arrow + pulsing focus glow on the real code (cross-referenced by QR payload value first, then by
+        /// friendly name). Only when the code is NOT represented locally does it fall back to the dedicated
+        /// position highlight at the admin-supplied coordinates.
+        /// </summary>
+        private void OnRemotePointToReceived(string name, string qrCode, Vector3? position, Quaternion? rotation)
         {
-            // An empty point-to with no coordinates means the admin cleared the selection.
-            if (string.IsNullOrEmpty(name) && !position.HasValue)
+            // An empty point-to (no name, no qrCode, no coordinates) means the admin cleared the selection.
+            if (string.IsNullOrEmpty(name) && string.IsNullOrEmpty(qrCode) && !position.HasValue)
             {
                 qrManager?.ClearFocus();
+                statusUI?.ClearHighlight();
+                UIManager.Instance?.remoteHighlight?.ClearForce();
                 statusUI?.ShowMessage("", "");
                 return;
             }
 
+            // 1) Preferred: cross-reference a locally-represented QR code and point at it exactly like the
+            //    dropdown does (arrow + pulsing focus glow on the real code).
+            var match = qrManager != null ? qrManager.FindTrackedQRCode(qrCode, name) : null;
+            if (match != null)
+            {
+                UIManager.Instance?.remoteHighlight?.ClearForce(); // avoid a duplicate position highlight
+                PointToQRCode(match);
+                string label = !string.IsNullOrEmpty(name) ? name : match.identifierKey;
+                statusUI?.ShowMessage($"Admin pointing to: {label}", match.fullPayload);
+                return;
+            }
+
+            // 2) Not represented locally yet, but the admin supplied coordinates -> indicate at those
+            //    real-world coordinates with the dedicated position highlight (outline + billboard label).
             if (position.HasValue)
             {
-                // Enriched point-to with real-world coordinates (separate highlight system).
                 qrManager?.ClearFocus();
+                string label = !string.IsNullOrEmpty(name) ? name : qrCode;
                 UIManager.Instance?.remoteHighlight?.HighlightPosition(
-                    name, 
-                    position.Value, 
+                    label,
+                    position.Value,
                     rotation ?? Quaternion.identity
                 );
-                
-                statusUI?.ShowMessage($"Admin pointing to: {name}", "Visual highlight active.");
+                statusUI?.ShowMessage($"Admin pointing to: {label}", "Visual highlight active.");
+                return;
             }
-            else
-            {
-                // Fallback: search for local QR by name
-                foreach (var kvp in qrManager.TrackedQRCodes)
-                {
-                    if (kvp.Value.identifierKey == name || kvp.Value.fullPayload.Contains(name))
-                    {
-                        PointToQRCode(kvp.Value);
-                        return;
-                    }
-                }
-                qrManager?.ClearFocus();
-                statusUI?.ShowMessage($"Admin pointing to: {name}", "(Object not found in room)");
-            }
+
+            // 3) Nothing locally and no coordinates -> nothing to point at.
+            qrManager?.ClearFocus();
+            statusUI?.ClearHighlight();
+            string n = !string.IsNullOrEmpty(name) ? name : qrCode;
+            statusUI?.ShowMessage($"Admin pointing to: {n}", "(Object not found in room)");
         }
 
         private IEnumerator InitializationPhase()
@@ -346,9 +368,14 @@ namespace TEVR
             if (qr == null) return;
             // Surround the pointed-at code with the pulsing focus glow until the selection is cleared.
             qrManager?.FocusQRCode(qr);
-            if (qr.visualObject != null)
+
+            // Point the directional arrow at the code's visual object if it has one, otherwise at its live
+            // trackable (a physically-tracked code that has not yet been given a placed visual).
+            Transform target = qr.visualObject != null ? qr.visualObject.transform
+                             : (qr.trackable != null ? qr.trackable.transform : null);
+            if (target != null)
             {
-                statusUI?.HighlightTarget(qr.visualObject.transform);
+                statusUI?.HighlightTarget(target);
                 statusUI?.ShowMessage($"Pointing to: {qr.identifierKey}", qr.fullPayload);
             }
         }

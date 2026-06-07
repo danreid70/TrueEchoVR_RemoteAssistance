@@ -1,6 +1,8 @@
-# TrueEchoVR SignalingManager Synchronization Protocol (v2.1 - RemoteAssistance)
+# TrueEchoVR SignalingManager Synchronization Protocol (v2.2 - RemoteAssistance)
 
-This document outlines the communication protocol between the Unity application (TrueEchoVR) and the Replit backend. This is used by the **SignalingManager** to coordinate WebRTC, chat, and spatial data.
+This document outlines the communication protocol between the Unity application (TrueEchoVR) and the Replit backend. This is used by the **SignalingManager** to coordinate WebRTC, chat, and spatial data. Payload shapes below were verified directly against `SignalingManager.cs` / `SessionUiController.cs` / `QrCodeManager.cs`.
+
+> **Note on the Meta Spatial Anchor upgrade:** the RoomAnchor is now persisted on-device as a Meta `OVRSpatialAnchor` (drift-free, auto-relocalizing). This is a **device-local** change only — QR poses are still expressed relative to the RoomAnchor and synced exactly as documented here. **This protocol/contract is unchanged by that upgrade.** For a backend-implementer-focused spec, see `BACKEND_CONTRACT.md`.
 
 ## 1. Connection Endpoints
 The base URL is **stored on the device** (`BackendConfig.apiHost` default, overridable via the Login panel's Backend URL field and persisted to `tevr_apiBaseUrl`). `SignalingManager.SetBackendUrl` splits a trailing `/api` into `apiPath` so REST and the root-level WebSocket both resolve correctly. Example (default):
@@ -25,33 +27,91 @@ Engine.IO v4 is **server-driven**:
 > Debugging: set `SignalingManager.verboseSocketLogging = true` to log every raw packet (`=>` sent / `<=` received). The editor harness **Tools ▸ TEVR ▸ Signaling Tester** lets you connect to a room code and watch `WebSocket Open`, `Socket.IO Connected (40 ack)`, and latency live — on desktop, no headset required.
 
 ### Outgoing (Unity to Replit)
+Every application event is framed `42["event-name", { ...singleJsonObject }]`. Exact payload shapes (these are produced by `JsonUtility`, so field names and nesting must match **exactly**):
+
 | Event Name | Payload Structure | Description |
 | :--- | :--- | :--- |
-| `join-room` | `{ "role": "headset", "roomCode": "STR", "locationId": "STR" }` | Headset registration. |
-| `chat-message` | `{ "text": "STR" }` | Text message sent by user. |
-| `answer` | `{ "offer": { "sdp": "STR", "type": "answer" }, "targetSocketId": "STR" }` | WebRTC Answer targeting the Admin. |
-| `ice-candidate`| `{ "candidate": "STR", "sdpMid": "STR", "sdpMLineIndex": INT, "targetSocketId": "STR" }` | WebRTC ICE candidate data. |
-| `health-update` | `{ "batteryLevel": INT, "calibrated": BOOL, "headsetId": "STR", "locationId": "STR", "timestamp": "ISO-8601" }` | periodic system health telemetry. |
+| `join-room` | `{ "role": "headset", "roomCode": "STR", "locationId": "STR" }` | Sent once, immediately after the `40` namespace ack. |
+| `chat-message` | `{ "roomCode": "STR", "message": "STR", "senderRole": "headset" }` | Text message sent by the operator. (Field is `message`, **not** `text`.) |
+| `answer` | `{ "roomCode": "STR", "answer": { "sdp": "STR", "type": "answer" }, "targetSocketId": "STR" }` | WebRTC SDP answer targeting the expert. (Key is `answer`.) |
+| `ice-candidate`| `{ "roomCode": "STR", "candidate": { "candidate": "STR", "sdpMid": "STR", "sdpMLineIndex": INT }, "targetSocketId": "STR" }` | ICE candidate (nested under `candidate`). |
+| `health-update` | `{ "roomCode": "STR", "batteryLevel": INT, "calibrated": BOOL, "headsetId": "STR", "locationId": "STR", "timestamp": "ISO-8601" }` | Periodic telemetry, every **60 s** while connected. |
 
 ### Incoming (Replit to Unity)
+Unity's parser (`ProcessIncomingMessage`) reads `42["event-name", { singleObject }]` and only handles the four events below. Any other event name is ignored. Each event must carry **exactly one** JSON object as its argument.
+
 | Event Name | Payload Structure | Description |
 | :--- | :--- | :--- |
-| `peer-joined` | `{ "role": "admin", "socketId": "STR" }` | Admin connection notification. |
-| `offer` | `{ "offer": { "sdp": "STR", "type": "offer" }, "fromSocketId": "STR" }` | WebRTC SDP offer from expert console. |
-| `chat-message` | `{ "text": "STR" }` | Text message from expert console. |
-| `point-to` | `{ "name": "STR", "qrCode": "STR", "pose": { "position": VEC3, "rotation": QUAT } }` | Enriched calibration-aware highlight command. |
-| `pull-qrcodes` | `{...payload}` | Request to refresh local QR data. |
+| `peer-joined` | `{ "role": "admin", "socketId": "STR" }` | Expert connected; `socketId` becomes the WebRTC target. |
+| `offer` | `{ "offer": { "sdp": "STR", "type": "offer" }, "fromSocketId": "STR" }` | WebRTC SDP offer from the expert console. |
+| `chat-message` | `{ "message": "STR" }` | Text from the expert. Unity reads `message` (extra fields ignored). |
+| `point-to` | `{ "name": "STR", "qrCode": "STR", "pose": { "position": {"x":F,"y":F,"z":F}, "rotation": {"x":F,"y":F,"z":F,"w":F} } }` | "Look-at" command — see resolution rules below. |
+
+**`point-to` resolution (headset side, `SessionFlowManager.OnRemotePointToReceived`):**
+1. **Cross-reference a local code first.** The client matches the command to a locally-tracked QR code by **`qrCode`** (the exact QR payload value — most reliable) and then by **`name`**. If found, it points at the *real code* with the directional arrow **and** the pulsing focus glow — identical to selecting it from the dropdown. `pose` is **not required** for this; sending just `qrCode` (or `name`) is enough.
+2. **Coordinate fallback.** If the code is **not** locally represented but a non-zero `pose.position` is supplied, the client shows the position highlight (outline + billboard label) at those RoomAnchor-relative coordinates.
+3. **Clear.** A command with **no `name`, no `qrCode`, and no `position`** clears the current highlight.
+> Recommendation: always include `qrCode` (the payload value). `name` is the friendly label used for the on-HUD message and as a secondary match key.
+
+> **Not implemented headset-side:** there is no `pull-qrcodes` socket handler. The headset pulls calibration over REST (`GET /api/locations/{id}/qr-codes`) when the operator taps **Pull**; do not rely on a socket push to refresh QR data.
 
 ## 3. Data Persistence (REST API)
-Persistence is handled via standard HTTP requests to the Replit API.
+Persistence is handled via HTTP requests to `{apiHost}{apiPath}` (default `https://live-troubleshooting-app.replit.app/api`). Implemented in `SignalingManager.SendRequest`.
 
-| Method | Endpoint | Description |
+### Required headers (on EVERY request)
+| Header | Value | Notes |
 | :--- | :--- | :--- |
-| `GET` | `/api/setup/{setupCode}` | **Resolves a Sign In setup code** → `{ customerId, locationId, roomCode? }`. Drives the minimal-QR handshake (see §6). |
-| `GET` | `/api/headsets/{id}/startup-data` | Fetches name dictionary + spatial QRs. |
-| `POST` | `/api/headsets/register` | Registers the device → `{ id }` (headset id). |
-| `POST` | `/api/locations/{id}/qr-codes` | Uploads current location calibration (Atomic). |
-| `GET` | `/api/locations/{id}/qr-codes` | Fetches latest calibration for a location. |
+| `Content-Type` | `application/json` | |
+| `X-Requested-With` | `XMLHttpRequest` | **Required.** The backend's AJAX/CSRF guard returns **HTTP 403** without it. |
+| `Authorization` | `Bearer {token}` | Sent when a token is available (from `GET /api/setup/{code}`, persisted as `TEVR_AUTH_TOKEN`). |
+
+### Behaviour
+- **Retries:** each request is attempted up to **3 times** with a **2 s** delay between attempts.
+- **Credential invalidation:** a `startup-data` response of **404 or 403** causes the headset to clear stored credentials and fall back to Demo Mode.
+- **Vector/Quaternion JSON:** Unity `JsonUtility` serialises `Vector3` as `{ "x":F, "y":F, "z":F }` and `Quaternion` as `{ "x":F, "y":F, "z":F, "w":F }`. The backend must use these exact field names and nesting or the headset cannot parse them.
+
+### Endpoints
+| Method | Endpoint | Request body | Success response |
+| :--- | :--- | :--- | :--- |
+| `GET` | `/api/setup/{setupCode}` | — | `{ "customerId": "STR", "locationId": "STR", "roomCode": "STR"?, "token": "STR" }` — the **`token`** is the bearer used by `register` and `startup-data`. |
+| `POST` | `/api/headsets/register` | `{ "serialNumber": "STR", "customerId": "STR", "firmwareVersion": "STR", "label": "STR" }` | `{ "id": "STR", "serialNumber": "STR", "label": "STR", "customerId": "STR", "customerName": "STR" }` — `id` becomes `headsetId`. |
+| `GET` | `/api/headsets/{id}/startup-data?locationId={locationId}` | — | `StartupData` (see §3a). |
+| `POST` | `/api/locations/{id}/qr-codes` | `CalibrationUpload` (see §3b) | any 2xx. Uploads the operator's local calibration. |
+| `GET` | `/api/locations/{id}/qr-codes` | — | `CalibrationUpload` (same shape; applied on **Pull**). |
+
+### 3a. `StartupData` (GET startup-data response)
+```jsonc
+{
+  "locationId": "STR",
+  "locationName": "STR",
+  "version": "STR",                 // optional version tag for context isolation
+  "qrCodes": [                       // authoritative "legit" QR list (also feeds the dropdown + classifier)
+    {
+      "qrValue": "STR",             // the QR payload string (the identity used for matching)
+      "name": "STR",               // human-friendly label
+      "position": { "x":0, "y":0, "z":0 },     // pose RELATIVE to the RoomAnchor
+      "rotation": { "x":0, "y":0, "z":0, "w":1 },
+      "metadata": "STR"            // optional, free-form
+    }
+  ],
+  "nameDictionary": [ { "qrValue": "STR", "name": "STR" } ]
+}
+```
+
+### 3b. `CalibrationUpload` (POST/GET locations/{id}/qr-codes)
+```jsonc
+{
+  "headsetId": "STR",
+  "qrCodes": [
+    {
+      "qrValue": "STR",
+      "position": { "x":0, "y":0, "z":0 },     // RELATIVE to the RoomAnchor (item) / world (RoomAnchor itself)
+      "rotation": { "x":0, "y":0, "z":0, "w":1 }
+    }
+  ]
+}
+```
+> Poses are stored **relative to the RoomAnchor** zero-point (except the RoomAnchor entry itself). This relative frame is what makes the data portable to the web dashboard and is preserved unchanged by the on-device Meta Spatial Anchor upgrade.
 
 ## 4. WebRTC Requirements
 - **Capture:** Quest 3 hardware prevents direct raw camera access; Unity sends a **Capture RenderTexture** (B8G8R8A8_SRGB format).

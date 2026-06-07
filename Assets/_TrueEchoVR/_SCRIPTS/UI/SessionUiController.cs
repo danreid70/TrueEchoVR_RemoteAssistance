@@ -11,13 +11,9 @@ namespace TEVR
     {
         [Header("UI References (assign in Inspector)")]
         public GameObject sessionUIPanel;
-        public GameObject joinPanel;
         public GameObject sessionPanel;
 
         public TMP_InputField roomCodeInput;
-        public Button joinButton;
-        public TMP_Text joinButtonText; // Reference to button's label
-        public TMP_Text joinStatusText; // Status message in Join Panel
         public TMP_Text sessionStatusText; // Status message in Session Panel
 
         public TMP_Text connectionStatusText;
@@ -32,9 +28,6 @@ public RawImage remoteVideoImage;
         public TMP_InputField locationIdInput;
 
         public TMP_Dropdown qrCodeDropdown;
-
-        public Transform qrListContent;
-        public GameObject qrListItemPrefab;
 
         public ScrollRect chatScrollRect;
         public TMP_Text chatDisplayText;
@@ -134,7 +127,6 @@ public RawImage remoteVideoImage;
 
             if (sessionUIPanel == null) { Debug.LogWarning("[SessionUiController] No sessionUIPanel found. UI might not be initialized yet."); return; }
 
-            if (joinButton != null) joinButton.onClick.AddListener(OnJoinPressed);
             if (sendButton != null) sendButton.onClick.AddListener(OnSendChat);
             if (leaveButton != null) leaveButton.onClick.AddListener(OnLeaveSession);
             if (toggleDetectionButton != null) toggleDetectionButton.onClick.AddListener(OnToggleDetectQR);
@@ -193,8 +185,6 @@ public RawImage remoteVideoImage;
                 webAppManager.OnStatusUpdate += OnBackendStatus;
                 webAppManager.OnConnectionError += (err) => {
                     if (loginStatusText != null) loginStatusText.text = $"<color=red>{err}</color>";
-                    if (joinButtonText != null) joinButtonText.text = "Try Again";
-                    if (joinButton != null) joinButton.interactable = true;
                     AppendChatMessage($"<color=red>Error: {err}</color>");
                 };
             }
@@ -218,10 +208,6 @@ public RawImage remoteVideoImage;
                 qrManager.OnQRCodeRemoved += (key) => { AppendChatMessage($"[QR Removed] {key}"); RefreshQRCodeDropdown(); UpdateDetectionIndicator(); };
                 qrManager.OnRoomAnchorDiscovered += (qr) => {
                     AppendChatMessage($"[Anchor Discovered] <color=green>{qr.fullPayload}</color>");
-                    if (joinButtonText != null && joinButtonText.text.Contains("Calibration")) {
-                        joinButtonText.text = "Connect";
-                        if (joinButton != null) joinButton.interactable = true;
-                    }
                 };
             }
 
@@ -736,16 +722,36 @@ public RawImage remoteVideoImage;
             qrCodeDropdown.ClearOptions();
             
             List<TMP_Dropdown.OptionData> options = new List<TMP_Dropdown.OptionData>();
-            options.Add(NewBlackOption("Stop Pointing"));
-            
+            options.Add(NewColoredOption("Stop Pointing", Color.black));
+
             qrCodeList.Clear();
-            foreach (var kvp in qrManager.TrackedQRCodes)
+            if (qrManager != null)
             {
-                if (kvp.Value.fullPayload.Contains("RoomAnchor")) continue;
-                qrCodeList.Add(kvp.Value);
-                string displayName = !string.IsNullOrEmpty(kvp.Value.identifierKey) ? kvp.Value.identifierKey : kvp.Value.fullPayload;
-                if (displayName.Length > 30) displayName = displayName.Substring(0, 27) + "...";
-                options.Add(NewBlackOption(displayName));
+                // 1) Locally discovered codes (pointable). Green if in the legit list, red if unlisted.
+                var matchedValid = new HashSet<string>();
+                foreach (var kvp in qrManager.TrackedQRCodes)
+                {
+                    var inst = kvp.Value;
+                    if (inst == null || string.IsNullOrEmpty(inst.fullPayload)) continue;
+                    if (inst.fullPayload.Contains("RoomAnchor")) continue;
+
+                    bool listed = qrManager.IsValidListed(inst.fullPayload);
+                    if (listed) matchedValid.Add(inst.fullPayload);
+
+                    string name = !string.IsNullOrEmpty(inst.identifierKey) ? inst.identifierKey : inst.fullPayload;
+                    string label = listed ? ShortenLabel(name) : ShortenLabel(name) + "  — unlisted";
+                    options.Add(NewColoredOption(label, listed ? QrMatchedColor : QrUnlistedColor));
+                    qrCodeList.Add(inst);
+                }
+
+                // 2) Legit-list codes that were never discovered locally (orange, not pointable).
+                foreach (var payload in qrManager.ValidPayloads)
+                {
+                    if (string.IsNullOrEmpty(payload) || payload.Contains("RoomAnchor")) continue;
+                    if (matchedValid.Contains(payload)) continue;
+                    options.Add(NewColoredOption(ShortenLabel(payload) + "  — not visible", QrMissingColor));
+                    qrCodeList.Add(null); // listed but not currently tracked → nothing to point at
+                }
             }
             qrCodeDropdown.AddOptions(options);
 
@@ -754,15 +760,26 @@ public RawImage remoteVideoImage;
         }
 
         // TMP_Dropdown.OptionData.color defaults to white and overrides the item label color, which
-        // would make the text invisible on the light dropdown background. Force every option black.
-        private static TMP_Dropdown.OptionData NewBlackOption(string text)
+        // would make the text invisible on the light dropdown background. Always set an explicit colour.
+        private static TMP_Dropdown.OptionData NewColoredOption(string text, Color color)
         {
-            return new TMP_Dropdown.OptionData(text) { color = Color.black };
+            return new TMP_Dropdown.OptionData(text) { color = color };
         }
 
-        public void AddQRListItem(QrCodeManager.QRCodeInstance qr) { }
-        public void UpdateQRListItem(QrCodeManager.QRCodeInstance qr) { }
-        public void RemoveQRListItem(string key) { }
+        private static string ShortenLabel(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return "(unknown)";
+            return s.Length > 36 ? s.Substring(0, 33) + "..." : s;
+        }
+
+        // QR dropdown legend colours (chosen to stay legible on the light dropdown background):
+        //   Green  = in the server "legit" list AND discovered locally (all good).
+        //   Orange = in the legit list but NOT currently discovered locally (missing — go find it).
+        //   Red    = discovered locally but NOT in the legit list (unexpected / unlisted code).
+        // To use blue instead of red for the unlisted state, change QrUnlistedColor below.
+        private static readonly Color QrMatchedColor  = new Color(0.05f, 0.55f, 0.12f);
+        private static readonly Color QrMissingColor  = new Color(0.85f, 0.45f, 0.00f);
+        private static readonly Color QrUnlistedColor = new Color(0.80f, 0.10f, 0.10f);
 
         private void OnJoinPressed()
         {
@@ -973,7 +990,19 @@ public RawImage remoteVideoImage;
             }
             int qrIndex = index - 1;
             if (qrIndex >= 0 && qrIndex < qrCodeList.Count)
-                sessionInit?.PointToQRCode(qrCodeList[qrIndex]);
+            {
+                var inst = qrCodeList[qrIndex];
+                if (inst == null)
+                {
+                    // Listed in the server "legit" set but not currently discovered locally → nothing to
+                    // point at. Inform the user instead of silently doing nothing.
+                    qrManager?.ClearFocus();
+                    statusUI?.ClearHighlight();
+                    AppendChatMessage("<color=#D97200>[Point] That QR code is in the list but not currently visible — scan it to point.</color>");
+                    return;
+                }
+                sessionInit?.PointToQRCode(inst);
+            }
         }
 
         private void OnDestroy()

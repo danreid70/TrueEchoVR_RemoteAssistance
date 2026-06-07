@@ -11458,12 +11458,8 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::TrueEchoVR.TroubleshootingSessionUIManager
   sessionUIPanel: {fileID: 1754670905}
-  joinPanel: {fileID: 0}
   sessionPanel: {fileID: 99606537}
   roomCodeInput: {fileID: 121004890}
-  joinButton: {fileID: 0}
-  joinButtonText: {fileID: 0}
-  joinStatusText: {fileID: 0}
   sessionStatusText: {fileID: 1616746272}
   connectionStatusText: {fileID: 0}
   latencyText: {fileID: 0}
@@ -11476,8 +11472,6 @@ MonoBehaviour:
   clearQRButton: {fileID: 1901769666}
   locationIdInput: {fileID: 617044097}
   qrCodeDropdown: {fileID: 977535655}
-  qrListContent: {fileID: 0}
-  qrListItemPrefab: {fileID: 0}
   chatScrollRect: {fileID: 458700322}
   chatDisplayText: {fileID: 1404177712}
   chatInputField: {fileID: 1435749674}
@@ -11929,7 +11923,7 @@ RectTransform:
   m_AnchorMin: {x: 0, y: 0}
   m_AnchorMax: {x: 1, y: 0}
   m_AnchoredPosition: {x: 0, y: 2}
-  m_SizeDelta: {x: 0, y: 150}
+  m_SizeDelta: {x: 0, y: 220}
   m_Pivot: {x: 0.5, y: 1}
 --- !u!114 &311612837
 MonoBehaviour:
@@ -37876,8 +37870,8 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0.5, y: 0.5}
   m_AnchorMax: {x: 0.5, y: 0.5}
-  m_AnchoredPosition: {x: 90, y: 10}
-  m_SizeDelta: {x: 320, y: 36}
+  m_AnchoredPosition: {x: 130, y: 10}
+  m_SizeDelta: {x: 680, y: 36}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &977535653
 MonoBehaviour:
@@ -65972,6 +65966,8 @@ MonoBehaviour:
   autoStartDetection: 1
   showPayloadLabels: 1
   showDebugCenter: 0
+  useSpatialAnchor: 1
+  saveDebounceSeconds: 2
 --- !u!114 &1664912827
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -70459,6 +70455,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::TEVR.Core.PermissionsBootstrapper
   requestScenePermission: 1
   requestCameraPermission: 1
+  requestHeadsetCameraPermission: 1
   requestMicrophonePermission: 0
   persistAcrossScenes: 1
 --- !u!4 &1768886346
@@ -81505,7 +81502,7 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 0}
   m_AnchorMax: {x: 1, y: 1}
-  m_AnchoredPosition: {x: -7.4999847, y: -0.5}
+  m_AnchoredPosition: {x: -7.5, y: -0.5}
   m_SizeDelta: {x: -35, y: -13}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &2018017861
@@ -81572,9 +81569,9 @@ MonoBehaviour:
   m_lineSpacingMax: 0
   m_paragraphSpacing: 0
   m_charWidthMaxAdj: 0
-  m_TextWrappingMode: 1
+  m_TextWrappingMode: 0
   m_wordWrappingRatios: 0.4
-  m_overflowMode: 0
+  m_overflowMode: 1
   m_linkedTextComponent: {fileID: 0}
   parentLinkedComponent: {fileID: 0}
   m_enableKerning: 0
@@ -84471,9 +84468,9 @@ MonoBehaviour:
   m_lineSpacingMax: 0
   m_paragraphSpacing: 0
   m_charWidthMaxAdj: 0
-  m_TextWrappingMode: 1
+  m_TextWrappingMode: 0
   m_wordWrappingRatios: 0.4
-  m_overflowMode: 0
+  m_overflowMode: 1
   m_linkedTextComponent: {fileID: 0}
   parentLinkedComponent: {fileID: 0}
   m_enableKerning: 0
