@@ -193,6 +193,61 @@ public class QRPayloadAction
         private readonly Dictionary<MRUKTrackable, float> _pendingPayloadTrackables = new Dictionary<MRUKTrackable, float>();
         private const float PendingPayloadTimeoutSeconds = 5f;
 
+        // PERF: SaveToDisk() pretty-prints JSON and does a synchronous File.WriteAllText on the main thread.
+        // Calling it on every QR add/update caused O(n^2) blocking writes as codes appeared (a cause of the
+        // hitching). We now flag the data dirty and flush at most once per saveDebounceSeconds from Update().
+        [Tooltip("Minimum seconds between debounced QR auto-saves to disk (avoids per-frame blocking writes).")]
+        public float saveDebounceSeconds = 2f;
+        private bool _saveDirty;
+        private float _nextSaveTime;
+
+        /// <summary>Marks the QR data dirty for a debounced (coalesced) disk write. Honors autoSaveLoad.</summary>
+        private void RequestSave()
+        {
+            if (!autoSaveLoad) return;
+            _saveDirty = true;
+        }
+
+        /// <summary>Flushes a pending debounced save when its interval has elapsed. Called from Update().</summary>
+        private void FlushPendingSave()
+        {
+            if (!_saveDirty || Time.time < _nextSaveTime) return;
+            _saveDirty = false;
+            _nextSaveTime = Time.time + Mathf.Max(0.1f, saveDebounceSeconds);
+            SaveToDisk();
+        }
+
+        // PERF: per-code visuals (background + 4 border bars + optional sphere) previously allocated a
+        // NEW Material via Shader.Find() PER BAR. At 50+ codes that is hundreds of material instances and
+        // Shader.Find calls (no batching, leaked materials). Cache the shader once and share one material
+        // per (color, opaque/transparent) so identical visuals batch and nothing leaks.
+        private Shader _cachedUnlitShader;
+        private Shader UnlitShader
+        {
+            get
+            {
+                if (_cachedUnlitShader == null)
+                {
+                    _cachedUnlitShader = Shader.Find("Universal Render Pipeline/Unlit");
+                    if (_cachedUnlitShader == null) _cachedUnlitShader = Shader.Find("Unlit/Color");
+                    if (_cachedUnlitShader == null) _cachedUnlitShader = Shader.Find("Sprites/Default");
+                }
+                return _cachedUnlitShader;
+            }
+        }
+        private readonly Dictionary<string, Material> _sharedVisualMats = new Dictionary<string, Material>();
+
+        private Material GetSharedVisualMaterial(Color c, bool transparent)
+        {
+            string key = (transparent ? "t_" : "o_") + ColorUtility.ToHtmlStringRGBA(c);
+            if (_sharedVisualMats.TryGetValue(key, out var existing) && existing != null) return existing;
+            var m = new Material(UnlitShader) { name = "QRVisual_" + key };
+            if (transparent) { ConfigureTransparent(m, c); m.renderQueue = 3000; }
+            else { m.color = c; if (m.HasProperty("_BaseColor")) m.SetColor("_BaseColor", c); }
+            _sharedVisualMats[key] = m;
+            return m;
+        }
+
         public void SetAnchorEstablished(bool established)
         {
             if (established && _isAnchorSet) ActivateDormantQRCodes();
@@ -328,6 +383,9 @@ public class QRPayloadAction
             // Focus glow must keep tracking its target even while detection is paused.
             UpdateFocusGlow();
 
+            // Flush any pending debounced disk save regardless of detection state.
+            FlushPendingSave();
+
             if (!IsDetecting) return;
 
             RetryPendingPayloadTrackables();
@@ -414,7 +472,7 @@ public class QRPayloadAction
             }
             _trackedQRCodes.Clear();
             RoomAnchorInstance = null;
-            if (autoSaveLoad) SaveToDisk();
+            RequestSave();
         }
 
         /// <summary>
@@ -446,7 +504,7 @@ public class QRPayloadAction
             _trackedQRCodes.Clear();
             _dormantQRCodes.Clear();
             RoomAnchorInstance = null;
-            if (autoSaveLoad) SaveToDisk();
+            RequestSave();
         }
 
         public string GetQRCodeDataAsJson(string headsetId)
@@ -531,7 +589,7 @@ else if (_isAnchorSet)
                     _dormantQRCodes.Add(new CalibrationQRData { qrValue = payload, position = pos, rotation = rot });
                 }
             }
-            if (autoSaveLoad) SaveToDisk();
+            RequestSave();
         }
 
         public void OnTrackableAdded(MRUKTrackable trackable)
@@ -610,7 +668,7 @@ else if (_isAnchorSet)
             {
                 _dormantQRCodes.Add(new CalibrationQRData { qrValue = fullPayload, position = trackable.transform.position, rotation = trackable.transform.rotation });
             }
-            if (autoSaveLoad) SaveToDisk();
+            RequestSave();
         }
 
         public void OnTrackableRemoved(MRUKTrackable trackable)
@@ -639,7 +697,7 @@ else if (_isAnchorSet)
                 if (instanceToRemove.visualObject != null) Destroy(instanceToRemove.visualObject);
                 _trackedQRCodes.Remove(keyToRemove);
                 OnQRCodeRemoved?.Invoke(keyToRemove);
-                if (autoSaveLoad) SaveToDisk();
+                RequestSave();
             }
         }
 
@@ -723,11 +781,8 @@ else if (_isAnchorSet)
             if (bg.TryGetComponent<BoxCollider>(out var col)) Destroy(col);
 
             var renderer = bg.GetComponent<Renderer>();
-            renderer.material = new Material(Shader.Find("Universal Render Pipeline/Unlit"));
-            renderer.material.color = new Color(baseColor.r, baseColor.g, baseColor.b, 0.3f);
-            renderer.material.SetInt("_Surface", 1);
-            renderer.material.SetInt("_ZWrite", 0);
-            renderer.material.renderQueue = 3000;
+            // Shared transparent material (cached per color) — see GetSharedVisualMaterial (WP-5 perf).
+            renderer.sharedMaterial = GetSharedVisualMaterial(new Color(baseColor.r, baseColor.g, baseColor.b, 0.3f), transparent: true);
 
             CreateVisualBorder(root.transform, scale, baseColor);
 
@@ -740,7 +795,7 @@ else if (_isAnchorSet)
                 sphere.transform.localScale = new Vector3(0.015f, 0.015f, 0.015f);
                 sphere.transform.localPosition = Vector3.zero;
                 if (sphere.TryGetComponent<Collider>(out var sCol)) Destroy(sCol);
-                sphere.GetComponent<Renderer>().material = renderer.material;
+                sphere.GetComponent<Renderer>().sharedMaterial = renderer.sharedMaterial;
             }
 
             // Note: no constant pulse here anymore — only the focused/"pointed-at" code pulses
@@ -761,9 +816,8 @@ else if (_isAnchorSet)
                 tmp.alignment = TextAlignmentOptions.Center;
                 tmp.color = Color.white;
                 tmp.rectTransform.sizeDelta = new Vector2(scale.x * 3.0f, scale.y * 3.0f);
-                tmp.enableAutoSizing = true;
-                tmp.fontSizeMin = 0.05f;
-                tmp.fontSizeMax = 0.5f;
+                // PERF: auto-sizing forces extra TMP layout passes per code; use a fixed size instead.
+                tmp.enableAutoSizing = false;
             }
         }
 
@@ -785,8 +839,8 @@ else if (_isAnchorSet)
             bar.transform.localRotation = Quaternion.identity;
             if (bar.TryGetComponent<BoxCollider>(out var col)) Destroy(col);
             var r = bar.GetComponent<Renderer>();
-            r.material = new Material(Shader.Find("Universal Render Pipeline/Unlit"));
-            r.material.color = color;
+            // Shared opaque material (cached per color) so all border bars batch (WP-5 perf).
+            r.sharedMaterial = GetSharedVisualMaterial(color, transparent: false);
         }
 
         private void UpdateTextOnObject(GameObject obj, string payload)
@@ -1444,7 +1498,7 @@ else if (_isAnchorSet)
                 if (_isAnchorSet || item.fullPayload.Contains(qrRoomAnchorLabel)) UpdateQRCodeFromRemote(item.fullPayload, item.position, item.rotation);
                 else _dormantQRCodes.Add(new CalibrationQRData { qrValue = item.fullPayload, position = item.position, rotation = item.rotation });
             }
-            if (autoSaveLoad) SaveToDisk();
+            RequestSave();
         }
     }
 }

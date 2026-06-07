@@ -211,7 +211,10 @@ public RawImage remoteVideoImage;
                     RefreshQRCodeDropdown();
                     UpdateDetectionIndicator();
                 };
-                qrManager.OnQRCodeUpdated += (qr) => AppendChatMessage($"[QR Updated] {GetColoredPayload(qr)}");
+                // PERF: do NOT log on OnQRCodeUpdated — it fires every frame from tracking jitter, and
+                // AppendChatMessage re-assigns the whole chat string AND calls Canvas.ForceUpdateCanvases()
+                // each time. That per-frame canvas rebuild (per visible code) was a primary cause of the
+                // jitter/hitching. Add/remove events still log below.
                 qrManager.OnQRCodeRemoved += (key) => { AppendChatMessage($"[QR Removed] {key}"); RefreshQRCodeDropdown(); UpdateDetectionIndicator(); };
                 qrManager.OnRoomAnchorDiscovered += (qr) => {
                     AppendChatMessage($"[Anchor Discovered] <color=green>{qr.fullPayload}</color>");
@@ -301,7 +304,11 @@ public RawImage remoteVideoImage;
             
             webAppManager.RegisterAndBoot(webAppManager.config.customerId, webAppManager.config.locationId, (success) => {
                 if (success) {
-                    ShowJoinScreen();
+                    // Route through the central UI state so UIManager.currentState matches the visible panel
+                    // (ShowJoinScreen bypassed SetState, leaving state stuck on Login). The session panel is
+                    // shown now; SessionFlowManager then drives "wait for RoomAnchor" from here.
+                    if (UIManager.Instance != null) UIManager.Instance.SetState(UIManager.UIState.Session);
+                    else ShowJoinScreen();
                 } else {
                     if (signInButton != null) signInButton.interactable = true;
                     string detail = webAppManager != null && !string.IsNullOrEmpty(webAppManager.LastError)
@@ -942,9 +949,16 @@ public RawImage remoteVideoImage;
 
         private void OnStartupDataReceived(SignalingManager.StartupData data)
         {
-            if (qrManager == null) return;
+            if (qrManager == null || data == null || data.qrCodes == null) return;
+            var validValues = new List<string>(data.qrCodes.Count);
             foreach (var anchor in data.qrCodes)
+            {
                 qrManager.UpdateQRCodeFromRemote(anchor.qrValue, anchor.position, anchor.rotation);
+                if (!string.IsNullOrEmpty(anchor.qrValue)) validValues.Add(anchor.qrValue);
+            }
+            // Feed the server's authoritative QR list into the classifier so these item codes show as
+            // ValidListed (blue) instead of Unlisted (orange) when detected.
+            qrManager.AddValidPayloads(validValues);
             RefreshQRCodeDropdown();
         }
 

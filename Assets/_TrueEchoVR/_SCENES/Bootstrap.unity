@@ -11499,9 +11499,7 @@ MonoBehaviour:
   sessionDetectionStatusText: {fileID: 0}
   loginCustomerIdInput: {fileID: 364107254}
   loginLocationIdInput: {fileID: 1525169746}
-  loginApiUrlText: {fileID: 0}
-  loginRoomCodeText: {fileID: 0}
-  loginTokenText: {fileID: 0}
+  loginApiUrlInput: {fileID: 0}
 --- !u!114 &293899302
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -65951,6 +65949,8 @@ MonoBehaviour:
   qrRoomAnchorLabel: RoomAnchor
   positionThreshold: 0.05
   rotationThreshold: 0.05
+  setupCodeMinLength: 6
+  setupCodeMaxLength: 16
   payloadActions:
   - matchString: RoomAnchor
     customPrefab: {fileID: 6762319794414368924, guid: 88ded265eacc5cf4ba4667328d754d26, type: 3}

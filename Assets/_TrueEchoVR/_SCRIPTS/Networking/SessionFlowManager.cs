@@ -265,7 +265,14 @@ namespace TEVR
             UIManager.Instance?.AppendChatMessage($"<color=cyan>[Init]</color> {syncMsg}");
 
             bool bootSuccess = false;
-            if (webAppManager != null)
+            if (webAppManager != null && webAppManager.StartupDataLoaded)
+            {
+                // Provisioning (sign-in this session) already fetched startup-data and raised
+                // OnStartupDataReceived. Don't fetch it a second time here (that re-applied every QR code
+                // and double-fired the event). Proceed straight to "ready".
+                bootSuccess = true;
+            }
+            else if (webAppManager != null)
             {
                 // Add a timeout for the boot sequence
                 float timeout = 10f;
@@ -353,7 +360,10 @@ namespace TEVR
 
         private void OnQRCodeUpdatedNormal(QrCodeManager.QRCodeInstance qr)
         {
-            UIManager.Instance?.RefreshQRCodeDropdown();
+            // PERF: OnQRCodeUpdated fires every frame from tracking jitter (position/rotation noise).
+            // The dropdown CONTENTS only change on add/remove, not on movement, so rebuilding it here
+            // forced a full dropdown rebuild every frame per visible code — a primary cause of the
+            // jitter/hitching with many item codes. Intentionally a no-op; refresh happens on add/remove.
         }
 
         private void OnQRCodeRemovedNormal(string identifierKey)

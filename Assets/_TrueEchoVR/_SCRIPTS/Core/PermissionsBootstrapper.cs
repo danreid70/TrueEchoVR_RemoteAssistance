@@ -22,6 +22,11 @@ namespace TEVR.Core
     {
         public const string ScenePermission = "com.oculus.permission.USE_SCENE";
         public const string CameraPermission = "android.permission.CAMERA";
+        // Meta Passthrough Camera Access (PCA) exposes the headset cameras via WebCamTexture, but ONLY if
+        // this runtime ("dangerous") permission is granted IN ADDITION to android.permission.CAMERA.
+        // Declaring it in the manifest is necessary but NOT sufficient — without the runtime grant the
+        // passthrough WebCamTexture delivers no frames (black composite background).
+        public const string HeadsetCameraPermission = "horizonos.permission.HEADSET_CAMERA";
         public const string RecordAudioPermission = "android.permission.RECORD_AUDIO";
 
         [Header("Permissions to request at startup")]
@@ -30,6 +35,9 @@ namespace TEVR.Core
 
         [Tooltip("Camera permission. Required for Meta Passthrough Camera Access (real-world video streaming).")]
         public bool requestCameraPermission = true;
+
+        [Tooltip("Meta HEADSET_CAMERA permission. Required (with CAMERA) for Passthrough Camera Access frames.")]
+        public bool requestHeadsetCameraPermission = true;
 
         [Tooltip("Microphone permission. Only needed if you stream the headset microphone over WebRTC.")]
         public bool requestMicrophonePermission = false;
@@ -45,6 +53,7 @@ namespace TEVR.Core
 
         public static bool HasCameraPermission => HasPermission(CameraPermission);
         public static bool HasScenePermission => HasPermission(ScenePermission);
+        public static bool HasHeadsetCameraPermission => HasPermission(HeadsetCameraPermission);
 
         private static bool _started;
 
@@ -75,6 +84,7 @@ namespace TEVR.Core
             var toRequest = new List<string>();
             if (requestScenePermission && !Permission.HasUserAuthorizedPermission(ScenePermission)) toRequest.Add(ScenePermission);
             if (requestCameraPermission && !Permission.HasUserAuthorizedPermission(CameraPermission)) toRequest.Add(CameraPermission);
+            if (requestHeadsetCameraPermission && !Permission.HasUserAuthorizedPermission(HeadsetCameraPermission)) toRequest.Add(HeadsetCameraPermission);
             if (requestMicrophonePermission && !Permission.HasUserAuthorizedPermission(RecordAudioPermission)) toRequest.Add(RecordAudioPermission);
 
             if (toRequest.Count == 0)

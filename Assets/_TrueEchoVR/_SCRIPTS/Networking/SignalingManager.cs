@@ -318,6 +318,10 @@ namespace TEVR
                 try { r = JsonUtility.FromJson<SetupResolveResponse>(res); } catch { r = null; }
                 if (r != null && !string.IsNullOrEmpty(r.customerId) && !string.IsNullOrEmpty(r.locationId))
                 {
+                    // CRITICAL: the backend returns a bearer token here that BOTH /headsets/register and
+                    // /headsets/{id}/startup-data require in the Authorization header. Store it now (the
+                    // recommended bare-code QR carries no token, so this resolve is the only place we get it).
+                    if (!string.IsNullOrEmpty(r.token)) SetAuthToken(r.token.Trim());
                     SaveConnectionInfo(r.customerId, r.locationId);
                     if (!string.IsNullOrEmpty(r.roomCode)) SaveRoomCode(r.roomCode);
                     Status("Setup resolved.");
@@ -341,9 +345,15 @@ namespace TEVR
             public string customerId;
             public string locationId;
             public string roomCode;
+            // Bearer token required by /headsets/register and /headsets/{id}/startup-data.
+            public string token;
         }
 
         public bool HasCredentials => !string.IsNullOrEmpty(tevrHeadsetId) && !string.IsNullOrEmpty(tevrLocationId);
+
+        /// <summary>True once StartupData has been delivered this session (real boot or demo). Lets the
+        /// post-RoomAnchor flow skip a redundant second startup-data fetch when provisioning already ran.</summary>
+        public bool StartupDataLoaded { get; private set; }
 
         /// <summary>
         /// Persists the connection info (customer + location) so it is remembered across app restarts
@@ -390,6 +400,7 @@ namespace TEVR
                 nameDictionary = new List<NameMapping>()
             };
             
+            StartupDataLoaded = true;
             OnStartupDataReceived?.Invoke(demoData);
             onComplete?.Invoke(true);
         }
@@ -444,6 +455,7 @@ namespace TEVR
 
             GetData($"/headsets/{tevrHeadsetId}/startup-data?locationId={tevrLocationId}", (res) => {
                 var data = JsonUtility.FromJson<StartupData>(res);
+                StartupDataLoaded = true;
                 OnStartupDataReceived?.Invoke(data);
                 startupDone = true;
             }, (err) => {
@@ -792,15 +804,27 @@ namespace TEVR
         {
             float deadline = Time.time + Mathf.Max(2f, passthroughStartTimeout);
 
-            // 1. Wait for the runtime CAMERA permission.
+            // 1. Wait for the runtime camera permissions. Meta Passthrough Camera Access (PCA) needs BOTH
+            //    android.permission.CAMERA AND horizonos.permission.HEADSET_CAMERA granted at runtime;
+            //    without HEADSET_CAMERA the WebCamTexture delivers no frames (black composite background).
 #if UNITY_ANDROID && !UNITY_EDITOR
-            while (!UnityEngine.Android.Permission.HasUserAuthorizedPermission("android.permission.CAMERA") && Time.time < deadline)
+            const string camPerm = "android.permission.CAMERA";
+            const string headsetCamPerm = "horizonos.permission.HEADSET_CAMERA";
+            while ((!UnityEngine.Android.Permission.HasUserAuthorizedPermission(camPerm)
+                    || !UnityEngine.Android.Permission.HasUserAuthorizedPermission(headsetCamPerm))
+                   && Time.time < deadline)
             {
                 yield return null;
             }
-            if (!UnityEngine.Android.Permission.HasUserAuthorizedPermission("android.permission.CAMERA"))
+            if (!UnityEngine.Android.Permission.HasUserAuthorizedPermission(camPerm))
             {
                 Status("Camera permission not granted — cannot stream passthrough.");
+                onComplete?.Invoke(false);
+                yield break;
+            }
+            if (!UnityEngine.Android.Permission.HasUserAuthorizedPermission(headsetCamPerm))
+            {
+                Status("HEADSET_CAMERA permission not granted — passthrough camera frames unavailable.");
                 onComplete?.Invoke(false);
                 yield break;
             }
