@@ -54,9 +54,16 @@
 | `Authorization` | `Bearer {token}` | Present after setup-code resolution. Validate on `register` and `startup-data`. |
 
 ### Client behaviour the backend should be aware of
+- **Per-request timeout:** every call times out after **15 s** (the client never hangs waiting on a stalled
+  response). Respond within that window.
 - **Retries:** up to **3 attempts**, **2 s** apart, on any non-success.
-- **Credential reset:** a **404 or 403** from `startup-data` makes the client wipe stored credentials and drop
-  to **Demo Mode** (offline). Return these only when the token/headset is genuinely invalid.
+- **Credential expiry (re-scan, NOT demo):** a **`401`** on any call — or **`403/404`** on `startup-data` —
+  makes the client wipe stored credentials, raise `OnCredentialsExpired`, and prompt the operator to
+  **re-scan a Login Code**. The client does **not** silently fall to Demo Mode in this case. Return these
+  codes **only** when the token/headset is genuinely invalid/expired.
+- **Demo Mode fallback:** other failures during boot (network unreachable, timeout, unparseable body) drop the
+  client to an **offline Demo Mode** that still runs real on-device QR detection. There is also a manual
+  **Demo Mode** button on the Login panel (auto-revealed after a failed sign-in).
 
 ### 3.1 `GET /api/setup/{setupCode}`
 Resolves a short (~8-char alphanumeric) setup code scanned from a QR.
@@ -137,6 +144,10 @@ applies each entry and adds every `qrValue` to its "legit" set.
   The client never initiates pings.
 - **Framing:** application events are `42["event-name", { ...singleJsonObject }]`. The client's parser reads
   exactly **one** JSON object argument after the event name — do not emit multiple args or a bare array.
+- **Reconnection:** on an **abnormal** close the client auto-reconnects (up to `maxReconnectAttempts`,
+  `reconnectDelay` apart) and re-emits `join-room` after the `40` ack — so expect a headset to rejoin the same
+  `roomCode`. After a **clean** close (operator pressed *Leave Session*) the client does not reconnect. When
+  retries are exhausted the client drops back to its Sign In screen (and offers offline Demo Mode).
 
 ### 4.1 Client → Server (emitted by the headset)
 | Event | Payload |

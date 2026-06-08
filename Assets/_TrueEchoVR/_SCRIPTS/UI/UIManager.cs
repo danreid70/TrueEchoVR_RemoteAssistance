@@ -48,7 +48,9 @@ namespace TEVR
         [Header("Controllers")]
         public VrHudController hudController;
         public SessionUiController sessionController;
-        public PointerArrowController pointerArrow;
+        // NOTE: the directional arrow is driven directly by VrHudController.pointerArrow (a GameObject it
+        // rotates in LateUpdate). The previous PointerArrowController-based path here was redundant and has
+        // been removed to avoid two drivers fighting over the same transform.
         public TargetHighlightController remoteHighlight;
 
         public enum UIState { None, Login, Calibration, Session }
@@ -157,12 +159,13 @@ namespace TEVR
         {
             if (uiCanvasRoot == null) return;
 
-            // While the user is actively dragging, the drag handler owns the transform completely.
-            if (_isDragging) return;
-
             // 1. Always face the user (yaw only - the panel stays upright and faces the headset).
+            // We do this even while dragging, as requested by the user.
             Quaternion targetRot = FaceCameraYaw(cam);
             uiCanvasRoot.rotation = Quaternion.Slerp(uiCanvasRoot.rotation, targetRot, faceRotationSpeed * Time.deltaTime);
+
+            // While the user is actively dragging, the drag handler owns the transform POSITION completely.
+            if (_isDragging) return;
 
             // 2. If the user dragged-and-released, the panel is locked in place: no auto-recenter.
             if (_isLocked) return;
@@ -265,11 +268,6 @@ namespace TEVR
         public void ShowHUDCompletion(string message, bool persistent = false)
         {
             if (hudController != null) hudController.ShowCompletionMessage(message, persistent);
-        }
-
-        public void SetPointerTarget(Transform target)
-        {
-            if (pointerArrow != null) pointerArrow.SetTarget(target);
         }
 
         public void AppendChatMessage(string message)

@@ -21,6 +21,11 @@ Welcome to the **TrueEchoVR** project. This application is a professional-grade 
 - **Intelligent UI System**: A world-space "lazy-follow" HUD and session manager that follow the user comfortably without jitter.
 - **Enterprise Health Reporting**: Automatic telemetry (Battery, Calibration State, Location ID) reported to the admin every 60 seconds.
 - **LMS Ready**: Built-in support for xAPI and SCORM tracking.
+- **Resilient Sign-In → Session Flow**: Sign-in is **non-blocking** — once credentials are valid the session opens immediately and the Room Anchor scan is optional/non-blocking (it only refines item placement). Every REST call has a **15s timeout** so the handshake can never hang. Leaving a session returns cleanly to Sign In with stored credentials (no re-scan needed).
+- **Demo Mode (offline)**: A manual **Demo Mode** button on the Login panel (auto-revealed when a sign-in attempt fails) enters a normal offline session — **real** QR detection still runs and detected codes become pointable in the dropdown; without a downloaded "legit" list they classify as *detected-but-unlisted*.
+- **Connection Watchdog**: If the WebSocket drops mid-session the client shows live reconnect status and, when reconnection is abandoned, returns to Sign In and surfaces the Demo Mode fallback (`SignalingManager.OnReconnecting` / `OnReconnectFailed`, plus `Reconnect()`).
+- **Credential-Expiry Re-Scan**: A backend `401` (or `403/404` on `startup-data`) clears stored credentials and prompts the operator to **re-scan a Login Code** instead of silently dropping to Demo (`SignalingManager.OnCredentialsExpired`).
+- **Editor QA Tooling**: Headset-free debugging via the **`TrueEchoVR/Debug`** menu (simulate setup/RoomAnchor/item QR detections), a **signaling contract smoke test**, and an **auto-wire scene validator** (`TrueEchoVR/Validate Scene Wiring`, also run on scene save). All editor-only (compiled out of device builds).
 
 ---
 
@@ -40,7 +45,8 @@ The application initializes in the `Bootstrap` scene (`Assets/_TrueEchoVR/_SCENE
 - **XR Rig**: Uses the **Meta XR Building Blocks** Rig (`[BuildingBlock] Camera Rig`).
 - **Persistence**: The `PersistentXRRig` script ensures the Rig, Passthrough, and Hand tracking blocks persist across scenes.
 - **No Locomotion**: All virtual locomotion systems are automatically purged from the Rig on initialization to ensure spatial synchronization with physical QR markers.
-- **Demo Mode**: If the backend API is unreachable or internet is disconnected, the system automatically enters **Demo Mode**, bypassing network synchronization and allowing offline testing.
+- **Demo Mode**: If the backend is unreachable, the system can fall back to **Demo Mode** — either automatically when there is no internet/connection during boot, or manually via the **Demo Mode** button on the Login panel (auto-revealed after a failed sign-in). Demo Mode runs a *normal* offline session: real QR detection is active and detected codes are pointable, just colour-coded as *detected-but-unlisted* (no downloaded legit list). **Exception:** when the backend explicitly rejects credentials (`401`/expiry), the app does **not** silently demo — it prompts a Login Code re-scan instead.
+- **Non-Blocking Sign-In**: Reaching a live session never waits on a Room Anchor. After valid credentials the session opens immediately (`SessionFlowManager.EnterLiveSession`); Room Anchor discovery is handled separately and only refines item placement. `SessionFlowManager.ResetForNewSession()` returns cleanly to Sign In, preserving stored credentials.
 - **Editor Preview**: The `EditorCameraFallback` script ensures the `CenterEyeAnchor` camera remains active in the Unity Editor even when no XR device is detected.
 - **Managers**: Core systems (`SignalingManager`, `QrCodeManager`, `TaskManager`, `UIManager`) use `DontDestroyOnLoad`.
 - **Initialization**: Managers connect to the signaling server and load local calibration.
@@ -208,6 +214,27 @@ The system connects to a **Socket.io** signaling server for WebRTC handshakes an
 - **Handshake**: `42["join-room", { ... }]`
 - **Persistence**: `GET /api/headsets/{id}/startup-data` (Includes location-specific dictionaries and QR offsets).
 - **Health**: `42["health-update", { ... }]` sent every minute.
+
+> **Backend integration docs:** the authoritative wire schemas are in [`BACKEND_CONTRACT.md`](./BACKEND_CONTRACT.md); a narrative, responsibilities-and-checklist guide written for the **Replit backend AI** is in [`REPLIT_AI_INTEGRATION_GUIDE.md`](./REPLIT_AI_INTEGRATION_GUIDE.md). The QA/verification checklist (including deferred on-device tests) is in [`TESTING_CHECKLIST.md`](./TESTING_CHECKLIST.md).
+
+### Resilience & failure handling
+- **REST timeout**: Every `UnityWebRequest` uses a **15-second timeout** (`SignalingManager`), so a stalled server can never hang the sign-in handshake. On timeout/failure the boot sequence resolves and either enters Demo Mode (network/parse failure) or reports failure to the caller.
+- **Reconnect watchdog**: On an abnormal socket close the client auto-reconnects up to `maxReconnectAttempts` (firing `OnReconnecting(attempt, max)`); if attempts are exhausted (or auto-reconnect is off) it fires `OnReconnectFailed`. The UI then returns to Sign In and surfaces the **Demo Mode** button. `SignalingManager.Reconnect()` performs a manual retry (resets the attempt counter).
+- **Credential expiry**: A `401` on any call (or `403/404` on `startup-data`) is treated as an expired/invalid token: credentials are cleared and `OnCredentialsExpired` fires. The UI prompts a **Login Code re-scan** rather than silently entering Demo Mode, so operators know the device must be re-provisioned.
+
+---
+
+## 🧪 Developer / QA Tooling (Editor-only)
+
+These tools live under `Assets/Editor/` and are **compiled out of device builds**. They let you exercise the full flow without a headset or a live backend.
+
+- **Simulated QR detection** — `TrueEchoVR/Debug/` menu (must be in **Play Mode**):
+  - *Simulate Login Setup Code (TEVRDEMO)* — drives the SignIn/login-scan path.
+  - *Simulate RoomAnchor QR* — establishes calibration so item codes place relative to it.
+  - *Simulate Item QR (DEMO-PUMP-01 / DEMO-VALVE-02)* and *Simulate Full Demo Room* — populate the "Look At" dropdown so pointing/arrow/highlight can be tested.
+  - Backed by `QrCodeManager.SimulateQRDetectionEditor(payload, pos?, rot?)`, which raises the same `OnRawQRDetected` / add / RoomAnchor events as a real `MRUKTrackable`.
+- **Signaling contract smoke test** — `TrueEchoVR/Debug/Run Signaling Contract Smoke Test` (Play Mode). Feeds each server→client Socket.IO shape from `BACKEND_CONTRACT.md` through the live parser (`chat-message`, `point-to` with coords, `point-to` clear sentinel, `peer-joined`, `offer`) and asserts correct dispatch — no backend required. Full WebRTC media negotiation still needs a live admin peer + device. Uses editor-only hooks `Debug_FeedSocketEvent`, `Debug_OnSocketEmit`, `Debug_RemoteSocketId`.
+- **Auto-wire scene validator** — `TrueEchoVR/Validate Scene Wiring` (and automatically on **scene save**). Warns when a critical inspector reference is unassigned (e.g. `SessionUiController.demoModeButton`, `VrHudController.pointerArrow`). Fields the managers auto-resolve at runtime are intentionally not flagged.
 
 ---
 

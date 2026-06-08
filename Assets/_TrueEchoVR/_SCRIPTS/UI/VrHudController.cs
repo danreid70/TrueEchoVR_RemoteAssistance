@@ -60,21 +60,33 @@ namespace TEVR
 
             if (pointerArrow != null) pointerArrow.SetActive(false);
 
-            // Initially set active state
+            // Subscribe now that all Awakes have run (covers the case where UIManager.Instance was null
+            // during OnEnable), then set the initial active state.
+            SubscribeToUIManager();
             if (UIManager.Instance != null)
                 HandleUIStateChanged(UIManager.Instance.GetCurrentState());
         }
 
+        private bool _subscribedToUIManager = false;
+
+        /// <summary>Idempotently subscribes to UIManager state changes (safe from OnEnable and Start).</summary>
+        private void SubscribeToUIManager()
+        {
+            if (_subscribedToUIManager || UIManager.Instance == null) return;
+            UIManager.Instance.OnUIStateChanged += HandleUIStateChanged;
+            _subscribedToUIManager = true;
+        }
+
         private void OnEnable()
         {
-            if (UIManager.Instance != null)
-                UIManager.Instance.OnUIStateChanged += HandleUIStateChanged;
+            SubscribeToUIManager();
         }
 
         private void OnDisable()
         {
-            if (UIManager.Instance != null)
+            if (_subscribedToUIManager && UIManager.Instance != null)
                 UIManager.Instance.OnUIStateChanged -= HandleUIStateChanged;
+            _subscribedToUIManager = false;
         }
 
         private void HandleUIStateChanged(UIManager.UIState newState)
@@ -127,6 +139,17 @@ namespace TEVR
             // Sync with central log
             UIManager.Instance?.AppendChatMessage($"<color=orange>[HUD]</color> {mainText} {hint}");
 
+            // FIX: Don't show HUD if we are in Login or None states.
+            if (UIManager.Instance != null)
+            {
+                var state = UIManager.Instance.GetCurrentState();
+                if (state == UIManager.UIState.Login || state == UIManager.UIState.None)
+                {
+                    Debug.Log("[HUD] Suppressing message while in Login/None state.");
+                    return;
+                }
+            }
+
             if (!hudPanel.activeSelf) hudPanel.SetActive(true);
 
             if (statusText != null)
@@ -159,6 +182,16 @@ namespace TEVR
             _isPersistent = persistent;
 
             UIManager.Instance?.AppendChatMessage($"<color=green>[HUD]</color> {message}");
+
+            // FIX: Don't show HUD if we are in Login or None states.
+            if (UIManager.Instance != null)
+            {
+                var state = UIManager.Instance.GetCurrentState();
+                if (state == UIManager.UIState.Login || state == UIManager.UIState.None)
+                {
+                    return;
+                }
+            }
 
             if (!hudPanel.activeSelf) hudPanel.SetActive(true);
 

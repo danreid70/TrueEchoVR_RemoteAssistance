@@ -148,32 +148,11 @@ namespace TEVR
 
         private void Update()
         {
-            // Fallback: Check if anchor is already tracked but we missed the event
-            if (isInitializing && !InitializationComplete && qrManager != null)
+            // Dev-only: bypass the backend and jump straight into an offline demo session once.
+            if (bypassInitialization && !_sessionEntered && qrManager != null)
             {
-                if (qrManager.RoomAnchorInstance != null)
-                {
-                    OnRoomAnchorDiscovered(qrManager.RoomAnchorInstance);
-                }
-                else if (bypassInitialization)
-                {
-                    // Auto-generate a fake anchor for development
-                    CompleteOfflineInitialization();
-                }
+                EnterDemoSession();
             }
-        }
-
-        private void CompleteOfflineInitialization()
-        {
-            isInitializing = false;
-            InitializationComplete = true;
-            Debug.Log("[SessionInitialization] Offline Bypass active. Skipping Calibration.");
-            if (statusUI != null) statusUI.ShowMessage("System Ready (Offline)", "Debug mode active.");
-            UIManager.Instance?.SetState(UIManager.UIState.Session);
-            
-            qrManager.OnQRCodeAdded += OnQRCodeAddedNormal;
-            qrManager.OnQRCodeUpdated += OnQRCodeUpdatedNormal;
-            qrManager.OnQRCodeRemoved += OnQRCodeRemovedNormal;
         }
 
         /// <summary>
@@ -229,138 +208,120 @@ namespace TEVR
             statusUI?.ShowMessage($"Admin pointing to: {n}", "(Object not found in room)");
         }
 
+        private bool _sessionEntered = false;
+
         private IEnumerator InitializationPhase()
         {
             isInitializing = true;
             InitializationComplete = false;
+            _sessionEntered = false;
 
-            if (webAppManager == null) yield break;
+            // Always start at the Login window. Even with stored credentials the user explicitly presses
+            // Sign In (fields are pre-populated), which drives EnterLiveSession via OnSignInPressed ->
+            // RegisterAndBoot. This guarantees a clean, predictable entry every launch.
+            UIManager.Instance?.SetState(UIManager.UIState.Login);
+            yield break;
+        }
 
-            // Step 0: Check Credentials (HasCredentials becomes true only after a valid sign-in /
-            // headset registration, so this gates everything below behind a legitimate login).
-            if (!webAppManager.HasCredentials)
-            {
-                UIManager.Instance?.SetState(UIManager.UIState.Login);
-                while (!webAppManager.HasCredentials)
-                    yield return null;
-            }
+        /// <summary>
+        /// Transitions into the live Session (idempotent). Shows the session window, starts Full-mode QR
+        /// detection, subscribes to add/remove for the dropdown, and surfaces a non-blocking calibration hint.
+        /// Does NOT wait for a RoomAnchor — discovery is handled separately by OnRoomAnchorDiscovered.
+        /// </summary>
+        public void EnterLiveSession()
+        {
+            if (_sessionEntered) return;
+            _sessionEntered = true;
+            isInitializing = false;
+            InitializationComplete = true;
 
-            // Valid sign-in achieved -> leave the login-scan phase and begin the real RoomAnchor +
-            // item scan. Clear any leftover login-phase boxes so they don't linger as clutter.
             if (qrManager != null)
             {
-                qrManager.ClearAllVisuals();
                 qrManager.SetScanMode(QrCodeManager.ScanMode.Full);
                 qrManager.StartQRCodeDetection();
                 qrManager.EnsureQrTrackingEnabled();
-            }
 
-            // Step 1: Calibration (Room Anchor)
-            string initMsg = "Look at the Room Anchor marker in the room to begin.";
-            if (statusUI != null)
-                statusUI.ShowMessage(initMsg, "Calibration required.", true);
-            
-            UIManager.Instance?.AppendChatMessage($"<color=cyan>[Init]</color> {initMsg}");
-
-            while (isInitializing)
-                yield return null;
-        }
-
-        private void OnRoomAnchorDiscovered(QrCodeManager.QRCodeInstance anchor)
-        {
-            if (!isInitializing) return;
-
-            Debug.Log($"[SessionInitialization] RoomAnchor established at {anchor.visualObject.transform.position}");
-            UIManager.Instance?.AppendChatMessage($"<color=green>[Init]</color> RoomAnchor established.");
-            
-            if (statusUI != null) statusUI.ShowMessage("", ""); 
-
-            StartCoroutine(CompleteInitializationAfterAnchor());
-        }
-
-        private IEnumerator CompleteInitializationAfterAnchor()
-        {
-            isInitializing = false;
-
-            string syncMsg = "Anchor established. Booting Platform...";
-            if (statusUI != null) statusUI.ShowMessage(syncMsg, "Please wait.");
-            UIManager.Instance?.AppendChatMessage($"<color=cyan>[Init]</color> {syncMsg}");
-
-            bool bootSuccess = false;
-            if (webAppManager != null && webAppManager.StartupDataLoaded)
-            {
-                // Provisioning (sign-in this session) already fetched startup-data and raised
-                // OnStartupDataReceived. Don't fetch it a second time here (that re-applied every QR code
-                // and double-fired the event). Proceed straight to "ready".
-                bootSuccess = true;
-            }
-            else if (webAppManager != null)
-            {
-                // Add a timeout for the boot sequence
-                float timeout = 10f;
-                bool finished = false;
-                StartCoroutine(webAppManager.EveryBootSequence((success) => {
-                    bootSuccess = success;
-                    finished = true;
-                }));
-
-                while (!finished && timeout > 0)
-                {
-                    timeout -= Time.deltaTime;
-                    yield return null;
-                }
-
-                if (!finished)
-                {
-                    Debug.LogWarning("[SessionFlowManager] Boot sequence timed out. Falling back to Demo Mode.");
-                    bootSuccess = false;
-                }
-            }
-
-            if (bootSuccess)
-            {
-                UIManager.Instance?.AppendChatMessage("<color=green>[Init]</color> Platform sync complete.");
-            }
-            else
-            {
-                UIManager.Instance?.AppendChatMessage("<color=orange>[Init]</color> Platform sync unavailable. Entering Demo Mode.");
-                // In demo mode, we might want to skip the login block
-                InitializationComplete = true;
-                UIManager.Instance?.SetState(UIManager.UIState.Session);
-                if (statusUI != null) statusUI.ShowMessage("Demo Mode Active", "Offline visualization enabled.");
-                
+                // Idempotent subscription (avoid double-add if entered via multiple paths).
+                qrManager.OnQRCodeAdded -= OnQRCodeAddedNormal;
+                qrManager.OnQRCodeUpdated -= OnQRCodeUpdatedNormal;
+                qrManager.OnQRCodeRemoved -= OnQRCodeRemovedNormal;
                 qrManager.OnQRCodeAdded += OnQRCodeAddedNormal;
                 qrManager.OnQRCodeUpdated += OnQRCodeUpdatedNormal;
                 qrManager.OnQRCodeRemoved += OnQRCodeRemovedNormal;
-                yield break;
             }
 
-            InitializationComplete = true;
-            string readyMsg = "System Ready.";
-            
             UIManager.Instance?.SetState(UIManager.UIState.Session);
-            
-            UIManager.Instance?.AppendChatMessage($"<color=green>[Init]</color> {readyMsg}");
+            UIManager.Instance?.AppendChatMessage("<color=green>[Init]</color> System Ready.");
 
-            qrManager.OnQRCodeAdded += OnQRCodeAddedNormal;
-            qrManager.OnQRCodeUpdated += OnQRCodeUpdatedNormal;
-            qrManager.OnQRCodeRemoved += OnQRCodeRemovedNormal;
+            // Non-blocking calibration hint. The session is fully usable now; scanning the RoomAnchor
+            // simply refines where item codes are placed.
+            if (qrManager != null && qrManager.RoomAnchorInstance == null && statusUI != null)
+                statusUI.ShowMessage("Scan the Room Anchor QR to calibrate item positions.",
+                                     "Optional — the session is ready.", true);
         }
 
-        public void AddDefaultDemoQRCodes()
+        /// <summary>
+        /// Resets the flow so the user can return to the Sign-In window and start fresh (or re-sign in
+        /// with stored credentials). Unsubscribes QR callbacks and clears the session-entered latch.
+        /// Does NOT wipe stored credentials — Sign In stays available without re-scanning the setup code.
+        /// </summary>
+        public void ResetForNewSession()
         {
-            string[] demoPayloads = { "TrueEchoVR", "1", "2", "3" };
-            Vector3[] demoOffsets = { 
-                new Vector3(0f, 1.2f, 1.5f),
-                new Vector3(-1.0f, 1.0f, 1.2f),
-                new Vector3(1.0f, 0.8f, 1.2f),
-                new Vector3(0f, 1.5f, 2.0f)
-            };
+            _sessionEntered = false;
+            isInitializing = true;
+            InitializationComplete = false;
 
-            for (int i = 0; i < demoPayloads.Length; i++)
+            if (qrManager != null)
             {
-                qrManager.UpdateQRCodeFromRemote(demoPayloads[i], demoOffsets[i], Quaternion.identity);
+                qrManager.OnQRCodeAdded -= OnQRCodeAddedNormal;
+                qrManager.OnQRCodeUpdated -= OnQRCodeUpdatedNormal;
+                qrManager.OnQRCodeRemoved -= OnQRCodeRemovedNormal;
             }
+
+            // Return to the Login window. Stored credentials remain, so the user can Sign In again
+            // (no re-scan needed) — or re-scan a new Login Code, or use Demo Mode.
+            UIManager.Instance?.SetState(UIManager.UIState.Login);
+        }
+
+        /// <summary>
+        /// Enters an offline DEMO session that behaves exactly like a normal session, minus the backend.
+        /// REAL QR detection runs: the user scans their RoomAnchor + item codes as usual, and every detected
+        /// code is registered and pointable in the dropdown. Because no "legit" list was downloaded, detected
+        /// codes are simply colour-coded as "detected but unlisted" — the normal classification path.
+        /// </summary>
+        public void EnterDemoSession()
+        {
+            // Demo credentials satisfy the HasCredentials gating without contacting the backend.
+            if (webAppManager != null && !webAppManager.HasCredentials)
+                webAppManager.EnterDemoCredentials();
+
+            // Enter the live session normally. EnterLiveSession starts Full-mode detection, so real codes
+            // are tracked and added to the "Look At" dropdown with their normal colour classification.
+            EnterLiveSession();
+
+            if (statusUI != null)
+                statusUI.ShowMessage("DEMO MODE (offline)", "Scan your Room Anchor, then item QR codes as usual.", true);
+            UIManager.Instance?.AppendChatMessage("<color=orange>[Demo]</color> Offline session — detecting real QR codes (none marked legit without a backend list).");
+        }
+
+        /// <summary>
+        /// RoomAnchor discovered. NON-blocking: the session is already live; this just confirms calibration,
+        /// places any dormant item codes, and clears the optional calibration hint. Never changes UI state.
+        /// </summary>
+        private void OnRoomAnchorDiscovered(QrCodeManager.QRCodeInstance anchor)
+        {
+            if (anchor == null) return;
+
+            Debug.Log("[SessionFlowManager] RoomAnchor established.");
+            UIManager.Instance?.AppendChatMessage("<color=green>[Calibration]</color> Room Anchor established — item positions calibrated.");
+
+            // Clear the optional "scan the room anchor" hint now that calibration is done.
+            if (statusUI != null) statusUI.ShowMessage("Room Anchor calibrated.", "", false);
+
+            // Ensure we are in the live session (covers the case where the anchor is found before sign-in
+            // completes in unusual orderings).
+            if (!_sessionEntered && webAppManager != null && webAppManager.HasCredentials)
+                EnterLiveSession();
         }
 
         public void PointToQRCode(QrCodeManager.QRCodeInstance qr)

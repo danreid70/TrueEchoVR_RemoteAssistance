@@ -25,6 +25,15 @@ Engine.IO v4 is **server-driven**:
 - **Latency Tracking:** Round-trip time between consecutive server pings is exposed via `currentLatency`.
 
 > Debugging: set `SignalingManager.verboseSocketLogging = true` to log every raw packet (`=>` sent / `<=` received). The editor harness **Tools ▸ TEVR ▸ Signaling Tester** lets you connect to a room code and watch `WebSocket Open`, `Socket.IO Connected (40 ack)`, and latency live — on desktop, no headset required.
+>
+> Contract regression: **`TrueEchoVR/Debug/Run Signaling Contract Smoke Test`** (Play Mode) feeds each incoming event shape below through the live `ProcessIncomingMessage` parser and asserts correct dispatch — no backend needed. It uses the editor-only hooks `SignalingManager.Debug_FeedSocketEvent(...)`, `Debug_OnSocketEmit`, and `Debug_RemoteSocketId` (all `#if UNITY_EDITOR`).
+
+### Reconnection Watchdog
+On an **abnormal** socket close (`code != Normal`):
+- If `autoReconnect` is on and attempts remain (`_reconnectCount < maxReconnectAttempts`), the client waits `reconnectDelay` and re-opens for the current room, firing **`OnReconnecting(attempt, max)`** each try.
+- When attempts are exhausted (or auto-reconnect is off), it fires **`OnReconnectFailed`**. The UI then returns to the Sign In window and reveals the **Demo Mode** button.
+- **`SignalingManager.Reconnect()`** performs a manual retry (resets the attempt counter and re-opens for `currentRoomCode`).
+A clean/`Normal` close (e.g. the user pressing **Leave Session**) does **not** trigger reconnection.
 
 ### Outgoing (Unity to Replit)
 Every application event is framed `42["event-name", { ...singleJsonObject }]`. Exact payload shapes (these are produced by `JsonUtility`, so field names and nesting must match **exactly**):
@@ -129,7 +138,9 @@ The **Login Panel** drives device provisioning before a session can start (wired
 | :--- | :--- | :--- |
 | **Scan Login Code** | `OnScanLoginCodePressed` | Manual scan toggle. Not required — detection auto-starts at launch (see §8). Press again to cancel. |
 | **Backend URL** (input) | `loginApiUrlInput` → `SaveBackendUrl` | Editable backend base URL with a **default**, **overridable** on-device, **persisted** locally, and **pre-populated** every launch. The QR no longer carries the URL. |
-| **Sign In** | `OnSignInPressed` | Calls `RegisterAndBoot(customerId, locationId)` → `POST /api/headsets/register`, then the boot sequence. |
+| **Sign In** | `OnSignInPressed` | Calls `RegisterAndBoot(customerId, locationId)` → `POST /api/headsets/register`, then the boot sequence. On success, `SessionFlowManager.EnterLiveSession()` opens the session **immediately** (Room Anchor scan is optional/non-blocking). On failure, stays on Login, shows the error, and **reveals the Demo Mode button**. |
+| **Demo Mode** | `OnDemoModePressed` | Offline fallback (auto-revealed after a failed sign-in). Calls `SessionFlowManager.EnterDemoSession()`: sets demo credentials, opens a normal session, runs **real** QR detection. Detected codes are pointable and classified *detected-but-unlisted* (no downloaded legit list). |
+| **Leave Session** | `OnLeaveSession` | `Disconnect()` + `SessionFlowManager.ResetForNewSession()` → returns to Login with stored credentials intact (no re-scan needed). |
 
 ### Minimal Setup QR (preferred — smallest/least-dense payload)
 To keep the QR easy for the Quest 3 passthrough cameras to detect, the web app should encode **only a short setup code** (≈8 alphanumeric chars), nothing else:

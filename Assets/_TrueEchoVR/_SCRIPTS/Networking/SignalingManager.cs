@@ -50,6 +50,9 @@ namespace TEVR
 
         private int _reconnectCount = 0;
         private Coroutine _batteryCoroutine;
+        // Set when a REST call returns an auth failure (token/headset expired). When true, the boot flow
+        // must surface a re-scan prompt instead of dropping to Demo Mode.
+        private bool _credentialsExpired = false;
 
         private WebSocket _ws;
         private RTCPeerConnection _pc;
@@ -110,6 +113,14 @@ namespace TEVR
         public Action OnConnected;
         public Action OnDisconnected;
         public Action<string> OnConnectionError;
+        /// <summary>Fired at the start of each automatic reconnect attempt: (attemptNumber, maxAttempts).</summary>
+        public Action<int, int> OnReconnecting;
+        /// <summary>Fired when automatic reconnection is abandoned (attempts exhausted or auto-reconnect off
+        /// after an abnormal close). The UI should offer recovery (retry / re-sign-in / demo).</summary>
+        public Action OnReconnectFailed;
+        /// <summary>Fired when the backend rejects stored credentials (HTTP 401, or 403/404 on startup-data).
+        /// Credentials are cleared; the UI should prompt the user to re-scan a Login Code (NOT silently demo).</summary>
+        public Action OnCredentialsExpired;
         public Action<string> OnChatMessageReceived;
         // (name, qrCode, position, rotation). qrCode is the QR payload value — the most reliable id for
         // cross-referencing a locally-tracked code; name is the human-friendly label. position/rotation are
@@ -389,6 +400,15 @@ namespace TEVR
             StartCoroutine(ProvisioningSequence(customerId, locationId, onComplete));
         }
 
+        /// <summary>Sets in-memory demo credentials so HasCredentials is satisfied for an offline demo
+        /// session. Does NOT persist to PlayerPrefs (the demo is transient).</summary>
+        public void EnterDemoCredentials()
+        {
+            tevrHeadsetId = "DEMO_HEADSET";
+            tevrLocationId = "DEMO_LOCATION";
+            StartupDataLoaded = true;
+        }
+
         private void EnterDemoMode(Action<bool> onComplete)
         {
             tevrHeadsetId = "DEMO_HEADSET";
@@ -430,10 +450,10 @@ namespace TEVR
                 PlayerPrefs.SetString("TEVR_HEADSET_ID", tevrHeadsetId);
                 PlayerPrefs.SetString("TEVR_LOCATION_ID", tevrLocationId);
                 PlayerPrefs.Save();
-                Status($"Registered (headset id: {tevrHeadsetId}). Loading startup data ...");
+                Status("Headset registered. Downloading location data...");
                 registerDone = true;
             }, (err) => {
-                LastError = err;
+LastError = err;
                 Status($"Registration failed: {err}");
                 Debug.LogError($"[SignalingManager] Registration failed: {err}");
                 registerFailed = true;
@@ -456,22 +476,53 @@ namespace TEVR
             bool startupDone = false;
             bool failed = false;
 
+            Status("Fetching startup data from server...");
             GetData($"/headsets/{tevrHeadsetId}/startup-data?locationId={tevrLocationId}", (res) => {
-                var data = JsonUtility.FromJson<StartupData>(res);
-                StartupDataLoaded = true;
-                OnStartupDataReceived?.Invoke(data);
-                startupDone = true;
+                try {
+                    var data = JsonUtility.FromJson<StartupData>(res);
+                    StartupDataLoaded = true;
+                    OnStartupDataReceived?.Invoke(data);
+                    Status("Startup data applied.");
+                    startupDone = true;
+                } catch (Exception e) {
+                    Debug.LogError($"[SignalingManager] Error parsing startup data: {e.Message}");
+                    failed = true;
+                    startupDone = true;
+                }
             }, (err) => {
-                Debug.LogError($"[SignalingManager] Startup data failed: {err}. Falling back to Demo Mode.");
+                Debug.LogError($"[SignalingManager] Startup data request failed: {err}. Falling back to Demo Mode.");
                 failed = true;
                 startupDone = true;
             });
 
-            yield return new WaitUntil(() => startupDone);
+            // Wait for data or error. 
+            float timeout = 10f;
+            while (!startupDone && timeout > 0)
+            {
+                timeout -= Time.deltaTime;
+                yield return null;
+            }
             
+            if (!startupDone) 
+            {
+                Debug.LogWarning("[SignalingManager] Startup data request timed out.");
+                failed = true;
+            }
+
             if (failed)
             {
-                EnterDemoMode(onComplete);
+                if (_credentialsExpired)
+                {
+                    // Expired/invalid credentials: do NOT silently demo. OnCredentialsExpired has already
+                    // fired so the UI can prompt a re-scan. Report failure to the caller.
+                    Status("Sign-in credentials expired — please re-scan your Login Code.");
+                    onComplete?.Invoke(false);
+                }
+                else
+                {
+                    Status("Entering demo mode (offline).");
+                    EnterDemoMode(onComplete);
+                }
             }
             else
             {
@@ -529,7 +580,15 @@ namespace TEVR
                 StopBatterySequence();
                 if (verboseSocketLogging) Debug.LogWarning("[Signaling] WS closed: " + code);
                 if (autoReconnect && _reconnectCount < maxReconnectAttempts && code != WebSocketCloseCode.Normal)
+                {
                     StartCoroutine(ReconnectSequence());
+                }
+                else if (code != WebSocketCloseCode.Normal)
+                {
+                    // Abnormal drop and we will NOT auto-reconnect (off or attempts exhausted).
+                    Debug.LogWarning("[Signaling] Reconnect abandoned (code=" + code + ", attempts=" + _reconnectCount + "/" + maxReconnectAttempts + ").");
+                    OnReconnectFailed?.Invoke();
+                }
             };
 
             await _ws.Connect();
@@ -538,8 +597,16 @@ namespace TEVR
         private IEnumerator ReconnectSequence()
         {
             _reconnectCount++;
+            OnReconnecting?.Invoke(_reconnectCount, maxReconnectAttempts);
             yield return new WaitForSeconds(reconnectDelay);
             Login(currentRoomCode);
+        }
+
+        /// <summary>Manual reconnect: resets the attempt counter and re-opens the socket for the current room.</summary>
+        public void Reconnect()
+        {
+            _reconnectCount = 0;
+            if (!string.IsNullOrEmpty(currentRoomCode)) Login(currentRoomCode);
         }
 
         /// <summary>
@@ -722,6 +789,9 @@ namespace TEVR
                         request.uploadHandler = new UploadHandlerRaw(bodyRaw);
                     }
                     request.downloadHandler = new DownloadHandlerBuffer();
+                    // CRITICAL: without a timeout a stalled server (open socket, no response) hangs the
+                    // entire sign-in handshake forever. 15s per attempt lets the retry/fallback logic run.
+                    request.timeout = 15;
                     request.SetRequestHeader("Content-Type", "application/json");
                     // Backend enforces an AJAX/CSRF guard and rejects requests without this header (HTTP 403).
                     request.SetRequestHeader("X-Requested-With", "XMLHttpRequest");
@@ -742,8 +812,16 @@ namespace TEVR
                                         (string.IsNullOrEmpty(request.error) ? "" : $" — {request.error}") +
                                         (string.IsNullOrEmpty(body) ? "" : $" | {body}");
 
-                        if (endpoint.Contains("startup-data") && (request.responseCode == 404 || request.responseCode == 403)) {
+                        // Credential expiry: a 401 anywhere, or a 403/404 on startup-data, means the stored
+                        // token/headset is no longer valid. Clear creds and signal the UI to prompt a re-scan
+                        // (do NOT silently fall to Demo Mode — that hides the real problem from the operator).
+                        bool authFailure = request.responseCode == 401 ||
+                            (endpoint.Contains("startup-data") && (request.responseCode == 404 || request.responseCode == 403));
+                        if (authFailure) {
                             ClearCredentials();
+                            _credentialsExpired = true;
+                            LastError = $"HTTP {request.responseCode}: credentials invalid/expired.";
+                            OnCredentialsExpired?.Invoke();
                             onError?.Invoke($"HTTP {request.responseCode}: credentials invalid/expired. {url}");
                             yield break;
                         }
@@ -759,11 +837,27 @@ namespace TEVR
 
         private void SendSocketEvent(string eventName, object payload)
         {
+#if UNITY_EDITOR
+            // Observe emit INTENT before the open-socket check so contract smoke tests can verify outbound
+            // events (e.g. an "answer" produced from an "offer") without a live connection.
+            Debug_OnSocketEmit?.Invoke(eventName, JsonUtility.ToJson(payload));
+#endif
             if (_ws == null || _ws.State != WebSocketState.Open) return;
             string json = $"42[\"{eventName}\",{JsonUtility.ToJson(payload)}]";
             if (verboseSocketLogging) Debug.Log("[Signaling] => " + json);
             _ws.SendText(json);
         }
+
+#if UNITY_EDITOR
+        /// <summary>EDITOR-ONLY: fired for every outbound Socket.IO event BEFORE the open-socket check, so a
+        /// smoke test can observe emit intent (eventName, payloadJson) without a live connection.</summary>
+        public Action<string, string> Debug_OnSocketEmit;
+        /// <summary>EDITOR-ONLY: the last remote socket id captured from peer-joined / offer.</summary>
+        public string Debug_RemoteSocketId => _remoteSocketId;
+        /// <summary>EDITOR-ONLY: feed a raw Socket.IO event payload (e.g. ["chat-message",{...}]) through the
+        /// same parser the live socket uses, for contract/regression testing without a server.</summary>
+        public void Debug_FeedSocketEvent(string socketIoEventJson) => ProcessIncomingMessage(socketIoEventJson);
+#endif
 
         #endregion
 

@@ -53,6 +53,8 @@ public RawImage remoteVideoImage;
         public TMP_Text locationIdText;
         public Button signInButton;
         public Button scanLoginCodeButton;
+        [Tooltip("Optional fallback button: enters an offline DEMO session with sample QR codes when the backend can't be reached. Hidden until a sign-in attempt fails (or always available if you leave it active).")]
+        public Button demoModeButton;
         public TMP_Text loginStatusText;
 
         [Header("QR Detection Indicator (persistent ON/OFF status)")]
@@ -72,33 +74,56 @@ public RawImage remoteVideoImage;
         public TMP_InputField loginApiUrlInput;
 
         private bool _isScanningLoginCode = false;
+        // Once a setup/login code is accepted, suppress repeated auto-accept of the same code while it sits
+        // in view (detection keeps running so the marker stays visible, but we don't re-resolve every frame).
+        private bool _setupCodeLocked = false;
 
         private void HandleUIStateChanged(UIManager.UIState newState)
         {
+            // The sessionUIPanel (SessionGroup) should be active for all states except None.
+            if (sessionUIPanel != null) sessionUIPanel.SetActive(newState != UIManager.UIState.None);
+
             switch (newState)
             {
                 case UIManager.UIState.Login:
                     ShowLoginPanel();
                     break;
+                case UIManager.UIState.Calibration:
+                    // Hide both main panels during calibration to focus on the HUD instructions.
+                    if (loginPanel != null) loginPanel.SetActive(false);
+                    if (sessionPanel != null) sessionPanel.SetActive(false);
+                    break;
                 case UIManager.UIState.Session:
                     ShowSessionScreen();
-                    break;
-                default:
-                    if (sessionUIPanel != null) sessionUIPanel.SetActive(false);
                     break;
             }
         }
 
+        private bool _subscribedToUIManager = false;
+
+        /// <summary>
+        /// Idempotently subscribes to UIManager state changes. Safe to call from both OnEnable and Start:
+        /// during Bootstrap, UIManager.Instance may not exist yet when OnEnable runs (script-order race),
+        /// so Start re-attempts. Without this, the controller never receives Session/Login transitions and
+        /// the panels stop toggling.
+        /// </summary>
+        private void SubscribeToUIManager()
+        {
+            if (_subscribedToUIManager || UIManager.Instance == null) return;
+            UIManager.Instance.OnUIStateChanged += HandleUIStateChanged;
+            _subscribedToUIManager = true;
+        }
+
         private void OnEnable()
         {
-            if (UIManager.Instance != null)
-                UIManager.Instance.OnUIStateChanged += HandleUIStateChanged;
+            SubscribeToUIManager();
         }
 
         private void OnDisable()
         {
-            if (UIManager.Instance != null)
+            if (_subscribedToUIManager && UIManager.Instance != null)
                 UIManager.Instance.OnUIStateChanged -= HandleUIStateChanged;
+            _subscribedToUIManager = false;
         }
 
         private void Start()
@@ -136,6 +161,7 @@ public RawImage remoteVideoImage;
             // Login panel buttons (previously never wired -> clicking did nothing).
             if (signInButton != null) signInButton.onClick.AddListener(OnSignInPressed);
             if (scanLoginCodeButton != null) scanLoginCodeButton.onClick.AddListener(OnScanLoginCodePressed);
+            if (demoModeButton != null) demoModeButton.onClick.AddListener(OnDemoModePressed);
 
             // Calibration persistence buttons (REST push/pull of QR codes).
             if (pushQRButton != null) pushQRButton.onClick.AddListener(OnPushQRPressed);
@@ -226,7 +252,9 @@ public RawImage remoteVideoImage;
             // the user's view. Local capture is now started only when a remote session goes LIVE
             // (see OnConnected), by which point passthrough is rendering and permissions are resolved.
 
-            // Handle initial state manually
+            // Subscribe now that all Awakes have run (covers the case where UIManager.Instance was null
+            // during OnEnable). Then handle the initial state manually.
+            SubscribeToUIManager();
             if (UIManager.Instance != null)
                 HandleUIStateChanged(UIManager.Instance.GetCurrentState());
         }
@@ -245,10 +273,11 @@ public RawImage remoteVideoImage;
             if (signInButton != null) signInButton.interactable = true;
             if (loginStatusText != null) loginStatusText.text = "Ready to Sign In.";
 
-            // Re-arm SignIn-phase detection so the Sign In QR is auto-detected on this screen (e.g. after
-            // leaving a session). The headset is always looking for the setup code while the login panel
-            // is shown, and the indicator reflects it.
-            if (qrManager != null && qrManager.autoStartDetection)
+            // The headset is ALWAYS looking for the setup code while the login panel is shown — detection
+            // runs continuously here (regardless of the autoStartDetection flag) so detected codes always
+            // appear and re-appear. Allow auto-accept of a setup code again on a fresh panel show.
+            _setupCodeLocked = false;
+            if (qrManager != null)
             {
                 qrManager.SetScanMode(QrCodeManager.ScanMode.LoginOnly);
                 if (!qrManager.IsDetecting) qrManager.StartQRCodeDetection();
@@ -290,38 +319,60 @@ public RawImage remoteVideoImage;
             
             webAppManager.RegisterAndBoot(webAppManager.config.customerId, webAppManager.config.locationId, (success) => {
                 if (success) {
-                    // Route through the central UI state so UIManager.currentState matches the visible panel
-                    // (ShowJoinScreen bypassed SetState, leaving state stuck on Login). The session panel is
-                    // shown now; SessionFlowManager then drives "wait for RoomAnchor" from here.
-                    if (UIManager.Instance != null) UIManager.Instance.SetState(UIManager.UIState.Session);
+                    // Single driver: SessionFlowManager owns the transition into the live session
+                    // (non-blocking RoomAnchor). This closes the login window and opens the session window.
+                    if (sessionInit != null) sessionInit.EnterLiveSession();
+                    else if (UIManager.Instance != null) UIManager.Instance.SetState(UIManager.UIState.Session);
                     else ShowJoinScreen();
                 } else {
                     if (signInButton != null) signInButton.interactable = true;
                     string detail = webAppManager != null && !string.IsNullOrEmpty(webAppManager.LastError)
                         ? webAppManager.LastError : "Unknown error.";
                     if (loginStatusText != null)
-                        loginStatusText.text = $"<color=red>Sign in failed:</color> {Truncate(detail, 120)}";
+                        loginStatusText.text = $"<color=red>Sign in failed:</color> {Truncate(detail, 120)}\n<color=#FFD700>Try again, re-scan a Login Code, or use Demo Mode.</color>";
+                    // Reveal the Demo Mode fallback so the system can still be demonstrated offline.
+                    if (demoModeButton != null) demoModeButton.gameObject.SetActive(true);
                     Debug.LogError($"[SessionUI] Sign in failed: {detail}");
                 }
             });
         }
 
+        /// <summary>
+        /// Demo fallback: enters an offline sample session (fake RoomAnchor + sample QR codes) so the app
+        /// can be demonstrated without a live backend. Closes the login window and opens the session window.
+        /// </summary>
+        private void OnDemoModePressed()
+        {
+            // Stop any login-phase scan first so it doesn't fight the demo session.
+            StopLoginScan();
+
+            if (sessionInit != null)
+            {
+                sessionInit.EnterDemoSession();
+            }
+            else
+            {
+                // Minimal fallback if the flow manager is missing.
+                if (webAppManager != null) webAppManager.EnterDemoCredentials();
+                if (UIManager.Instance != null) UIManager.Instance.SetState(UIManager.UIState.Session);
+                else ShowSessionScreen();
+            }
+            AppendChatMessage("<color=orange>[Demo]</color> Entered offline demo session.");
+        }
+
         private void OnScanLoginCodePressed()
         {
-            // Toggle: a second press cancels scanning AND removes all detection/item markers drawn so far.
+            // Toggle the ACTIVE-scan emphasis. Detection itself keeps running continuously on the login
+            // panel (SignIn phase auto-detects), so cancelling never stops detection or hides markers —
+            // that was the bug where codes were "never found again" after cancel.
             if (_isScanningLoginCode)
             {
                 _isScanningLoginCode = false;
-                if (qrManager != null)
-                {
-                    qrManager.StopQRCodeDetection();
-                    // FIX: Use ClearAllVisuals to ensure EVERYTHING (pips and any accidental instances) 
-                    // is removed from the scene when the user clicks "Cancel Scan".
-                    qrManager.ClearAllVisuals();
-                }
                 HideScanHighlight();
-                if (loginStatusText != null) loginStatusText.text = "Scan cancelled.";
+                if (loginStatusText != null)
+                    loginStatusText.text = "<color=#22D3EE>Auto-detecting… still watching for a Sign In code.</color>";
                 UpdateScanButtonLabel(false);
+                UpdateDetectionIndicator();
                 return;
             }
 
@@ -335,15 +386,17 @@ public RawImage remoteVideoImage;
             }
 
             _isScanningLoginCode = true;
+            _setupCodeLocked = false; // allow accepting a (new) code again
             // Login phase: visual-only scanning (no RoomAnchor / item processing yet).
             if (qrManager != null)
             {
                 qrManager.SetScanMode(QrCodeManager.ScanMode.LoginOnly);
-                qrManager.StartQRCodeDetection();
+                if (!qrManager.IsDetecting) qrManager.StartQRCodeDetection();
                 qrManager.EnsureQrTrackingEnabled();
             }
             if (loginStatusText != null) loginStatusText.text = "Look at the Setup QR on the admin Locations page...";
             UpdateScanButtonLabel(true);
+            UpdateDetectionIndicator();
         }
 
         private void OnScenePermissionResult(bool granted)
@@ -391,19 +444,33 @@ public RawImage remoteVideoImage;
             bool signInPhase = qrManager != null && qrManager.State == QrCodeManager.DetectionState.SignIn;
 
             // SignIn phase: the headset auto-processes the setup/login code WITHOUT requiring the user to
-            // press "Scan Login Code" (detection runs from launch). When the user explicitly pressed Scan
-            // (_isScanningLoginCode) we also echo the raw read and announce invalid codes; in passive
-            // auto mode we stay quiet on non-setup codes so random QRs don't spam the status line.
+            // press "Scan Login Code" (detection runs from launch).
             if (_isScanningLoginCode || signInPhase)
             {
-                if (_isScanningLoginCode && loginStatusText != null)
-                    loginStatusText.text = $"Detected QR: <color=#22D3EE>{Truncate(payload, 48)}</color>";
-                HandleLoginQRScan(payload, announceInvalid: _isScanningLoginCode);
+                // ALWAYS show feedback if we are in sign-in phase, so the user knows the scanner works.
+                if (loginStatusText != null)
+                {
+                    // Only update if it's not already "Signing in..." or "Resolving..."
+                    string current = loginStatusText.text;
+                    if (!current.Contains("Signing in") && !current.Contains("Resolving"))
+                    {
+                         loginStatusText.text = $"Detected QR: <color=#22D3EE>{Truncate(payload, 48)}</color>";
+                    }
+                }
+                
+                // Always show a world-space highlight for EVERY detection during sign-in so the user can
+                // see the scanner is working and WHERE the code is.
+                ShowScanHighlight(pos, rot);
+
+                // Only attempt to accept/resolve while a code hasn't already been accepted this scan
+                // (prevents re-resolving the same code every frame while it sits in view).
+                if (!_setupCodeLocked)
+                    HandleLoginQRScan(payload, announceInvalid: _isScanningLoginCode);
                 return;
             }
 
             // Session/calibration phase: surface every detection in the log so the user can confirm the
-            // camera is actually seeing/tracking codes (even ones that are dormant until a RoomAnchor is set).
+            // camera is actually seeing/tracking codes.
             AppendChatMessage($"<color=#22D3EE>[Detected]</color> {Truncate(payload, 60)}");
             RefreshQRCodeDropdown();
         }
@@ -460,10 +527,19 @@ public RawImage remoteVideoImage;
             if (bareSetupCode) { AcceptSetupCode(payload.Trim(), null, null); return; }
             if (legacy) { AcceptLegacySetupScan(data); return; }
 
-            // A code was seen but it is no recognised setup shape. Only announce when the user explicitly
-            // initiated a scan (otherwise passive auto-detection would spam this for every QR).
-            if (announceInvalid && loginStatusText != null)
-                loginStatusText.text = $"<color=orange>Not a valid Setup code. Read: {Truncate(payload, 40)}</color>";
+            // A code was seen but it is no recognised setup shape. 
+            if (loginStatusText != null)
+            {
+                if (announceInvalid)
+                {
+                    loginStatusText.text = $"<color=orange>Read: {Truncate(payload, 40)}</color>\n<color=white>(Not a valid setup code)</color>";
+                }
+                else
+                {
+                    // Even if passive, show that SOMETHING was seen if we are on the login panel.
+                    loginStatusText.text = $"<color=#22D3EE>Saw: {Truncate(payload, 30)}</color>";
+                }
+            }
         }
 
         /// <summary>
@@ -473,6 +549,7 @@ public RawImage remoteVideoImage;
         /// </summary>
         private void AcceptSetupCode(string setupCode, string apiBaseUrlOrNull, string tokenOrNull)
         {
+            _setupCodeLocked = true; // a code was accepted; stop re-accepting it every frame
             // Persist setupCode (+ apiBaseUrl only if the QR carried one) so a single scan survives restarts.
             // Does NOT touch BackendConfig.asset on disk.
             webAppManager.SaveSetupProvisioning(apiBaseUrlOrNull, setupCode);
@@ -501,12 +578,14 @@ public RawImage remoteVideoImage;
                     PopulateLoginConfigTexts();
                     if (loginStatusText != null)
                         loginStatusText.text = "<color=#22D3EE>Setup resolved. Press Sign In to continue.</color>";
+                    if (signInButton != null) signInButton.interactable = true;
                 }
                 else
                 {
                     string detail = !string.IsNullOrEmpty(webAppManager.LastError) ? webAppManager.LastError : "Unknown error.";
                     if (loginStatusText != null)
                         loginStatusText.text = $"<color=red>Setup resolve failed:</color> {Truncate(detail, 100)}";
+                    if (signInButton != null) signInButton.interactable = true; // allow manual retry or edit
                     Debug.LogError($"[SessionUI] Setup resolve failed: {detail}");
                 }
             });
@@ -515,6 +594,7 @@ public RawImage remoteVideoImage;
         /// <summary>Legacy setup QR ({"customerId","locationId", ...}) — unchanged behavior.</summary>
         private void AcceptLegacySetupScan(SetupQR data)
         {
+            _setupCodeLocked = true; // a code was accepted; stop re-accepting it every frame
             // Persist immediately so the device remembers this setup and the fields prepopulate
             // on every subsequent launch (no need to re-scan the setup QR).
             webAppManager.SaveConnectionInfo(data.customerId, data.locationId);
@@ -539,17 +619,16 @@ public RawImage remoteVideoImage;
                 loginStatusText.text = "<color=#22D3EE>Setup code accepted. Press Sign In to continue.</color>";
         }
 
-        /// <summary>Stops the login-phase QR scan and clears the visual-reference markers.</summary>
+        /// <summary>
+        /// Ends the ACTIVE login-scan emphasis after a code is accepted. Detection KEEPS running (the login
+        /// panel always detects so codes stay visible); we do not stop detection or destroy markers here.
+        /// </summary>
         private void StopLoginScan()
         {
             _isScanningLoginCode = false;
-            if (qrManager != null)
-            {
-                qrManager.StopQRCodeDetection();
-                qrManager.ClearDetectionMarkers(); // clear the visual-reference boxes; next phase is sign-in
-            }
             if (scanLoginCodeButton != null) scanLoginCodeButton.interactable = true;
             UpdateScanButtonLabel(false);
+            UpdateDetectionIndicator();
         }
 
         private static string Truncate(string s, int max)
@@ -800,11 +879,14 @@ public RawImage remoteVideoImage;
         private void OnLeaveSession()
         {
             // Tear down the live session (network + local capture) and return to the Sign In panel,
-            // ready to sign in again.
+            // ready to sign in again with the SAME stored credentials (no re-scan required).
             webAppManager?.Disconnect();
-            if (qrManager != null) qrManager.StopQRCodeDetection();
             AppendChatMessage("<color=orange>[Session] Left session — returning to Sign In.</color>");
-            UIManager.Instance?.SetState(UIManager.UIState.Login);
+
+            // Reset the flow latches so a subsequent Sign In re-enters the session cleanly.
+            // ResetForNewSession also switches UIManager back to the Login state (which re-arms detection).
+            if (sessionInit != null) sessionInit.ResetForNewSession();
+            else UIManager.Instance?.SetState(UIManager.UIState.Login);
         }
 
         private void OnConnected()
@@ -827,6 +909,45 @@ public RawImage remoteVideoImage;
         }
 
         private void OnChatReceived(string msg) => AppendChatMessage($"Admin: {msg}");
+
+        // ---- Connection-state watchdog (Feature 1) ----
+
+        private void OnReconnecting(int attempt, int max)
+        {
+            if (connectionStatusText != null)
+                connectionStatusText.text = $"Status: <color=#FFD700>RECONNECTING ({attempt}/{max})…</color>";
+            AppendChatMessage($"<color=#FFD700>[Network]</color> Connection lost — reconnecting ({attempt}/{max})…");
+        }
+
+        private void OnReconnectFailed()
+        {
+            AppendChatMessage("<color=red>[Network]</color> Could not reconnect to the session.");
+            if (connectionStatusText != null)
+                connectionStatusText.text = "Status: <color=red>DISCONNECTED</color>";
+
+            // Surface recovery: return to the Sign In window where the user can re-Sign In (stored creds),
+            // re-scan a Login Code, or use the Demo Mode button. Make the Demo fallback visible immediately.
+            if (demoModeButton != null) demoModeButton.gameObject.SetActive(true);
+            if (sessionInit != null) sessionInit.ResetForNewSession();
+            else UIManager.Instance?.SetState(UIManager.UIState.Login);
+            if (loginStatusText != null)
+                loginStatusText.text = "<color=#FFD700>Connection lost. Sign In again, re-scan a Login Code, or use Demo Mode.</color>";
+        }
+
+        // ---- Auth token expiry handling (Feature 2) ----
+
+        private void OnCredentialsExpired()
+        {
+            // The backend rejected our stored token/headset. Prompt a fresh Login Code scan rather than
+            // silently dropping into Demo Mode, so the operator knows credentials must be renewed.
+            _setupCodeLocked = false;
+            if (sessionInit != null) sessionInit.ResetForNewSession();
+            else UIManager.Instance?.SetState(UIManager.UIState.Login);
+            if (loginStatusText != null)
+                loginStatusText.text = "<color=orange>Sign-in expired. Please re-scan your Login Code (or enter IDs and Sign In again).</color>";
+            if (signInButton != null) signInButton.interactable = true;
+            AppendChatMessage("<color=orange>[Auth]</color> Credentials expired — re-scan your Login Code to continue.");
+        }
 
         private void OnToggleDetectQR()
         {
@@ -876,9 +997,10 @@ public RawImage remoteVideoImage;
                 locationIdInput.text = cfg.locationId;
 
             // Seed the room code from the remembered setup-QR value so the user can join immediately.
-            if (roomCodeInput != null && string.IsNullOrEmpty(roomCodeInput.text)
-                && webAppManager != null && !string.IsNullOrEmpty(webAppManager.currentRoomCode))
-                roomCodeInput.text = webAppManager.currentRoomCode;
+            if (roomCodeInput != null && webAppManager != null && !string.IsNullOrEmpty(webAppManager.currentRoomCode))
+            {
+                roomCodeInput.text = webAppManager.currentRoomCode.ToUpper();
+            }
 
             // Pre-populate the editable Backend URL with the device's stored/default value (the QR no
             // longer carries it). Editing the field overrides + persists it (see onEndEdit wiring).
@@ -1015,6 +1137,9 @@ public RawImage remoteVideoImage;
                 webAppManager.OnChatMessageReceived -= OnChatReceived;
                 webAppManager.OnStartupDataReceived -= OnStartupDataReceived;
                 webAppManager.OnStatusUpdate -= OnBackendStatus;
+                webAppManager.OnReconnecting -= OnReconnecting;
+                webAppManager.OnReconnectFailed -= OnReconnectFailed;
+                webAppManager.OnCredentialsExpired -= OnCredentialsExpired;
             }
             if (qrManager != null)
             {

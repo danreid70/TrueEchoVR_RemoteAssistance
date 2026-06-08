@@ -1833,8 +1833,99 @@ else if (_isAnchorSet)
         [Serializable] private class CalibrationWrapper { public string headsetId; public List<CalibrationQRData> qrCodes; }
         [Serializable] private class SerializableQRData { public string identifierKey; public string fullPayload; public Vector3 position; public Quaternion rotation; }
         [Serializable] private class Wrapper { public List<SerializableQRData> data; }
-        public void StartQRCodeDetection() { IsDetecting = true; EnsureQrTrackingEnabled(); RaiseDetectionState(); }
+        public void StartQRCodeDetection() 
+        { 
+            IsDetecting = true; 
+            EnsureQrTrackingEnabled(); 
+            RaiseDetectionState(); 
+
+            // When detection is (re)started, explicitly check for any QR codes that were already 
+            // discovered while we were not detecting. This ensures "Cancel Scan" followed by "Scan" 
+            // works instantly if the QR is still in view.
+            var allTrackables = UnityEngine.Object.FindObjectsByType<MRUKTrackable>(FindObjectsSortMode.None);
+            foreach (var trackable in allTrackables)
+            {
+                if (trackable.TrackableType == OVRAnchor.TrackableType.QRCode)
+                {
+                    OnTrackableAdded(trackable);
+                }
+            }
+        }
         public void StopQRCodeDetection() { IsDetecting = false; RaiseDetectionState(); }
+
+#if UNITY_EDITOR
+        /// <summary>
+        /// EDITOR-ONLY: simulates detecting a QR code without a headset / MRUKTrackable. Drives the same
+        /// downstream behaviour as a real detection — raises OnRawQRDetected (login/setup path + UI feedback)
+        /// and, in Full mode, registers a RoomAnchor or item instance so it appears in the world and the
+        /// "Look At" dropdown. Compiled OUT of device builds. Use from the TrueEchoVR/Debug menu in Play Mode.
+        /// </summary>
+        public void SimulateQRDetectionEditor(string payload, Vector3? worldPos = null, Quaternion? worldRot = null)
+        {
+            if (string.IsNullOrEmpty(payload)) { Debug.LogWarning("[QrCodeManager][SIM] Empty payload ignored."); return; }
+
+            ComputeDefaultSimPose(out Vector3 pos, out Quaternion rot);
+            if (worldPos.HasValue) pos = worldPos.Value;
+            if (worldRot.HasValue) rot = worldRot.Value;
+
+            if (!IsDetecting) StartQRCodeDetection();
+
+            // 1) Raw detection event (matches the real OnTrackableAdded raw-announce step).
+            OnRawQRDetected?.Invoke(payload, pos, rot);
+
+            // 2) LoginOnly mode stops after the raw event (no RoomAnchor / item processing yet).
+            if (Mode == ScanMode.LoginOnly)
+            {
+                Debug.Log($"[QrCodeManager][SIM] LoginOnly raw detection: {payload}");
+                return;
+            }
+
+            // 3) Full mode: register as anchor / item exactly like the real detection path.
+            string key = GetIdentifierKey(payload);
+            bool isAnchor = payload.Contains(qrRoomAnchorLabel);
+
+            if (_trackedQRCodes.TryGetValue(key, out var existing))
+            {
+                existing.lastPosition = pos;
+                existing.lastRotation = rot;
+                if (isAnchor) { RoomAnchorInstance = existing; OnRoomAnchorDiscovered?.Invoke(existing); ActivateDormantQRCodes(); }
+                OnQRCodeUpdated?.Invoke(existing);
+                return;
+            }
+
+            if (isAnchor)
+            {
+                RoomAnchorInstance = CreateAndAddInstance(payload, pos, rot, QRStatus.Official, new Vector3(0.15f, 0.15f, 0.005f), true);
+                OnRoomAnchorDiscovered?.Invoke(RoomAnchorInstance);
+                ActivateDormantQRCodes();
+            }
+            else if (_isAnchorSet)
+            {
+                CreateAndAddInstance(payload, pos, rot, QRStatus.Unknown, new Vector3(0.15f, 0.15f, 0.005f), true);
+            }
+            else
+            {
+                _dormantQRCodes.Add(new CalibrationQRData { qrValue = payload, position = pos, rotation = rot });
+            }
+            Debug.Log($"[QrCodeManager][SIM] Full-mode detection registered: {payload}");
+        }
+
+        private void ComputeDefaultSimPose(out Vector3 pos, out Quaternion rot)
+        {
+            var camT = Camera.main != null ? Camera.main.transform : null;
+            if (camT != null)
+            {
+                Vector3 fwd = camT.forward;
+                pos = camT.position + fwd * 1.0f;
+                Vector3 flat = fwd; flat.y = 0f;
+                rot = flat.sqrMagnitude > 0.001f ? Quaternion.LookRotation(-flat.normalized, Vector3.up) : Quaternion.identity;
+                return;
+            }
+            pos = new Vector3(0f, 1.2f, 1.0f);
+            rot = Quaternion.identity;
+        }
+#endif
+
         public void ManualSave() => SaveToDisk();
         public void ManualLoad() => LoadFromDiskAndRestore();
         public void ManualLoadFromJson(string json)
