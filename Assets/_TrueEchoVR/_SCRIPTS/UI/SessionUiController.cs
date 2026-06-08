@@ -723,7 +723,7 @@ public RawImage remoteVideoImage;
             qrCodeDropdown.ClearOptions();
             
             List<TMP_Dropdown.OptionData> options = new List<TMP_Dropdown.OptionData>();
-            options.Add(NewColoredOption("Stop Pointing", Color.black));
+            options.Add(NewColoredOption("Stop Pointing", Color.white));
 
             qrCodeList.Clear();
             if (qrManager != null)
@@ -756,8 +756,8 @@ public RawImage remoteVideoImage;
             }
             qrCodeDropdown.AddOptions(options);
 
-            // The dropdown caption shows the current selection; keep it black too.
-            if (qrCodeDropdown.captionText != null) qrCodeDropdown.captionText.color = Color.black;
+            // The dropdown caption shows the current selection; keep it white.
+            if (qrCodeDropdown.captionText != null) qrCodeDropdown.captionText.color = Color.white;
         }
 
         // TMP_Dropdown.OptionData.color defaults to white and overrides the item label color, which
@@ -773,14 +773,14 @@ public RawImage remoteVideoImage;
             return s.Length > 36 ? s.Substring(0, 33) + "..." : s;
         }
 
-        // QR dropdown legend colours (chosen to stay legible on the light dropdown background):
+        // QR dropdown legend colours (chosen to stay legible on the dark dropdown background):
         //   Green  = in the server "legit" list AND discovered locally (all good).
         //   Orange = in the legit list but NOT currently discovered locally (missing — go find it).
         //   Red    = discovered locally but NOT in the legit list (unexpected / unlisted code).
         // To use blue instead of red for the unlisted state, change QrUnlistedColor below.
-        private static readonly Color QrMatchedColor  = new Color(0.05f, 0.55f, 0.12f);
-        private static readonly Color QrMissingColor  = new Color(0.85f, 0.45f, 0.00f);
-        private static readonly Color QrUnlistedColor = new Color(0.80f, 0.10f, 0.10f);
+        private static readonly Color QrMatchedColor  = new Color(0.2f, 0.8f, 0.3f);
+        private static readonly Color QrMissingColor  = new Color(1.0f, 0.6f, 0.1f);
+        private static readonly Color QrUnlistedColor = new Color(1.0f, 0.3f, 0.3f);
 
         private void OnJoinPressed()
         {
