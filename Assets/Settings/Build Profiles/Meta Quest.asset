@@ -175,6 +175,10 @@ MonoBehaviour:
         2}'
     - line: '|   - {fileID: 11400000, guid: fe2dd84f341392c4d8cb2e0912a04842, type:
         2}'
+    - line: '|   - {fileID: -2264778514210020867, guid: 136958f90a130274b8b70a31eed352fb,
+        type: 2}'
+    - line: '|   - {fileID: -3728528452315536981, guid: 2462f957eee75f940a3393fd6f039795,
+        type: 2}'
     - line: '|   metroInputSource: 0'
     - line: '|   wsaTransparentSwapchain: 0'
     - line: '|   xboxOneDisableKinectGpuReservation: 1'
@@ -327,7 +331,7 @@ MonoBehaviour:
     - line: '|   - m_BuildTarget: '
     - line: '|     m_Icons:'
     - line: '|     - serializedVersion: 2'
-    - line: '|       m_Icon: {fileID: 2800000, guid: c04d043820e74ab4787e649994cb1a18,
+    - line: '|       m_Icon: {fileID: 2800000, guid: aaa6d6b97b8da624c9ce0999606724da,
         type: 3}'
     - line: '|       m_Width: 128'
     - line: '|       m_Height: 128'
