@@ -1,13 +1,16 @@
-# TrueEchoVR SignalingManager Synchronization Protocol (v2.3 - RemoteAssistance)
+# TrueEchoVR SignalingManager Synchronization Protocol (v2.4 - RemoteAssistance)
 
 This document outlines the communication protocol between the Unity application (TrueEchoVR) and the Replit backend. This is used by the **SignalingManager** to coordinate WebRTC, chat, and spatial data. Payload shapes below were verified directly against `SignalingManager.cs` / `SessionUiController.cs` / `QrCodeManager.cs`.
 
-> **What changed in v2.3 (READ THIS — REPLIT ACTION REQUIRED):**
-> 1. **NEW real-time QR registration:** the headset now emits a **`qr-detected`** Socket.IO event the instant it sees a code (and a throttled update when a code moves). **Replit must add a handler for this event** to make detected codes appear live on the dashboard — see §2 "Outgoing" and the dedicated **§2a**. Previously the dashboard only learned of codes via the manual REST **Push**; that path still exists and is still authoritative for persistence.
-> 2. **WebRTC answerer order fixed** (headset→web video now negotiates correctly) — §4.
-> 3. **Composite alignment + aspect** corrected (4:3 passthrough) — §4.
-> 4. **Clear** now also clears the local "legit"/name lists and the focus glow (still no server-side delete) — §7.
-> 5. New **video toggles** (compositing on/off, stream-to-Replit on/off, show-remote) — §4.
+> **What changed in v2.4 (READ THIS — REPLIT ACTION ITEMS):**
+> 1. **WebRTC: the WEB APP must send the OFFER.** The headset is strictly **answer-only** — it builds its PeerConnection and streams video *only after* it receives an `offer`. If the dashboard stays on "Waiting for headset to connect", it is almost always because **(a)** the server never told the admin a headset joined the room, or **(b)** the admin side never sent an `offer`. The headset is connected and waiting. See the **§4a connection lifecycle** and the **§4b "Waiting for headset" checklist**.
+> 2. **`qr-detected` must accept BOTH a single code and a list.** The headset now PUSHes calibration as a **batch first, then falls back to per-item** registration if the batch fails. Replit should accept either a multi-element OR single-element `qrCodes` array (they are the same shape) — see §2a and §3b. This fixes "the RoomAnchor registered but the other code didn't".
+> 3. **Composite stream now aligns to the LEFT passthrough camera** (Quest 3's default WebCamTexture eye) and **defaults to passthrough-only** (VR/HUD overlay OFF until the operator enables it) — §4.
+> 4. **Session QR detection now defaults OFF** (operator starts it) and **all UI visuals are kept in lock-step with state** — §6/§8.
+>
+> **Carried over from v2.3 (still REQUIRED on Replit):**
+> - Add a Socket.IO handler for **`qr-detected`** (real-time QR registration) — §2a.
+> - WebRTC answerer order fix is in place headset-side — §4.
 
 > **Note on the Meta Spatial Anchor upgrade:** the RoomAnchor is now persisted on-device as a Meta `OVRSpatialAnchor` (drift-free, auto-relocalizing). This is a **device-local** change only — QR poses are still expressed relative to the RoomAnchor and synced exactly as documented here. **This protocol/contract is unchanged by that upgrade.** For a backend-implementer-focused spec, see `BACKEND_CONTRACT.md`.
 
@@ -79,6 +82,8 @@ Emitted by `SignalingManager.SendQrDetected(...)`, called from `SessionUiControl
 - `listed=false` means the headset saw a code that is **not** in the server's legit list (e.g. an extra/unknown code, or Demo Mode would be offline so this only happens in live sessions). You may surface these as "unrecognised" rather than auto-persisting them.
 - **Persistence vs. live view:** `qr-detected` is the *live overlay feed*. The authoritative save still happens when the operator taps **Push** (`POST /api/locations/{id}/qr-codes`, §3b). It is fine for Replit to also persist `qr-detected` upserts, but the headset does not assume it does.
 - **No ack is required.** The headset does not wait for a response; it is fire-and-forget over the socket.
+- **One event PER code (not a list).** `qr-detected` always describes a single code. Multiple codes arrive as a **sequence** of separate `qr-detected` events, so handle each independently. Ordering note: the **RoomAnchor is emitted first** (its world pose anchors the frame); items follow. If items were detected *before* the anchor existed, they are **re-emitted** right after the anchor is discovered (the headset re-flushes the whole set), so a late anchor still results in every item registering — just expect a second burst of `qr-detected` events after the anchor appears.
+- **Why you might have seen only the RoomAnchor before:** items detected before any RoomAnchor have no relative frame and were skipped; they are now re-sent once the anchor exists (headset-side fix in v2.4). No Replit change needed for that specific symptom, but the per-item REST fallback below DOES need Replit to accept single-item arrays.
 
 ### Incoming (Replit to Unity)
 Unity's parser (`ProcessIncomingMessage`) reads `42["event-name", { singleObject }]` and only handles the four events below. Any other event name is ignored. Each event must carry **exactly one** JSON object as its argument.
@@ -156,10 +161,36 @@ Persistence is handled via HTTP requests to `{apiHost}{apiPath}` (default `https
 ```
 > Poses are stored **relative to the RoomAnchor** zero-point (except the RoomAnchor entry itself). This relative frame is what makes the data portable to the web dashboard and is preserved unchanged by the on-device Meta Spatial Anchor upgrade.
 
+> **ROBUST PUSH (bulk → sequential fallback) — Replit must accept BOTH:**
+> The **Push** button (`OnPushQRPressed`) first POSTs the **whole list** in one `CalibrationUpload` (multi-element `qrCodes`). **If that POST fails**, the headset automatically retries by POSTing **each code individually** — one `CalibrationUpload` per request, each with a **single-element `qrCodes` array** (identical shape, just length 1), continuing past any individual failure and reporting a final `N/M registered` tally.
+> - **Therefore the endpoint must accept a `qrCodes` array of ANY length (1..N) and upsert each entry by `qrValue`.** A backend that only ever reads `qrCodes[0]` will appear to "only register one code" on the bulk path and is the most likely cause of "RoomAnchor saved but items didn't".
+> - This bulk-first/sequential-fallback pattern is the project's standard safety net: try the efficient path, fall back to the granular path, verify, and report. Mirror the same tolerance server-side (accept either shape) so a change on one side never breaks the other.
+
 ## 4. WebRTC Requirements
-- **Capture:** the headset streams a **composite RenderTexture** (B8G8R8A8_SRGB) = real-world passthrough (PCA `WebCamTexture` background) + the Unity-rendered overlay. The overlay is rendered at the **passthrough camera FOV** (`SignalingManager.passthroughHorizontalFovDeg`, Quest 3 default 82°) so virtual content aligns with the real world as the head turns — tune this field on-device if the overlay drifts.
-- **Audio:** Bi-directional audio is supported via `AudioStreamTrack`.
-- **Answerer negotiation order (headset side):** the headset is answer-only and MUST negotiate in this order, or the web app receives no video: **(1)** `SetRemoteDescription(offer)` → **(2)** `AddTrack` (reuses the offer's negotiated transceivers) → **(3)** `CreateAnswer`. Remote `ice-candidate` events are applied (queued until the remote description is set). STUN-only by default — add a TURN server if media fails to connect across restrictive networks.
+- **Capture:** the headset streams a **composite RenderTexture** (B8G8R8A8_SRGB) = real-world passthrough (PCA `WebCamTexture` background) + (optionally) the Unity-rendered VR/HUD overlay.
+- **Compositing defaults OFF:** the stream starts as **clean passthrough only**. The operator turns the VR/HUD overlay on with the **Compositing** toggle (`SetCompositingEnabled`). So by default the expert sees the real world exactly as the technician does, with no UI clutter.
+- **Aspect + alignment:** RT is sized to the **live passthrough aspect** (Quest 3 = 4:3, fallback 1280×960). The overlay renders at the **passthrough FOV** (`passthroughHorizontalFovDeg`, default 82°). The composite camera is **aligned to the LEFT passthrough camera** by default (`compositeEyeAlignment = Left`) because Quest 3's default `WebCamTexture` device maps to the left RGB camera — this removes the lateral parallax between the real-world background and the overlay. Fine-tune on-device with `manualEyeOffsetMeters` (a small +Z helps, since the camera sits slightly forward of the eye). The dashboard should display incoming video at its **native aspect** (do not force 16:9).
+- **Audio:** Bi-directional audio via `AudioStreamTrack`.
+- **Answerer negotiation order (headset side):** the headset is **answer-only** and negotiates: **(1)** `SetRemoteDescription(offer)` → **(2)** `AddTrack` → **(3)** `CreateAnswer`. Remote `ice-candidate` events are queued until the remote description is set. STUN-only by default — add a TURN server if media fails across restrictive networks.
+- **Operator video toggles (headset UI, no protocol impact):** Compositing on/off (overlay), Stream-to-Replit on/off (mutes the outbound track via `VideoStreamTrack.Enabled` without renegotiating), Show-remote (local visibility of the expert feed).
+
+### 4a. Connection lifecycle (who does what, in order)
+This is the exact sequence. **The web app/admin is the OFFERER; the headset is the ANSWERER.**
+1. Headset opens the WebSocket, completes the Engine.IO/Socket.IO handshake (`0`→`40`→`40` ack), then emits **`join-room`** `{ role:"headset", roomCode, locationId }`. Headset logs: *"Socket connected. Joined room … waiting for the expert to send a video offer…"*.
+2. **Server responsibility:** notify the admin/dashboard that a headset is present in that room (e.g. emit a peer/headset-joined to the admin, or let the admin poll room membership). **If this step is missing, the dashboard sits on "Waiting for headset to connect" even though the headset is fully connected.**
+3. Admin side creates an RTCPeerConnection with a **recvonly** video transceiver and sends **`offer`** `{ offer:{sdp,type}, fromSocketId }` to the headset (routed by the server).
+4. Headset receives `offer` → runs the answerer sequence → emits **`answer`** `{ roomCode, answer:{sdp,type}, targetSocketId }`. Headset logs: *"Offer received … negotiating"* then *"Answer sent — streaming video/audio to the expert."*
+5. Both sides exchange **`ice-candidate`** events. Media flows once ICE connects.
+6. Optional: headset emits **`peer-joined`** capture — it stores `socketId`/`fromSocketId` as the ICE/answer target. The server must route the answer/candidates back to that admin socket.
+
+### 4b. "Waiting for headset to connect" — diagnostic checklist (Replit side)
+The headset prints its progress to the in-session chat log (`[Backend]` lines) AND the Editor console. If you see *"Joined room … waiting for the expert to send a video offer"* on the headset but the dashboard still says "waiting", the problem is on the server/web side. Check, in order:
+1. **Room routing:** does the server place the `headset` and the `admin` in the **same room** keyed by `roomCode`? (Compare the exact `roomCode` string — it's upper-cased on the headset.)
+2. **Presence relay:** when the headset emits `join-room`, does the server tell the admin? The headset does **not** send an offer; if the admin never learns a headset joined, no offer is ever created.
+3. **Offer direction:** is the **admin** creating and sending the `offer`? The headset only ever answers. A common bug is both sides waiting for the other to offer.
+4. **Answer routing:** is the headset's `answer` (and its `ice-candidate`s) routed back to the admin's `socketId` (the `targetSocketId` the headset echoes)?
+5. **Payload shapes:** `offer`/`answer` SDP must be nested under the `offer`/`answer` key (not at the top level). `ice-candidate` must be nested under `candidate`. See §2.
+6. **TURN:** if signaling completes (answer sent) but no media appears, it's an ICE/NAT problem — add a TURN server.
 
 ## 5. Identification
 - **LocationID:** Critical for spatial calibration routing.
@@ -195,17 +226,70 @@ Flow when scanned (`HandleLoginQRScan` → `AcceptSetupCode`):
 ### Persistence keys (PlayerPrefs)
 `tevr_setupCode`, `tevr_apiBaseUrl` (new), plus `TEVR_CUSTOMER_ID`, `TEVR_LOCATION_ID`, `TEVR_HEADSET_ID`, `TEVR_ROOM_CODE`, `TEVR_AUTH_TOKEN`.
 
-## 8. QR Detection: Auto-Start, States & Performance
-- **Auto-start:** `QrCodeManager.autoStartDetection` (default **true**) begins detection at launch / on scene-permission grant, so the Sign In code is found without pressing Scan.
-- **States:** `QrCodeManager.State` = `Off | SignIn | Session` (event `OnDetectionStateChanged`). A persistent **"● QR Detection: ON"** indicator is shown on both the Login and Session panels with a live count.
+## 8. QR Detection: States, Defaults & Performance
+- **Sign-In phase auto-start:** detection runs automatically on the Login panel so the **setup/Sign-In QR** is found without pressing Scan (`autoStartDetection`, default true).
+- **Session phase defaults OFF (changed in v2.4):** when the live session opens, QR detection is **armed but NOT running**. The operator presses **Start Detection** to begin scanning room/item codes. This keeps the visible state honest (no "silent" scanning) and avoids burning frame-rate before it's needed.
+- **States:** `QrCodeManager.State` = `Off | SignIn | Session` (event `OnDetectionStateChanged`). A persistent indicator on both panels shows **● ON / ○ OFF** plus the phase and a live count.
+- **VISUAL-STATE SYNC RULE (project-wide):** every place that changes or defaults a state **also updates the matching visual immediately** — the Detection toggle label (`UpdateDetectionButtonLabel`) **and** the ON/OFF indicator (`UpdateDetectionIndicator`) are refreshed together on every start/stop/clear/state-change. The video toggles are authoritative for their defaults and are **pushed into** `SignalingManager` on init so checkbox == actual stream state. Follow this rule for any new state-driven UI.
 - **Markers:** every detected code shows a colour-coded status pip (green=Target/setup, blue=ValidListed, orange=Unlisted, red=Invalid) that settles to `fadeQrDetectionMarkerTransparency` (default 0.2) so continued tracking stays visible.
 - **Scales to 50+ codes:** toggle `showPayloadLabels` (TextMeshPro is the heaviest per-code object) and `showDebugCenter` (off by default) on `QrCodeManager` to keep frame-rate stable with many codes.
 
+### 8a. Improving QR detection reliability (Quest 3 passthrough)
+The passthrough cameras are lower-resolution than the human eye, so dense/small codes are hard to read. For reliable detection:
+- **Keep payloads short** (the setup code is ~8 chars by design). Shorter payload = lower module density = easier to read at distance/angle.
+- **Print bigger / higher-contrast** codes with a quiet zone (white border). Matte (non-glossy) media avoids glare.
+- **Get closer and steadier**, and ensure room lighting is adequate — detection improves markedly at ~0.3–0.8 m for a hand-sized code.
+- **Scan the RoomAnchor first** so item codes get a relative frame immediately (items seen before the anchor are re-registered automatically once it appears, but you'll see them placed correctly sooner).
+
 ## 7. Calibration Persistence (Session Panel)
-| Button | Method | Endpoint |
+| Button | Method | Endpoint / Behaviour |
 | :--- | :--- | :--- |
-| **Push QR** | `OnPushQRPressed` | `POST /api/locations/{id}/qr-codes` (uploads local calibration). |
+| **Push QR** | `OnPushQRPressed` | `POST /api/locations/{id}/qr-codes` — **bulk list first, then per-item sequential fallback** (see §3b). Reports `N/M registered`. |
 | **Pull QR** | `OnPullQRPressed` | `GET /api/locations/{id}/qr-codes` (downloads + applies calibration). |
-| **Start/Stop Detection** | `OnToggleDetectQR` | Toggles MRUK QR detection. |
-| **Clear QR** | `OnClearQRPressed` → `QrCodeManager.ClearAllUserData()` | **Full local reset:** removes tracked codes + visuals, known/dormant poses, the server-provided *legit*/name lists (empties the dropdown), all detection pips, and the focus glow. **No server-side delete is sent** — a subsequent **Pull** (or startup-data) repopulates from the server. |
+| **Start/Stop Detection** | `OnToggleDetectQR` | Toggles MRUK QR detection. **Defaults OFF** when a session opens; updates both the button label and the ON/OFF indicator. |
+| **Clear QR** | `OnClearQRPressed` → `QrCodeManager.ClearAllUserData()` | **Full local reset:** tracked codes + visuals, known/dormant poses, server *legit*/name lists (empties the dropdown), pips, focus glow, and the emit-throttle. **No server-side delete is sent** — a later **Pull** (or startup-data) repopulates. |
 | **Room Code (submit)** | `OnJoinPressed` | Emits `join-room` to connect to the remote expert. |
+
+Also: **real-time `qr-detected`** events stream automatically while detection is ON and the socket is connected (the dashboard updates live without pressing Push). Push remains the authoritative *persistence* action.
+
+## 9. Full Session Walkthrough — Automatic vs. Manual
+This is the end-to-end operator flow. **[AUTO]** = happens with no user action; **[USER]** = requires operator intervention.
+
+### A. Launch & Sign-In
+1. **[AUTO]** App boots to the **Sign In (Login)** panel. QR detection auto-starts in **SignIn** phase. The ON indicator shows on the panel.
+2. **[USER]** Point the headset at the **setup QR** (≈8-char code) on the admin Locations page. *(One-time: after the first successful resolve, the code + customer/location + backend URL are persisted and pre-filled on every later launch — so this becomes [AUTO] on subsequent runs.)*
+3. **[AUTO]** Headset resolves `GET /api/setup/{code}` → stores `customerId`/`locationId`/`roomCode?`. Status text + log update.
+4. **[USER]** Press **Sign In**. *(Fields are pre-filled; you can also edit IDs/Backend URL manually as a fallback.)*
+5. **[AUTO]** `POST /api/headsets/register` → boots → `EnterLiveSession()` opens the **Session** panel **immediately** (no waiting on calibration). On failure: stays on Login, shows the error, **reveals Demo Mode**. On `401`: prompts a re-scan (does **not** demo).
+
+### B. Session opens
+6. **[AUTO]** Local **passthrough preview** starts (clean passthrough; **Compositing OFF** by default). Stream-to-Replit is **ON** by default.
+7. **[AUTO]** Socket connects → `join-room` is emitted → headset logs *"waiting for the expert to send a video offer"*. **[SERVER/EXPERT]** must offer (see §4a) — the expert's video then appears in the remote panel.
+8. **[AUTO]** On connect, any codes already detected are **flushed** to the server (`qr-detected`).
+9. **[AUTO]** QR detection in the session is **OFF**. **[USER]** press **Start Detection** to scan room/item codes.
+
+### C. Calibration & QR capture
+10. **[USER]** Look at the **RoomAnchor** QR first. **[AUTO]** It's established as the world reference; the optional calibration hint clears; dormant codes are placed; `qr-detected` (RoomAnchor, world pose) is emitted.
+11. **[USER]** Look at each **item** QR. **[AUTO]** Each is tracked, added to the **Look-At dropdown**, colour-classified, and emitted as `qr-detected` (RoomAnchor-relative). Items seen *before* the anchor are **re-emitted automatically** once the anchor exists.
+12. **[AUTO]** Moving a code → throttled (~1/s) position update emitted. Per-frame jitter is **not** logged (performance).
+
+### D. Persistence (server sync)
+13. **[USER]** **Push QR** → uploads the full calibration. **[AUTO]** Bulk list first; if it fails, per-item sequential retry; final `N/M` tally reported.
+14. **[USER]** **Pull QR** → downloads the location's calibration and applies/merges it. **[AUTO]** Dropdown refreshes.
+15. **[USER]** **Clear QR** → wipes the **local** list/visuals/glow (no server delete). **[AUTO]** A later Pull/startup-data repopulates.
+   - **Merge model:** the dropdown/classifier is the union of the **server "legit" list** (from startup-data/Pull) and **locally detected** codes. Detected codes matching the legit list are *ValidListed* (blue); unmatched are *Unlisted* (orange); the setup code is *Target* (green); malformed are *Invalid* (red).
+
+### E. Remote assistance
+16. **[EXPERT→AUTO]** `chat-message` appears in the chat log; `point-to` highlights/points at the referenced code (matched locally by `qrValue`/`name`, or shown at supplied coordinates). Leaving Session or Clear removes the focus glow.
+17. **[USER]** Toggle **Compositing** to overlay VR/HUD onto the stream; **Stream-to-Replit** to mute/unmute outbound video; **Show-remote** to hide/show the expert feed. Each toggle's checkbox always matches the actual state.
+
+### F. End / re-enter
+18. **[USER]** **Leave Session** → disconnects, returns to Sign In with credentials intact (no re-scan), resets the emit-throttle. **[AUTO]** Detection returns to SignIn phase.
+
+### Checks & balances built in (for "it just works")
+- Real-time `qr-detected` **plus** manual Push (live view + authoritative save).
+- Bulk push **with** per-item fallback (one bad code can't block the rest).
+- Items re-flushed when the anchor appears (no "anchor-only" gaps).
+- 15 s REST timeouts + 3 retries; socket reconnect watchdog with Demo fallback.
+- Every state change updates its visual (toggles/labels/indicator/logs) in lock-step.
+- Non-blocking session entry; calibration is optional and never hides the session.

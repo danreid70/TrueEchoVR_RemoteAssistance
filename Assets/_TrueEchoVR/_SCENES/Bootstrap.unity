@@ -18223,7 +18223,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: UnityEngine.UI::UnityEngine.UI.ScrollRect
   m_Content: {fileID: 685826588}
-  m_Horizontal: 1
+  m_Horizontal: 0
   m_Vertical: 1
   m_MovementType: 1
   m_Elasticity: 0.1
@@ -43887,7 +43887,7 @@ MonoBehaviour:
   onValueChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_IsOn: 1
+  m_IsOn: 0
 --- !u!1 &1092188551
 GameObject:
   m_ObjectHideFlags: 0
@@ -62258,6 +62258,8 @@ MonoBehaviour:
   webcamDeviceName: 
   passthroughStartTimeout: 8
   passthroughHorizontalFovDeg: 82
+  compositeEyeAlignment: 1
+  manualEyeOffsetMeters: {x: 0, y: 0, z: 0}
 --- !u!114 &1533096047
 MonoBehaviour:
   m_ObjectHideFlags: 0

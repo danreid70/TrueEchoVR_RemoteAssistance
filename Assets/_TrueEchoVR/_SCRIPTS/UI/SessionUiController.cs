@@ -186,20 +186,23 @@ namespace TEVR
             if (pushQRButton != null) pushQRButton.onClick.AddListener(OnPushQRPressed);
             if (pullQRButton != null) pullQRButton.onClick.AddListener(OnPullQRPressed);
 
-            // Video toggles. Initialise visuals from the manager's current state, then subscribe.
+            // Video toggles. The SCENE toggle value is authoritative for the default: we PUSH it into the
+            // manager (rather than reading the manager back), so the visible checkbox and the actual stream
+            // state are guaranteed to match regardless of C#-initializer/serialization timing. Subscribe AFTER
+            // so the initial push doesn't double-fire (we apply it directly here).
             if (compositingToggle != null)
             {
-                if (webAppManager != null) compositingToggle.SetIsOnWithoutNotify(webAppManager.CompositingEnabled);
+                webAppManager?.SetCompositingEnabled(compositingToggle.isOn);
                 compositingToggle.onValueChanged.AddListener(OnCompositingToggled);
             }
             if (streamToReplitToggle != null)
             {
-                if (webAppManager != null) streamToReplitToggle.SetIsOnWithoutNotify(webAppManager.StreamingEnabled);
+                webAppManager?.SetStreamingEnabled(streamToReplitToggle.isOn);
                 streamToReplitToggle.onValueChanged.AddListener(OnStreamToReplitToggled);
             }
             if (showRemoteToggle != null)
             {
-                showRemoteToggle.SetIsOnWithoutNotify(true);
+                ApplyRemoteVisibility(); // no stream yet -> hidden, regardless of toggle (visual==combined state)
                 showRemoteToggle.onValueChanged.AddListener(OnShowRemoteToggled);
             }
 
@@ -236,7 +239,9 @@ namespace TEVR
                     remoteVideoImage.texture = tex;
                     remoteVideoImage.color = Color.white;
                     ApplyPreviewAspect(remoteVideoImage, tex);
-                    SetVideoImageVisible(remoteVideoImage, tex != null);
+                    _hasRemoteTexture = tex != null;
+                    // Visible only if a stream exists AND the operator hasn't turned the remote feed off.
+                    ApplyRemoteVisibility();
                 };
                 webAppManager.OnLocalStreamStarted += (tex) => {
                     if (localVideoImage == null) return;
@@ -275,7 +280,10 @@ namespace TEVR
                 qrManager.OnQRCodeRemoved += (key) => { AppendChatMessage($"[QR Removed] {key}"); RefreshQRCodeDropdown(); UpdateDetectionIndicator(); };
                 qrManager.OnRoomAnchorDiscovered += (qr) => {
                     AppendChatMessage($"[Anchor Discovered] <color=green>{qr.fullPayload}</color>");
-                    EmitQrToServer(qr, force: true);   // anchor world pose anchors everything else
+                    // The anchor world pose anchors everything else. Items detected BEFORE the anchor existed
+                    // were skipped by the real-time emit (no relative frame yet) and their one-shot
+                    // OnQRCodeAdded won't fire again — so re-flush the whole set now that the anchor is known.
+                    FlushDetectedQrToServer();
                 };
             }
 
@@ -693,7 +701,12 @@ namespace TEVR
         /// <summary>Routes backend progress messages to the login status line.</summary>
         private void OnBackendStatus(string msg)
         {
+            // Login panel headline (visible during sign-in).
             if (loginStatusText != null) loginStatusText.text = msg;
+            // Also mirror discrete backend/handshake milestones into the chat log so the connection lifecycle
+            // (join-room → peer-joined → offer → answer/streaming) is visible while IN a session too. These
+            // are event-driven (not per-frame), so they don't flood the log.
+            AppendChatMessage($"<color=#9AA0A6>[Backend]</color> {msg}");
         }
 
         // ---- On-headset QR detection box (cyan outline) ----
@@ -817,16 +830,16 @@ namespace TEVR
             // expert connects. StartLocalPreview() is a no-op if the local track is already running.
             if (webAppManager != null) webAppManager.StartLocalPreview();
 
-            // Make sure QR detection is actually running (Full mode) while the session panel is open so
-            // codes get tracked and added to the "Look At" list.
+            // Session QR detection DEFAULTS OFF (Full mode armed, but not running). The operator presses the
+            // Detection toggle to begin, so the toggle label + indicator always match the real state.
             if (qrManager != null)
             {
                 qrManager.SetScanMode(QrCodeManager.ScanMode.Full);
-                if (!qrManager.IsDetecting) qrManager.StartQRCodeDetection();
-                qrManager.EnsureQrTrackingEnabled();
+                qrManager.StopQRCodeDetection();
                 RefreshQRCodeDropdown();
             }
             UpdateDetectionButtonLabel();
+            UpdateDetectionIndicator();
         }
 
         private void UpdateDetectionButtonLabel()
@@ -987,7 +1000,8 @@ namespace TEVR
             if (connectionStatusText != null) connectionStatusText.text = "Status: DISCONNECTED";
             // The remote feed is gone -> hide its surface (the local preview keeps running).
             if (remoteVideoImage != null) remoteVideoImage.texture = null;
-            SetVideoImageVisible(remoteVideoImage, false);
+            _hasRemoteTexture = false;
+            ApplyRemoteVisibility();
         }
 
         private void OnChatReceived(string msg) => AppendChatMessage($"Admin: {msg}");
@@ -1047,6 +1061,7 @@ namespace TEVR
                 AppendChatMessage("<color=green>[Detection] STARTED.</color> Look at the RoomAnchor first, then QR codes.");
             }
             UpdateDetectionButtonLabel();
+            UpdateDetectionIndicator();
         }
 
         private void OnClearQRPressed()
@@ -1163,9 +1178,19 @@ namespace TEVR
                 : "<color=#22D3EE>[Video]</color> Streaming to Replit OFF (local preview still active).");
         }
 
-        private void OnShowRemoteToggled(bool on)
+        // Tracks whether a remote video texture currently exists, so remote visibility = (stream exists) AND
+        // (operator wants it shown). Keeps the show-remote toggle and the actual surface consistent.
+        private bool _hasRemoteTexture = false;
+
+        private void OnShowRemoteToggled(bool on) => ApplyRemoteVisibility();
+
+        /// <summary>Remote surface is visible only when BOTH a remote stream exists AND the show-remote toggle
+        /// is on. Called whenever either input changes, so visual always matches the combined state.</summary>
+        private void ApplyRemoteVisibility()
         {
-            if (remoteVideoImage != null) remoteVideoImage.gameObject.SetActive(on);
+            if (remoteVideoImage == null) return;
+            bool show = _hasRemoteTexture && (showRemoteToggle == null || showRemoteToggle.isOn);
+            SetVideoImageVisible(remoteVideoImage, show);
         }
 
         /// <summary>Uploads the current local QR calibration to the backend for this location.</summary>
@@ -1176,12 +1201,51 @@ namespace TEVR
             if (string.IsNullOrEmpty(locId)) { AppendChatMessage("<color=red>[Push] No Location ID set.</color>"); return; }
 
             int count = qrManager.TrackedQRCodes.Count;
-            string json = qrManager.GetQRCodeDataAsJson(webAppManager.tevrHeadsetId);
-            AppendChatMessage($"[Push] Uploading {count} detected QR Code(s)...");
+            string endpoint = $"locations/{locId}/qr-codes";
+            string bulkJson = qrManager.GetQRCodeDataAsJson(webAppManager.tevrHeadsetId);
+            AppendChatMessage($"[Push] Uploading {count} QR Code(s) as a batch...");
             if (pushQRButton != null) pushQRButton.interactable = false;
-            webAppManager.PostData($"locations/{locId}/qr-codes", json,
-                (res) => { AppendChatMessage($"<color=green>[Push] Pushed {count} detected QR Code(s) to the server.</color>"); if (pushQRButton != null) pushQRButton.interactable = true; },
-                (err) => { AppendChatMessage($"<color=red>[Push] Failed: {err}</color>"); if (pushQRButton != null) pushQRButton.interactable = true; });
+
+            // ROBUST FALLBACK: try the bulk list first; if the server rejects it (or processes only the first
+            // entry), fall back to registering each code individually in sequence. The backend should accept
+            // EITHER a multi-element or single-element qrCodes array.
+            webAppManager.PostData(endpoint, bulkJson,
+                (res) => {
+                    AppendChatMessage($"<color=green>[Push] Pushed {count} QR Code(s) as a batch.</color>");
+                    if (pushQRButton != null) pushQRButton.interactable = true;
+                },
+                (err) => {
+                    AppendChatMessage($"<color=orange>[Push] Batch failed ({err}). Retrying one code at a time…</color>");
+                    PushQRCodesSequentially(endpoint);
+                });
+        }
+
+        /// <summary>Sequential per-item fallback: POSTs each code as its own single-element upload, continuing
+        /// past individual failures so one bad code doesn't block the rest. Reports a final tally.</summary>
+        private void PushQRCodesSequentially(string endpoint)
+        {
+            var items = qrManager.GetQRCodeDataAsIndividualJson(webAppManager.tevrHeadsetId);
+            if (items.Count == 0)
+            {
+                AppendChatMessage("<color=orange>[Push] Nothing to register individually (no codes, or no RoomAnchor set yet).</color>");
+                if (pushQRButton != null) pushQRButton.interactable = true;
+                return;
+            }
+            PostQrItem(endpoint, items, 0, 0);
+        }
+
+        private void PostQrItem(string endpoint, System.Collections.Generic.List<string> items, int index, int succeeded)
+        {
+            if (index >= items.Count)
+            {
+                string color = succeeded == items.Count ? "green" : (succeeded == 0 ? "red" : "orange");
+                AppendChatMessage($"<color={color}>[Push] Individual registration complete: {succeeded}/{items.Count} code(s) registered.</color>");
+                if (pushQRButton != null) pushQRButton.interactable = true;
+                return;
+            }
+            webAppManager.PostData(endpoint, items[index],
+                (res) => PostQrItem(endpoint, items, index + 1, succeeded + 1),
+                (err) => { AppendChatMessage($"<color=red>[Push] Code {index + 1}/{items.Count} failed: {err}</color>"); PostQrItem(endpoint, items, index + 1, succeeded); });
         }
 
         /// <summary>Fetches the latest QR calibration for this location from the backend and applies it.</summary>

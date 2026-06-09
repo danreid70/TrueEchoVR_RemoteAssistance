@@ -238,8 +238,10 @@ namespace TEVR
             if (qrManager != null)
             {
                 qrManager.SetScanMode(QrCodeManager.ScanMode.Full);
-                qrManager.StartQRCodeDetection();
-                qrManager.EnsureQrTrackingEnabled();
+                // Session QR detection DEFAULTS OFF. The operator starts it explicitly via the Detection
+                // toggle so the visible state (toggle label + indicator) always matches reality. This also
+                // tears down any SignIn-phase detection that was running so the session starts clean.
+                qrManager.StopQRCodeDetection();
 
                 // Idempotent subscription (avoid double-add if entered via multiple paths).
                 qrManager.OnQRCodeAdded -= OnQRCodeAddedNormal;

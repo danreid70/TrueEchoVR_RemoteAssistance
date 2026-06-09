@@ -105,6 +105,17 @@ namespace TEVR
         [Range(40f, 140f)]
         public float passthroughHorizontalFovDeg = 82f;
 
+        public enum CompositeEyeAlignment { Center, Left, Right }
+        [Tooltip("Which physical passthrough camera the composite is aligned to. On Quest 3 the Passthrough " +
+                 "Camera API exposes the two forward-facing RGB cameras and the default WebCamTexture device " +
+                 "maps to the LEFT camera, so the composite camera is offset to the LEFT eye by default. This " +
+                 "removes the lateral parallax between the real-world background and the VR overlay.")]
+        public CompositeEyeAlignment compositeEyeAlignment = CompositeEyeAlignment.Left;
+        [Tooltip("Manual fine-tune offset (metres, in head-local space) ADDED to the automatic eye offset. " +
+                 "Use small values: +X right, +Y up, +Z forward. The passthrough cameras sit slightly forward " +
+                 "of the eyes, so a small +Z (e.g. 0.03) can further improve alignment. Tune on-device.")]
+        public Vector3 manualEyeOffsetMeters = Vector3.zero;
+
         private WebCamTexture _webcamTexture;
         private RenderTexture _captureRT;
         private Camera _internalCaptureCamera;
@@ -121,8 +132,9 @@ namespace TEVR
         private int _compositeVrMask;        // VR-content layers (everything except the passthrough bg)
 
         /// <summary>When true, the streamed/preview image is passthrough + VR overlay; when false it is
-        /// passthrough ONLY (the VR content layers are culled from the composite camera).</summary>
-        public bool CompositingEnabled { get; private set; } = true;
+        /// passthrough ONLY (the VR content layers are culled from the composite camera). Defaults OFF so the
+        /// stream starts as clean passthrough; the operator enables the overlay via the Compositing toggle.</summary>
+        public bool CompositingEnabled { get; private set; } = false;
 
         /// <summary>When true, the local video track is sent to the remote (Replit). When false the outbound
         /// stream is muted but the local preview keeps rendering.</summary>
@@ -701,6 +713,7 @@ LastError = err;
                 roomCode = currentRoomCode,
                 locationId = tevrLocationId
             });
+            Status($"Socket connected. Joined room '{currentRoomCode}' as headset — waiting for the expert to send a video offer…");
             OnConnected?.Invoke();
             StartBatterySequence();
             // Heartbeat is server-driven in Engine.IO v4 (server sends '2', we reply '3' in HandleEngineIoPacket).
@@ -769,10 +782,12 @@ LastError = err;
                 case "peer-joined":
                     var peer = JsonUtility.FromJson<PeerJoinedPayload>(payload);
                     _remoteSocketId = peer.socketId;
+                    Status($"Expert connected (peer-joined, {peer.role}). Waiting for the video offer…");
                     break;
                 case "offer":
                     var offer = JsonUtility.FromJson<OfferPayload>(payload);
                     _remoteSocketId = offer.fromSocketId;
+                    Status("Offer received from the expert — negotiating video/audio…");
                     StartCoroutine(HandleRemoteOffer(offer.offer));
                     break;
                 case "chat-message":
@@ -1140,7 +1155,10 @@ LastError = err;
             _compositeCamera.cullingMask = eye.cullingMask | (1 << mrLayer);
             _compositeCamera.depth = eye.depth - 1;
             _compositeCamera.transform.SetParent(eye.transform, false);
-            _compositeCamera.transform.localPosition = Vector3.zero;
+            // Align the composite to the passthrough camera's eye (LEFT by default on Quest 3). The eye
+            // camera renders the CENTER view; the passthrough feed is from the left physical camera, so we
+            // shift the composite camera to the left eye to remove the lateral parallax the operator reported.
+            _compositeCamera.transform.localPosition = ComputeCompositeEyeLocalOffset();
             _compositeCamera.transform.localRotation = Quaternion.identity;
 
             // CopyFrom(eye) inherits the EYE's FOV/aspect (and possibly an XR projection matrix). Override
@@ -1217,6 +1235,32 @@ LastError = err;
         /// passthrough image on the background quad. This is what makes the overlay track the room correctly
         /// as the head turns. FOV is tunable (Quest 3 default ~82° horizontal).
         /// </summary>
+        /// <summary>
+        /// Head-local offset (metres) from the CENTER eye to the selected passthrough-camera eye, used to
+        /// position the composite camera. The left eye is always head-local -X by half the IPD (a distance,
+        /// so it is rotation-invariant and safe to read from XR). Falls back to a 32 mm average half-IPD when
+        /// XR eye data isn't available (e.g. in-editor). A manual offset is added for on-device fine-tuning.
+        /// </summary>
+        private Vector3 ComputeCompositeEyeLocalOffset()
+        {
+            Vector3 baseOffset = Vector3.zero;
+            if (compositeEyeAlignment != CompositeEyeAlignment.Center)
+            {
+                float halfIpd = 0.032f; // average human half-IPD as a safe fallback
+                var leftDev = UnityEngine.XR.InputDevices.GetDeviceAtXRNode(UnityEngine.XR.XRNode.LeftEye);
+                var rightDev = UnityEngine.XR.InputDevices.GetDeviceAtXRNode(UnityEngine.XR.XRNode.RightEye);
+                if (leftDev.TryGetFeatureValue(UnityEngine.XR.CommonUsages.leftEyePosition, out Vector3 lp) &&
+                    rightDev.TryGetFeatureValue(UnityEngine.XR.CommonUsages.rightEyePosition, out Vector3 rp))
+                {
+                    float ipd = (lp - rp).magnitude; // a distance: independent of head orientation
+                    if (ipd > 0.04f && ipd < 0.085f) halfIpd = ipd * 0.5f;
+                }
+                float x = compositeEyeAlignment == CompositeEyeAlignment.Left ? -halfIpd : halfIpd;
+                baseOffset = new Vector3(x, 0f, 0f);
+            }
+            return baseOffset + manualEyeOffsetMeters;
+        }
+
         private void ApplyCompositeProjection()
         {
             if (_compositeCamera == null) return;
@@ -1447,6 +1491,9 @@ LastError = err;
             yield return _pc.SetLocalDescription(ref answerDesc);
 
             Debug.Log("[Signaling] Sending answer (video track " + (_videoTrack != null ? "present" : "MISSING") + ") to " + _remoteSocketId);
+            Status(_videoTrack != null
+                ? "Answer sent — streaming video/audio to the expert."
+                : "Answer sent, but NO local video track — passthrough capture may have failed (check camera permission).");
             SendSocketEvent("answer", new AnswerPayload { roomCode = currentRoomCode, answer = answerDesc, targetSocketId = _remoteSocketId });
         }
 

@@ -653,14 +653,17 @@ public class QRPayloadAction
             return true;
         }
 
-        public string GetQRCodeDataAsJson(string headsetId)
+        /// <summary>
+        /// Builds the canonical upload list: RoomAnchor in WORLD pose, every item in RoomAnchor-RELATIVE pose,
+        /// plus known-but-not-currently-detected items. Items are skipped (not uploaded in the wrong frame)
+        /// when no RoomAnchor exists. Shared by the bulk and per-item upload paths so both are identical.
+        /// </summary>
+        private List<CalibrationQRData> BuildUploadList(out int skippedNoAnchor)
         {
             var list = new List<CalibrationQRData>();
             var seen = new HashSet<string>();
-            int skippedNoAnchor = 0;
+            skippedNoAnchor = 0;
 
-            // The RoomAnchor uploads its WORLD pose (it IS the reference frame). Every item uploads its
-            // RoomAnchor-RELATIVE pose — the contract the backend/web dashboard expects. Sign-In codes excluded.
             foreach (var inst in _trackedQRCodes.Values)
             {
                 if (string.IsNullOrEmpty(inst.fullPayload) || IsSignInCode(inst.fullPayload)) continue;
@@ -672,9 +675,6 @@ public class QRPayloadAction
                     continue;
                 }
 
-                // Item: always express RELATIVE to the RoomAnchor (computed from the live world pose, so it is
-                // correct even if parenting hasn't been applied). Without a RoomAnchor the relative frame is
-                // undefined — skip rather than silently upload a world pose in the wrong frame.
                 if (TryGetAnchorRelativePose(inst, out var rp, out var rr))
                 {
                     list.Add(new CalibrationQRData { qrValue = inst.fullPayload, position = rp, rotation = rr });
@@ -686,7 +686,6 @@ public class QRPayloadAction
                 }
             }
 
-            // Known-but-not-currently-detected items (already RoomAnchor-relative) so Push uploads the full set.
             foreach (var kp in _knownPoses.Values)
             {
                 if (string.IsNullOrEmpty(kp.payload) || IsSystemCode(kp.payload)) continue;
@@ -696,10 +695,33 @@ public class QRPayloadAction
                 seen.Add(key);
             }
 
+            return list;
+        }
+
+        /// <summary>Bulk upload JSON: a single CalibrationWrapper with ALL codes in one qrCodes array.</summary>
+        public string GetQRCodeDataAsJson(string headsetId)
+        {
+            var list = BuildUploadList(out int skippedNoAnchor);
             if (skippedNoAnchor > 0)
                 Debug.LogWarning($"[QrCodeManager] Push: skipped {skippedNoAnchor} detected item(s) because no RoomAnchor is set — scan the Room Anchor first so item poses can be expressed relative to it.");
-
             return JsonUtility.ToJson(new CalibrationWrapper { headsetId = headsetId, qrCodes = list });
+        }
+
+        /// <summary>
+        /// Per-item upload JSON for the SEQUENTIAL fallback: one CalibrationWrapper per code, each carrying a
+        /// single-element qrCodes array. Same shape as the bulk upload, so a backend that iterates qrCodes
+        /// accepts either. Used when the bulk POST fails (or a backend that only registers one code per call).
+        /// </summary>
+        public List<string> GetQRCodeDataAsIndividualJson(string headsetId)
+        {
+            var list = BuildUploadList(out _);
+            var result = new List<string>(list.Count);
+            foreach (var item in list)
+            {
+                var single = new CalibrationWrapper { headsetId = headsetId, qrCodes = new List<CalibrationQRData> { item } };
+                result.Add(JsonUtility.ToJson(single));
+            }
+            return result;
         }
 
         /// <summary>
