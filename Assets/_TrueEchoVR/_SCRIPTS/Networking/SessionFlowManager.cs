@@ -276,6 +276,11 @@ namespace TEVR
                 qrManager.OnQRCodeAdded -= OnQRCodeAddedNormal;
                 qrManager.OnQRCodeUpdated -= OnQRCodeUpdatedNormal;
                 qrManager.OnQRCodeRemoved -= OnQRCodeRemovedNormal;
+
+                // Back out of the session's Full scan mode into the SignIn phase so the Sign-In/setup
+                // QR (which is suppressed during a session) can be detected again to sign in afresh.
+                qrManager.SetScanMode(QrCodeManager.ScanMode.LoginOnly);
+                if (!qrManager.IsDetecting) qrManager.StartQRCodeDetection();
             }
 
             // Return to the Login window. Stored credentials remain, so the user can Sign In again

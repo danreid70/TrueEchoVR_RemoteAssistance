@@ -305,12 +305,27 @@ public class QRPayloadAction
         private void ActivateDormantQRCodes()
         {
             if (!_isAnchorSet) return;
-            var list = new List<CalibrationQRData>(_dormantQRCodes);
-            _dormantQRCodes.Clear();
-            foreach (var dormant in list)
+
+            // Legacy dormant entries (codes seen before the anchor) become known-pose DATA — no markers.
+            if (_dormantQRCodes.Count > 0)
             {
-                UpdateQRCodeFromRemote(dormant.qrValue, dormant.position, dormant.rotation);
+                var list = new List<CalibrationQRData>(_dormantQRCodes);
+                _dormantQRCodes.Clear();
+                foreach (var d in list)
+                {
+                    if (string.IsNullOrEmpty(d.qrValue) || IsSystemCode(d.qrValue)) continue;
+                    _knownPoses[GetIdentifierKey(d.qrValue)] = new KnownPose
+                    {
+                        payload = d.qrValue,
+                        name = GetPayloadName(d.qrValue),
+                        localPosition = d.position,
+                        localRotation = d.rotation
+                    };
+                }
             }
+
+            // Re-parent any already-detected item markers so their local (RoomAnchor-relative) pose resolves.
+            ReparentDetectedItemsUnderAnchor();
         }
 
         private void Awake()
@@ -533,6 +548,7 @@ public class QRPayloadAction
                 if (inst.visualObject != null) Destroy(inst.visualObject);
             }
             _trackedQRCodes.Clear();
+            _knownPoses.Clear();
             RoomAnchorInstance = null;
             // The RoomAnchor visual (with its OVRSpatialAnchor component) was destroyed above; drop the stale
             // runtime reference. The persisted UUID is intentionally left so it can relocalize next launch
@@ -570,6 +586,7 @@ public class QRPayloadAction
             }
             _trackedQRCodes.Clear();
             _dormantQRCodes.Clear();
+            _knownPoses.Clear();
             RoomAnchorInstance = null;
             // Drop the stale spatial-anchor reference (its GameObject was destroyed above). Persistence is
             // intentionally preserved; call ClearRoomSpatialAnchor() to erase it for re-calibration.
@@ -581,18 +598,33 @@ public class QRPayloadAction
         public string GetQRCodeDataAsJson(string headsetId)
         {
             var list = new List<CalibrationQRData>();
+            var seen = new HashSet<string>();
+
+            // Detected codes: the RoomAnchor uploads its WORLD pose; every item uploads its RoomAnchor-relative
+            // (local) pose, which is the contract the backend/web dashboard expects. Sign-In codes excluded.
             foreach (var inst in _trackedQRCodes.Values)
             {
+                if (string.IsNullOrEmpty(inst.fullPayload) || IsSignInCode(inst.fullPayload)) continue;
+
                 Vector3 pos = inst.lastPosition;
                 Quaternion rot = inst.lastRotation;
-
                 if (inst != RoomAnchorInstance && inst.visualObject != null && _isAnchorSet)
                 {
                     pos = inst.visualObject.transform.localPosition;
                     rot = inst.visualObject.transform.localRotation;
                 }
-
                 list.Add(new CalibrationQRData { qrValue = inst.fullPayload, position = pos, rotation = rot });
+                seen.Add(inst.identifierKey);
+            }
+
+            // Known-but-not-currently-detected items (already RoomAnchor-relative) so Push uploads the full set.
+            foreach (var kp in _knownPoses.Values)
+            {
+                if (string.IsNullOrEmpty(kp.payload) || IsSystemCode(kp.payload)) continue;
+                string key = GetIdentifierKey(kp.payload);
+                if (seen.Contains(key)) continue;
+                list.Add(new CalibrationQRData { qrValue = kp.payload, position = kp.localPosition, rotation = kp.localRotation });
+                seen.Add(key);
             }
             return JsonUtility.ToJson(new CalibrationWrapper { headsetId = headsetId, qrCodes = list });
         }
@@ -605,88 +637,90 @@ public class QRPayloadAction
         /// </summary>
         public QRCodeInstance FindTrackedQRCode(string qrValue, string name)
         {
+            // RoomAnchor (pure reference) and Sign-In codes are never pointable items.
+            bool Pointable(QRCodeInstance i) => i != null && i != RoomAnchorInstance && !IsSystemCode(i.fullPayload);
+
             // 1) Exact payload value (canonical lookup: the dictionary key is the truncated payload).
             if (!string.IsNullOrEmpty(qrValue))
             {
-                if (_trackedQRCodes.TryGetValue(GetIdentifierKey(qrValue), out var byKey)) return byKey;
+                if (_trackedQRCodes.TryGetValue(GetIdentifierKey(qrValue), out var byKey) && Pointable(byKey)) return byKey;
                 foreach (var inst in _trackedQRCodes.Values)
-                    if (inst.fullPayload == qrValue) return inst;
+                    if (Pointable(inst) && inst.fullPayload == qrValue) return inst;
             }
             // 2) Friendly name / identifier-key equality, then a payload substring fallback.
             if (!string.IsNullOrEmpty(name))
             {
                 foreach (var inst in _trackedQRCodes.Values)
-                    if (inst.identifierKey == name || inst.fullPayload == name) return inst;
+                    if (Pointable(inst) && (inst.identifierKey == name || inst.fullPayload == name)) return inst;
                 foreach (var inst in _trackedQRCodes.Values)
-                    if (!string.IsNullOrEmpty(inst.fullPayload) && inst.fullPayload.Contains(name)) return inst;
+                    if (Pointable(inst) && !string.IsNullOrEmpty(inst.fullPayload) && inst.fullPayload.Contains(name)) return inst;
             }
             return null;
         }
 
+        /// <summary>
+        /// Applies a RoomAnchor-relative pose known from the server (StartupData / pulled calibration) or
+        /// from disk. The RoomAnchor is (re)established as a real visual (needed for parenting + the Meta
+        /// spatial anchor). Every other code is recorded as KNOWN-POSE DATA ONLY — no scene marker is
+        /// created, because markers exist solely for physically-detected codes (the "no stray markers"
+        /// rule). If the code is already physically detected, the live detection stays authoritative for
+        /// its marker; we just refresh the stored pose. Sign-In/setup codes are never items and are ignored.
+        /// </summary>
         public void UpdateQRCodeFromRemote(string payload, Vector3 pos, Quaternion rot)
         {
-            string key = GetIdentifierKey(payload);
-            bool isAnchor = payload.Contains(qrRoomAnchorLabel);
+            if (string.IsNullOrEmpty(payload)) return;
+            if (IsSignInCode(payload)) return; // setup/login code is never an item
 
-            if (isAnchor)
+            string key = GetIdentifierKey(payload);
+
+            if (IsRoomAnchorPayload(payload))
             {
                 if (_trackedQRCodes.TryGetValue(key, out QRCodeInstance existingAnchor))
                 {
                     existingAnchor.lastPosition = pos;
                     existingAnchor.lastRotation = rot;
                     if (existingAnchor.visualObject != null)
-                    {
                         existingAnchor.visualObject.transform.SetPositionAndRotation(pos, rot);
-                        // Suggestion: Apply OVRAnchor persistence here if Meta package is available
-                    }
                     RoomAnchorInstance = existingAnchor;
                 }
                 else
                 {
                     RoomAnchorInstance = CreateAndAddInstance(payload, pos, rot, QRStatus.Official, new Vector3(0.15f, 0.15f, 0.005f), true);
                 }
-                
-                // Ensure the RoomAnchor is persistent across scene loads if needed
-                // DontDestroyOnLoad(RoomAnchorInstance.visualObject); 
-                
+                // The anchor now exists: drain any legacy dormant entries to known poses and re-parent
+                // already-detected item markers so their RoomAnchor-relative (local) pose is computed.
                 ActivateDormantQRCodes();
+                RequestSave();
+                return;
             }
-            else
+
+            // Non-anchor item: store the RoomAnchor-relative pose as known DATA (no marker). If it is
+            // currently detected, the live world pose remains the source of truth for the marker.
+            _knownPoses[key] = new KnownPose
             {
-                if (_trackedQRCodes.TryGetValue(key, out QRCodeInstance existing))
-                {
-                    existing.status = QRStatus.Official;
-                    if (existing.visualObject != null)
-                    {
-                        // Anchor-Relative positioning: if we have an anchor, we should use local coordinates
-                        if (RoomAnchorInstance != null && RoomAnchorInstance.visualObject != null)
-                        {
-                            existing.visualObject.transform.SetParent(RoomAnchorInstance.visualObject.transform, true);
-                            existing.visualObject.transform.localPosition = pos;
-                            existing.visualObject.transform.localRotation = rot;
-                        }
-                        else
-                        {
-                            existing.visualObject.transform.SetPositionAndRotation(pos, rot);
-                        }
-                        UpdateTextOnObject(existing.visualObject, payload);
-                    }
-else if (_isAnchorSet)
-                    {
-                         existing.visualObject = CreateVisualObject(payload, pos, rot, QRStatus.Official, new Vector3(0.15f, 0.15f, 0.005f), true);
-                    }
-                    OnQRCodeUpdated?.Invoke(existing);
-                }
-                else if (_isAnchorSet)
-                {
-                    CreateAndAddInstance(payload, pos, rot, QRStatus.Official, new Vector3(0.15f, 0.15f, 0.005f), true, true);
-                }
-                else
-                {
-                    _dormantQRCodes.Add(new CalibrationQRData { qrValue = payload, position = pos, rotation = rot });
-                }
-            }
+                payload = payload,
+                name = GetPayloadName(payload),
+                localPosition = pos,
+                localRotation = rot
+            };
             RequestSave();
+        }
+
+        /// <summary>
+        /// Re-parents every currently-detected item marker under the RoomAnchor (keeping its world pose),
+        /// so each marker's localPosition/localRotation become the RoomAnchor-relative pose used for the
+        /// backend sync. World pose (detection truth / Meta storage) is preserved; only the parent changes.
+        /// </summary>
+        private void ReparentDetectedItemsUnderAnchor()
+        {
+            if (RoomAnchorInstance == null || RoomAnchorInstance.visualObject == null) return;
+            var anchorT = RoomAnchorInstance.visualObject.transform;
+            foreach (var inst in _trackedQRCodes.Values)
+            {
+                if (inst == RoomAnchorInstance || inst.visualObject == null) continue;
+                if (inst.visualObject.transform.parent != anchorT)
+                    inst.visualObject.transform.SetParent(anchorT, true); // worldPositionStays = true
+            }
         }
 
         public void OnTrackableAdded(MRUKTrackable trackable)
@@ -713,6 +747,16 @@ else if (_isAnchorSet)
             // Always announce the raw detection (even for codes that will go dormant before calibration).
             // This is what drives the login/setup-code scan + on-screen detection feedback.
             OnRawQRDetected?.Invoke(fullPayload, trackable.transform.position, trackable.transform.rotation);
+
+            // In a SESSION, the Sign-In/setup code is NOT a room item and must not appear at all —
+            // no pip, no instance. (During the SignIn phase below it still shows its green pip and drives
+            // the login flow.) When signed out the scan mode returns to LoginOnly, so it is findable again.
+            if (Mode == ScanMode.Full && IsSignInCode(fullPayload))
+            {
+                RemoveDetectionMarker(trackable);
+                Debug.Log($"[QrCodeManager] Sign-in code ignored during session (not an item): {fullPayload}");
+                return;
+            }
 
             // Testing aid: drop/refresh the colored 4-category pip over this code.
             // Sized correctly to the physical QR code bounds.
@@ -768,14 +812,17 @@ else if (_isAnchorSet)
                 // auto-relocalize next launch). No-op in Editor / when unsupported. Backend sync unaffected.
                 TryPersistRoomAnchorAsSpatialAnchor();
             }
-            else if (_isAnchorSet)
-            {
-                var inst = CreateAndAddInstance(fullPayload, trackable.transform.position, trackable.transform.rotation, QRStatus.Unknown, GetTrackableBoxScale(trackable), true);
-                inst.trackable = trackable;
-            }
             else
             {
-                _dormantQRCodes.Add(new CalibrationQRData { qrValue = fullPayload, position = trackable.transform.position, rotation = trackable.transform.rotation });
+                // Physically-detected item: ALWAYS create a marker at the DETECTED WORLD pose (the source
+                // of truth for detection + Meta storage). If a RoomAnchor exists the visual is parented to
+                // it so its local (RoomAnchor-relative) pose is computed for the backend sync; if not, it
+                // sits in world space until the anchor is found (ReparentDetectedItemsUnderAnchor).
+                var inst = CreateAndAddInstance(fullPayload, trackable.transform.position, trackable.transform.rotation,
+                    IsValidListed(fullPayload) ? QRStatus.Official : QRStatus.Unknown, GetTrackableBoxScale(trackable), true);
+                inst.trackable = trackable;
+                // It is now physically detected — drop any "known but not detected" data for it.
+                _knownPoses.Remove(key);
             }
             RequestSave();
         }
@@ -876,10 +923,10 @@ else if (_isAnchorSet)
 
         private void CreateDefaultVisualization(GameObject root, string payload, QRStatus status, Vector3 scale)
         {
-            // Unified 4-category colour (green=target, red=invalid, blue=valid-listed, orange=unlisted).
-            Color baseColor = GetCategoryColor(ClassifyPayload(payload));
-            bool isLegit = payload.Contains(qrRoomAnchorLabel) || payload.Contains("TrueEchoVR") || (payload.Length <= 2 && payload != "null");
-            string labelPrefix = isLegit ? "[Legit] " : "[Unknown] ";
+            // Unified 4-category colour + label (green=target, red=invalid, blue=valid-listed, orange=unlisted).
+            var category = ClassifyPayload(payload);
+            Color baseColor = GetCategoryColor(category);
+            string labelPrefix = LabelPrefixFor(category);
 
             GameObject bg = GameObject.CreatePrimitive(PrimitiveType.Cube);
             bg.name = "VisualBackground";
@@ -957,8 +1004,7 @@ else if (_isAnchorSet)
             var tmp = obj.GetComponentInChildren<TextMeshPro>();
             if (tmp != null) 
             {
-                bool isLegit = payload.Contains(qrRoomAnchorLabel) || payload.Contains("TrueEchoVR") || (payload.Length <= 2 && payload != "null");
-                tmp.text = $"{(isLegit ? "[Legit] " : "[Unknown] ")}{payload}";
+                tmp.text = $"{LabelPrefixFor(ClassifyPayload(payload))}{payload}";
             }
         }
 
@@ -1043,6 +1089,132 @@ else if (_isAnchorSet)
         /// (e.g. showing list entries that have not yet been discovered locally).</summary>
         public System.Collections.Generic.IReadOnlyCollection<string> ValidPayloads => _validPayloads;
 
+        // ---- System-code predicates (RoomAnchor + Sign-In are NEVER items) ----
+
+        /// <summary>True if the payload is the Room Anchor reference code (a pure spatial reference, not an item).</summary>
+        public bool IsRoomAnchorPayload(string payload)
+            => !string.IsNullOrEmpty(payload) && payload.Contains(qrRoomAnchorLabel);
+
+        /// <summary>
+        /// True if the payload is the Sign-In / setup code (never an item). In a SESSION this is the
+        /// known recognised setup code or a JSON login code; during the SignIn phase a bare alphanumeric
+        /// setup code also qualifies (before any code has been recognised).
+        /// </summary>
+        public bool IsSignInCode(string payload)
+        {
+            if (string.IsNullOrWhiteSpace(payload)) return false;
+            if (IsRoomAnchorPayload(payload)) return false;
+            if (!string.IsNullOrEmpty(recognizedSetupCode) && payload == recognizedSetupCode) return true;
+            if (TryParseLoginCode(payload)) return true;
+            // Pre-sign-in only: a bare setup code is a sign-in candidate until one is recognised.
+            if (Mode != ScanMode.Full && IsBareSetupCode(payload)) return true;
+            return false;
+        }
+
+        /// <summary>True if the payload is a system code (RoomAnchor or Sign-In) — never treated as a room item.</summary>
+        public bool IsSystemCode(string payload) => IsRoomAnchorPayload(payload) || IsSignInCode(payload);
+
+        // ---- Merged item model (server "legit" list  +  live detections) ----
+
+        /// <summary>
+        /// Reconciled status of a room ITEM (system codes excluded):
+        ///   DetectedUnlisted  = physically detected by the headset but NOT in the server legit list.
+        ///   DetectedListed    = physically detected AND in the server legit list.
+        ///   ListedNotDetected = in the server legit list but not currently detected (data only, no marker).
+        /// </summary>
+        public enum QrItemStatus { DetectedUnlisted, DetectedListed, ListedNotDetected }
+
+        public struct QrItem
+        {
+            public string payload;
+            public string name;                 // friendly name (server nameDictionary) or null
+            public QrItemStatus status;
+            public QRCodeInstance instance;     // null when ListedNotDetected
+        }
+
+        // Friendly names supplied by the server (payload -> name).
+        private readonly Dictionary<string, string> _payloadNames = new Dictionary<string, string>();
+
+        // RoomAnchor-relative poses known from the server/disk for codes that are NOT currently detected.
+        // These are DATA ONLY (no scene marker) — used for the merged list, point-to coordinate fallback,
+        // and re-upload. A code gains a real marker only when it is physically detected.
+        [Serializable] private class KnownPose { public string payload; public string name; public Vector3 localPosition; public Quaternion localRotation; }
+        private readonly Dictionary<string, KnownPose> _knownPoses = new Dictionary<string, KnownPose>();
+
+        /// <summary>Stores a friendly name for a payload (from the server nameDictionary / qrCodes[].name).</summary>
+        public void SetPayloadName(string payload, string name)
+        {
+            if (string.IsNullOrEmpty(payload) || string.IsNullOrEmpty(name)) return;
+            _payloadNames[payload] = name;
+        }
+
+        /// <summary>Returns the friendly name for a payload, or null if none is known.</summary>
+        public string GetPayloadName(string payload)
+            => (!string.IsNullOrEmpty(payload) && _payloadNames.TryGetValue(payload, out var n)) ? n : null;
+
+        /// <summary>Gets the RoomAnchor-relative pose known for a not-currently-detected listed code.</summary>
+        public bool TryGetKnownLocalPose(string payload, out Vector3 localPos, out Quaternion localRot)
+        {
+            localPos = Vector3.zero; localRot = Quaternion.identity;
+            if (string.IsNullOrEmpty(payload)) return false;
+            if (_knownPoses.TryGetValue(GetIdentifierKey(payload), out var kp)) { localPos = kp.localPosition; localRot = kp.localRotation; return true; }
+            return false;
+        }
+
+        /// <summary>Gets the WORLD pose for a not-currently-detected listed code (requires a RoomAnchor to resolve).</summary>
+        public bool TryGetKnownWorldPose(string payload, out Vector3 worldPos, out Quaternion worldRot)
+        {
+            worldPos = Vector3.zero; worldRot = Quaternion.identity;
+            if (!TryGetKnownLocalPose(payload, out var lp, out var lr)) return false;
+            if (RoomAnchorInstance == null || RoomAnchorInstance.visualObject == null) return false;
+            var t = RoomAnchorInstance.visualObject.transform;
+            worldPos = t.TransformPoint(lp);
+            worldRot = t.rotation * lr;
+            return true;
+        }
+
+        /// <summary>
+        /// Returns the merged room-item list: every physically-detected item (classified DetectedListed /
+        /// DetectedUnlisted) plus every server-listed payload not currently detected (ListedNotDetected).
+        /// RoomAnchor and Sign-In codes are always excluded.
+        /// </summary>
+        public List<QrItem> GetMergedQrItems()
+        {
+            var items = new List<QrItem>();
+            var seen = new HashSet<string>();
+
+            foreach (var inst in _trackedQRCodes.Values)
+            {
+                if (inst == null || string.IsNullOrEmpty(inst.fullPayload)) continue;
+                if (inst == RoomAnchorInstance) continue;
+                if (IsSystemCode(inst.fullPayload)) continue;
+                seen.Add(inst.identifierKey);
+                items.Add(new QrItem
+                {
+                    payload = inst.fullPayload,
+                    name = GetPayloadName(inst.fullPayload),
+                    status = IsValidListed(inst.fullPayload) ? QrItemStatus.DetectedListed : QrItemStatus.DetectedUnlisted,
+                    instance = inst
+                });
+            }
+
+            foreach (var payload in _validPayloads)
+            {
+                if (string.IsNullOrEmpty(payload) || IsSystemCode(payload)) continue;
+                string key = GetIdentifierKey(payload);
+                if (seen.Contains(key)) continue;
+                seen.Add(key);
+                items.Add(new QrItem
+                {
+                    payload = payload,
+                    name = GetPayloadName(payload),
+                    status = QrItemStatus.ListedNotDetected,
+                    instance = null
+                });
+            }
+            return items;
+        }
+
         // ---- Classification ----
 
         /// <summary>The current active setup code. If set, this code is always classified as Target (green)
@@ -1081,6 +1253,18 @@ else if (_isAnchorSet)
                 case QrMarkerCategory.Invalid:     return Color.red;
                 case QrMarkerCategory.ValidListed: return new Color(0.2f, 0.5f, 1f);  // blue
                 default:                           return new Color(1f, 0.55f, 0f);   // orange
+            }
+        }
+
+        /// <summary>Canonical text prefix for a category (used on the per-code visual label).</summary>
+        public static string LabelPrefixFor(QrMarkerCategory cat)
+        {
+            switch (cat)
+            {
+                case QrMarkerCategory.Target:      return "[Target] ";
+                case QrMarkerCategory.Invalid:     return "[Invalid] ";
+                case QrMarkerCategory.ValidListed: return "[Listed] ";
+                default:                           return "[Unlisted] ";
             }
         }
 
@@ -1794,13 +1978,27 @@ else if (_isAnchorSet)
         private void SaveToDisk()
         {
             var list = new List<SerializableQRData>();
+            var seen = new HashSet<string>();
+
             foreach (var inst in _trackedQRCodes.Values)
             {
                 if (inst.visualObject == null) continue;
+                if (string.IsNullOrEmpty(inst.fullPayload) || IsSignInCode(inst.fullPayload)) continue;
                 Vector3 p = inst.visualObject.transform.position;
                 Quaternion r = inst.visualObject.transform.rotation;
                 if (inst != RoomAnchorInstance && _isAnchorSet) { p = inst.visualObject.transform.localPosition; r = inst.visualObject.transform.localRotation; }
                 list.Add(new SerializableQRData { identifierKey = inst.identifierKey, fullPayload = inst.fullPayload, position = p, rotation = r });
+                seen.Add(inst.identifierKey);
+            }
+
+            // Persist known-but-not-currently-detected item poses (RoomAnchor-relative) so they survive a restart.
+            foreach (var kp in _knownPoses.Values)
+            {
+                if (string.IsNullOrEmpty(kp.payload) || IsSystemCode(kp.payload)) continue;
+                string key = GetIdentifierKey(kp.payload);
+                if (seen.Contains(key)) continue;
+                list.Add(new SerializableQRData { identifierKey = key, fullPayload = kp.payload, position = kp.localPosition, rotation = kp.localRotation });
+                seen.Add(key);
             }
             File.WriteAllText(Path.Combine(Application.persistentDataPath, saveFileName), JsonUtility.ToJson(new Wrapper { data = list }, true));
         }
@@ -1823,7 +2021,9 @@ else if (_isAnchorSet)
                 {
                     UpdateQRCodeFromRemote(anchor.fullPayload, anchor.position, anchor.rotation);
                 }
-                foreach (var it in w.data) { if (it == anchor) continue; if (_isAnchorSet) UpdateQRCodeFromRemote(it.fullPayload, it.position, it.rotation); else _dormantQRCodes.Add(new CalibrationQRData { qrValue = it.fullPayload, position = it.position, rotation = it.rotation }); }
+                // Items become known-pose DATA only (no markers until physically detected). UpdateQRCodeFromRemote
+                // stores the RoomAnchor-relative pose regardless of whether the anchor is set yet.
+                foreach (var it in w.data) { if (it == anchor) continue; UpdateQRCodeFromRemote(it.fullPayload, it.position, it.rotation); }
             } catch (Exception e) { Debug.LogError(e.Message); }
         }
 
@@ -1881,8 +2081,15 @@ else if (_isAnchorSet)
             }
 
             // 3) Full mode: register as anchor / item exactly like the real detection path.
+            // The sign-in/setup code is never an item — suppress it in a session.
+            if (IsSignInCode(payload))
+            {
+                Debug.Log($"[QrCodeManager][SIM] Sign-in code ignored during session (not an item): {payload}");
+                return;
+            }
+
             string key = GetIdentifierKey(payload);
-            bool isAnchor = payload.Contains(qrRoomAnchorLabel);
+            bool isAnchor = IsRoomAnchorPayload(payload);
 
             if (_trackedQRCodes.TryGetValue(key, out var existing))
             {
@@ -1899,13 +2106,11 @@ else if (_isAnchorSet)
                 OnRoomAnchorDiscovered?.Invoke(RoomAnchorInstance);
                 ActivateDormantQRCodes();
             }
-            else if (_isAnchorSet)
-            {
-                CreateAndAddInstance(payload, pos, rot, QRStatus.Unknown, new Vector3(0.15f, 0.15f, 0.005f), true);
-            }
             else
             {
-                _dormantQRCodes.Add(new CalibrationQRData { qrValue = payload, position = pos, rotation = rot });
+                // Detected item: always create a marker at the world pose (truth). Drop any known-pose data.
+                CreateAndAddInstance(payload, pos, rot, IsValidListed(payload) ? QRStatus.Official : QRStatus.Unknown, new Vector3(0.15f, 0.15f, 0.005f), true);
+                _knownPoses.Remove(key);
             }
             Debug.Log($"[QrCodeManager][SIM] Full-mode detection registered: {payload}");
         }

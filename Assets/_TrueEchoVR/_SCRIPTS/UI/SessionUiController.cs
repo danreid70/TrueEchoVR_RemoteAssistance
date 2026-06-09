@@ -45,6 +45,9 @@ public RawImage remoteVideoImage;
 
         private string chatHistory = "";
         private List<QrCodeManager.QRCodeInstance> qrCodeList = new List<QrCodeManager.QRCodeInstance>();
+        // Parallel to qrCodeList: the payload for each dropdown entry (used to point at listed-but-not-detected
+        // codes via their known RoomAnchor-relative pose when there is no live instance).
+        private List<string> qrCodePayloads = new List<string>();
 
         [Header("Login UI (assign in Inspector)")]
         public GameObject loginPanel;
@@ -805,32 +808,29 @@ public RawImage remoteVideoImage;
             options.Add(NewColoredOption("Stop Pointing", Color.white));
 
             qrCodeList.Clear();
+            qrCodePayloads.Clear();
             if (qrManager != null)
             {
-                // 1) Locally discovered codes (pointable). Green if in the legit list, red if unlisted.
-                var matchedValid = new HashSet<string>();
-                foreach (var kvp in qrManager.TrackedQRCodes)
+                // Single unified, reconciled list (RoomAnchor + Sign-In codes are excluded by the manager):
+                //   DetectedListed    → green   (detected AND on the server legit list)
+                //   DetectedUnlisted  → red     (detected but NOT on the legit list)
+                //   ListedNotDetected → orange  (on the legit list but not currently visible)
+                foreach (var item in qrManager.GetMergedQrItems())
                 {
-                    var inst = kvp.Value;
-                    if (inst == null || string.IsNullOrEmpty(inst.fullPayload)) continue;
-                    if (inst.fullPayload.Contains("RoomAnchor")) continue;
-
-                    bool listed = qrManager.IsValidListed(inst.fullPayload);
-                    if (listed) matchedValid.Add(inst.fullPayload);
-
-                    string name = !string.IsNullOrEmpty(inst.identifierKey) ? inst.identifierKey : inst.fullPayload;
-                    string label = listed ? ShortenLabel(name) : ShortenLabel(name) + "  — unlisted";
-                    options.Add(NewColoredOption(label, listed ? QrMatchedColor : QrUnlistedColor));
-                    qrCodeList.Add(inst);
-                }
-
-                // 2) Legit-list codes that were never discovered locally (orange, not pointable).
-                foreach (var payload in qrManager.ValidPayloads)
-                {
-                    if (string.IsNullOrEmpty(payload) || payload.Contains("RoomAnchor")) continue;
-                    if (matchedValid.Contains(payload)) continue;
-                    options.Add(NewColoredOption(ShortenLabel(payload) + "  — not visible", QrMissingColor));
-                    qrCodeList.Add(null); // listed but not currently tracked → nothing to point at
+                    string display = !string.IsNullOrEmpty(item.name) ? item.name : item.payload;
+                    string label; Color color;
+                    switch (item.status)
+                    {
+                        case QrCodeManager.QrItemStatus.DetectedListed:
+                            label = ShortenLabel(display); color = QrMatchedColor; break;
+                        case QrCodeManager.QrItemStatus.DetectedUnlisted:
+                            label = ShortenLabel(display) + "  — unlisted"; color = QrUnlistedColor; break;
+                        default: // ListedNotDetected
+                            label = ShortenLabel(display) + "  — not visible"; color = QrMissingColor; break;
+                    }
+                    options.Add(NewColoredOption(label, color));
+                    qrCodeList.Add(item.instance);     // null for ListedNotDetected
+                    qrCodePayloads.Add(item.payload);
                 }
             }
             qrCodeDropdown.AddOptions(options);
@@ -1093,9 +1093,14 @@ public RawImage remoteVideoImage;
             var validValues = new List<string>(data.qrCodes.Count);
             foreach (var anchor in data.qrCodes)
             {
+                if (!string.IsNullOrEmpty(anchor.name)) qrManager.SetPayloadName(anchor.qrValue, anchor.name);
                 qrManager.UpdateQRCodeFromRemote(anchor.qrValue, anchor.position, anchor.rotation);
                 if (!string.IsNullOrEmpty(anchor.qrValue)) validValues.Add(anchor.qrValue);
             }
+            // Optional standalone name dictionary from the server.
+            if (data.nameDictionary != null)
+                foreach (var nm in data.nameDictionary)
+                    if (nm != null) qrManager.SetPayloadName(nm.qrValue, nm.name);
             // Feed the server's authoritative QR list into the classifier so these item codes show as
             // ValidListed (blue) instead of Unlisted (orange) when detected.
             qrManager.AddValidPayloads(validValues);
@@ -1115,16 +1120,29 @@ public RawImage remoteVideoImage;
             if (qrIndex >= 0 && qrIndex < qrCodeList.Count)
             {
                 var inst = qrCodeList[qrIndex];
-                if (inst == null)
+                if (inst != null)
                 {
-                    // Listed in the server "legit" set but not currently discovered locally → nothing to
-                    // point at. Inform the user instead of silently doing nothing.
-                    qrManager?.ClearFocus();
-                    statusUI?.ClearHighlight();
-                    AppendChatMessage("<color=#D97200>[Point] That QR code is in the list but not currently visible — scan it to point.</color>");
+                    sessionInit?.PointToQRCode(inst);
                     return;
                 }
-                sessionInit?.PointToQRCode(inst);
+
+                // Listed in the server "legit" set but not currently detected. If we know its
+                // RoomAnchor-relative pose (and the RoomAnchor is established), point at those coordinates;
+                // otherwise tell the user to scan it.
+                string payload = qrIndex < qrCodePayloads.Count ? qrCodePayloads[qrIndex] : null;
+                if (!string.IsNullOrEmpty(payload) && qrManager != null &&
+                    qrManager.TryGetKnownWorldPose(payload, out var worldPos, out var worldRot))
+                {
+                    qrManager.ClearFocus();
+                    string label = qrManager.GetPayloadName(payload) ?? payload;
+                    UIManager.Instance?.remoteHighlight?.HighlightPosition(label, worldPos, worldRot);
+                    statusUI?.ShowMessage($"Pointing to: {label}", "Listed (not currently visible).");
+                    return;
+                }
+
+                qrManager?.ClearFocus();
+                statusUI?.ClearHighlight();
+                AppendChatMessage("<color=#D97200>[Point] That QR code is in the list but not currently visible — scan it to point.</color>");
             }
         }
 

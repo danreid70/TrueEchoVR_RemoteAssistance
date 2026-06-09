@@ -109,6 +109,7 @@ namespace TEVR
         private Camera _compositeEye;        // the user's eye camera we mirror
         private int _compositeRestoreMask;   // eye cullingMask to restore on teardown
         private bool _compositeMaskModified;
+        private Coroutine _compositeMaintainCo; // keeps the passthrough background bound/oriented + recovers it
 
         public Action OnConnected;
         public Action OnDisconnected;
@@ -707,6 +708,8 @@ LastError = err;
             _pc?.Close(); _pc?.Dispose(); _pc = null;
             _localStream?.Dispose(); _localStream = null;
             _audioTrack?.Dispose(); _audioTrack = null;
+            _remoteDescriptionSet = false;
+            _pendingRemoteCandidates.Clear();
 
             // Fully tear down + NULL the local capture so StartLocalPreview() can start fresh next time
             // (previously these were disposed but left non-null, which permanently blocked re-preview).
@@ -746,7 +749,37 @@ LastError = err;
                     if (pt.pose != null && pt.pose.position != Vector3.zero) { pos = pt.pose.position; rot = pt.pose.rotation; }
                     OnPointToReceived?.Invoke(pt.name, pt.qrCode, pos, rot); 
                     break;
+                case "ice-candidate":
+                    // The expert (offerer) trickles ICE candidates which the backend relays to us.
+                    // Without applying these, the media path can never complete (we only ever sent OUR
+                    // candidates before). Parse defensively: accept both the nested { candidate: {...} }
+                    // shape (mirrors our outgoing) and a flat { candidate, sdpMid, sdpMLineIndex } shape.
+                    var iceData = ParseIncomingCandidate(payload);
+                    if (iceData != null && !string.IsNullOrEmpty(iceData.candidate))
+                        EnqueueOrAddRemoteCandidate(iceData);
+                    break;
             }
+        }
+
+        /// <summary>Parses an incoming ice-candidate payload, tolerating both nested and flat shapes.</summary>
+        private IceCandidateData ParseIncomingCandidate(string payload)
+        {
+            if (string.IsNullOrEmpty(payload)) return null;
+            try
+            {
+                var wrapped = JsonUtility.FromJson<IceCandidatePayload>(payload);
+                if (wrapped != null && wrapped.candidate != null && !string.IsNullOrEmpty(wrapped.candidate.candidate))
+                    return wrapped.candidate;
+            }
+            catch { /* fall through to flat shape */ }
+            try
+            {
+                var flat = JsonUtility.FromJson<IceCandidateData>(payload);
+                if (flat != null && !string.IsNullOrEmpty(flat.candidate))
+                    return flat;
+            }
+            catch { /* unparseable */ }
+            return null;
         }
 
         #endregion
@@ -930,32 +963,50 @@ LastError = err;
             // 2. Wait for a camera device to be enumerated.
             while (WebCamTexture.devices.Length == 0 && Time.time < deadline) yield return null;
             var devices = WebCamTexture.devices;
-            if (devices.Length == 0) { onComplete?.Invoke(false); yield break; }
+            if (devices.Length == 0)
+            {
+                Status("No camera devices enumerated — Passthrough Camera Access (PCA) is not exposing the headset cameras.");
+                onComplete?.Invoke(false);
+                yield break;
+            }
 
-            // 3. Choose the device: explicit name match if provided, otherwise the first available.
+            // Log every enumerated device so the root cause is visible in on-device logcat.
+            for (int i = 0; i < devices.Length; i++)
+                Debug.Log($"[Signaling] WebCamTexture device[{i}]: '{devices[i].name}' frontFacing={devices[i].isFrontFacing}");
+
+            // 3. Choose the device: explicit name match if provided; otherwise prefer a world-facing
+            //    (non-front-facing) device, falling back to the first available.
             string chosen = devices[0].name;
             if (!string.IsNullOrEmpty(webcamDeviceName))
             {
                 foreach (var d in devices)
-                {
                     if (d.name.IndexOf(webcamDeviceName, StringComparison.OrdinalIgnoreCase) >= 0) { chosen = d.name; break; }
-                }
             }
+            else
+            {
+                foreach (var d in devices)
+                    if (!d.isFrontFacing) { chosen = d.name; break; }
+            }
+            Debug.Log($"[Signaling] Selected passthrough device: '{chosen}' (requesting {captureResolution.x}x{captureResolution.y}@30).");
 
             // 4. Start the WebCamTexture.
             _webcamTexture = new WebCamTexture(chosen, captureResolution.x, captureResolution.y, 30);
             _webcamTexture.Play();
 
-            // 5. Wait until it actually produces frames (width stays at 16 until the stream is live).
-            while (_webcamTexture.width <= 16 && Time.time < deadline) yield return null;
-            if (_webcamTexture.width <= 16)
+            // 5. Wait until it actually produces frames (width/height stay tiny until the stream is live).
+            while ((!_webcamTexture.isPlaying || _webcamTexture.width <= 16) && Time.time < deadline) yield return null;
+            if (!_webcamTexture.isPlaying || _webcamTexture.width <= 16)
             {
-                Status("Passthrough camera failed to start.");
+                Status($"Passthrough camera '{chosen}' produced no frames within {passthroughStartTimeout:0}s " +
+                       $"(isPlaying={_webcamTexture.isPlaying}, {_webcamTexture.width}x{_webcamTexture.height}). " +
+                       "Most likely HEADSET_CAMERA was not granted, or the device is busy.");
                 _webcamTexture.Stop();
                 _webcamTexture = null;
                 onComplete?.Invoke(false);
                 yield break;
             }
+            Debug.Log($"[Signaling] Passthrough camera frames live: '{chosen}' {_webcamTexture.width}x{_webcamTexture.height} " +
+                      $"(rotation={_webcamTexture.videoRotationAngle}, mirrored={_webcamTexture.videoVerticallyMirrored}).");
 
             if (createTrack)
             {
@@ -1049,26 +1100,73 @@ LastError = err;
                 _compositeBgMaterial.mainTexture = _webcamTexture;
             }
 
-            // Place the quad near the far plane and scale it to fill the eye frustum.
-            float dist = Mathf.Clamp(eye.farClipPlane * 0.5f, 5f, 100f);
-            float h = 2f * dist * Mathf.Tan(eye.fieldOfView * 0.5f * Mathf.Deg2Rad);
-            float w = h * Mathf.Max(0.1f, eye.aspect);
+            // Parent the quad to the composite camera; sizing/orientation handled by UpdateCompositeQuadTransform().
             _compositeQuad.transform.SetParent(_compositeCamera.transform, false);
-            _compositeQuad.transform.localPosition = new Vector3(0f, 0f, dist);
-            // Compensate for passthrough WebCamTexture orientation (rotation + vertical mirroring).
-            float rot = _webcamTexture != null ? -_webcamTexture.videoRotationAngle : 0f;
-            _compositeQuad.transform.localRotation = Quaternion.Euler(0f, 0f, rot);
-            float flipY = (_webcamTexture != null && _webcamTexture.videoVerticallyMirrored) ? -1f : 1f;
-            _compositeQuad.transform.localScale = new Vector3(w, h * flipY, 1f);
-            _compositeQuad.SetActive(_webcamTexture != null);
+            UpdateCompositeQuadTransform();
+            _compositeQuad.SetActive(IsWebcamLive());
 
             // 6. Stream the composite.
             _videoTrack = new VideoStreamTrack(_compositeRT);
             OnLocalStreamStarted?.Invoke(_compositeRT);
             Status(camOk
                 ? "Streaming composite view (passthrough + UI)."
-                : "Streaming composite view (UI only — passthrough unavailable).");
+                : "Streaming composite view (UI only — passthrough not live yet; will recover automatically if it starts).");
+
+            // Keep the passthrough background fresh: bind frames, correct orientation changes, and recover
+            // the camera if it starts late (e.g. HEADSET_CAMERA granted after the initial timeout).
+            if (_compositeMaintainCo != null) StopCoroutine(_compositeMaintainCo);
+            _compositeMaintainCo = StartCoroutine(MaintainCompositeBackground());
+
             onComplete?.Invoke(true);
+        }
+
+        private bool IsWebcamLive() => _webcamTexture != null && _webcamTexture.isPlaying && _webcamTexture.width > 16;
+
+        /// <summary>Sizes/orients the passthrough background quad to fill the mirrored eye frustum,
+        /// compensating for the WebCamTexture's rotation and vertical mirroring (both can change after start).</summary>
+        private void UpdateCompositeQuadTransform()
+        {
+            if (_compositeQuad == null || _compositeEye == null) return;
+            Camera eye = _compositeEye;
+            float dist = Mathf.Clamp(eye.farClipPlane * 0.5f, 5f, 100f);
+            float h = 2f * dist * Mathf.Tan(eye.fieldOfView * 0.5f * Mathf.Deg2Rad);
+            float w = h * Mathf.Max(0.1f, eye.aspect);
+            _compositeQuad.transform.localPosition = new Vector3(0f, 0f, dist);
+            float rot = _webcamTexture != null ? -_webcamTexture.videoRotationAngle : 0f;
+            _compositeQuad.transform.localRotation = Quaternion.Euler(0f, 0f, rot);
+            float flipY = (_webcamTexture != null && _webcamTexture.videoVerticallyMirrored) ? -1f : 1f;
+            _compositeQuad.transform.localScale = new Vector3(w, h * flipY, 1f);
+        }
+
+        /// <summary>While the composite is active: binds live passthrough frames to the background quad,
+        /// keeps it oriented, and periodically retries acquiring the passthrough camera if it isn't live
+        /// (so a late permission grant or freed camera recovers without restarting the session).</summary>
+        private IEnumerator MaintainCompositeBackground()
+        {
+            float nextReacquire = 0f;
+            while (_compositeQuad != null && _compositeRT != null)
+            {
+                if (IsWebcamLive())
+                {
+                    if (_compositeBgMaterial != null)
+                    {
+                        if (_compositeBgMaterial.HasProperty("_BaseMap")) _compositeBgMaterial.SetTexture("_BaseMap", _webcamTexture);
+                        if (_compositeBgMaterial.mainTexture != _webcamTexture) _compositeBgMaterial.mainTexture = _webcamTexture;
+                    }
+                    UpdateCompositeQuadTransform();
+                    if (!_compositeQuad.activeSelf) { _compositeQuad.SetActive(true); Status("Passthrough background now live in the stream."); }
+                }
+                else
+                {
+                    if (_compositeQuad.activeSelf) _compositeQuad.SetActive(false);
+                    if (_webcamTexture == null && Time.time >= nextReacquire)
+                    {
+                        nextReacquire = Time.time + 5f;
+                        yield return StartCoroutine(SetupPassthroughCamera(_ => { }, createTrack: false));
+                    }
+                }
+                yield return null;
+            }
         }
 
         /// <summary>Stops the local preview/capture and releases all camera/texture resources so it can restart cleanly.</summary>
@@ -1079,6 +1177,8 @@ LastError = err;
 
         private void TearDownLocalVideo()
         {
+            if (_compositeMaintainCo != null) { StopCoroutine(_compositeMaintainCo); _compositeMaintainCo = null; }
+
             _videoTrack?.Dispose();
             _videoTrack = null;
 
@@ -1127,9 +1227,48 @@ LastError = err;
             }
         }
 
+        // Remote ICE candidates can arrive (trickle) before the peer connection exists or before the
+        // remote description is set. AddIceCandidate requires a remote description first, so we queue
+        // early candidates and flush them once the remote description is applied.
+        private readonly List<IceCandidateData> _pendingRemoteCandidates = new List<IceCandidateData>();
+        private bool _remoteDescriptionSet;
+
+        private void EnqueueOrAddRemoteCandidate(IceCandidateData data)
+        {
+            if (_pc != null && _remoteDescriptionSet) AddRemoteCandidate(data);
+            else _pendingRemoteCandidates.Add(data);
+        }
+
+        private void AddRemoteCandidate(IceCandidateData data)
+        {
+            if (_pc == null || data == null || string.IsNullOrEmpty(data.candidate)) return;
+            try
+            {
+                var init = new RTCIceCandidateInit
+                {
+                    candidate = data.candidate,
+                    sdpMid = data.sdpMid,
+                    sdpMLineIndex = data.sdpMLineIndex
+                };
+                _pc.AddIceCandidate(new RTCIceCandidate(init));
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning("[Signaling] Failed to add remote ICE candidate: " + e.Message);
+            }
+        }
+
+        private void FlushPendingRemoteCandidates()
+        {
+            if (_pc == null) return;
+            for (int i = 0; i < _pendingRemoteCandidates.Count; i++) AddRemoteCandidate(_pendingRemoteCandidates[i]);
+            _pendingRemoteCandidates.Clear();
+        }
+
         private IEnumerator HandleRemoteOffer(RTCSessionDescription offer)
         {
             var configIce = IceConfig;
+            _remoteDescriptionSet = false;
             _pc = new RTCPeerConnection(ref configIce);
             _pc.OnTrack = (RTCTrackEvent ev) => { if (ev.Track is VideoStreamTrack videoTrack) videoTrack.OnVideoReceived += (Texture tex) => OnRemoteStreamStarted?.Invoke(tex); };
             _pc.OnIceCandidate = (candidate) => {
@@ -1148,6 +1287,8 @@ LastError = err;
 
             foreach (var track in _localStream.GetTracks()) _pc.AddTrack(track, _localStream);
             yield return _pc.SetRemoteDescription(ref offer);
+            _remoteDescriptionSet = true;
+            FlushPendingRemoteCandidates();
             var createAnswerOp = _pc.CreateAnswer();
             yield return createAnswerOp;
             var answerDesc = createAnswerOp.Desc;
