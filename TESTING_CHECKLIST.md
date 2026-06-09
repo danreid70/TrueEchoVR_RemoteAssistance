@@ -25,6 +25,14 @@ Legend: ✅ automated/verified · 🖐️ manual (Editor) · 📱 manual (on-dev
 - 📱 Login window has a visible background/border; no overlapping/oversized text.
 - 📱 Drag-to-move a panel: it stays where released and keeps facing the user while dragged.
 - 📱 The HUD directional arrow points at the selected/“point-to” target and hides when cleared.
+- ✅ **(v2.4) Chat log scrolls vertically only** (no horizontal drag); newest line stays in view. *(editor smoke)*
+- ✅ **(v2.4) State↔visual sync at boot:** compositing toggle OFF, stream-to-Replit ON, show-remote ON, and the
+  manager's actual state matches each toggle. *(PlayMode test)*
+- 📱 **(v2.4) Session QR detection defaults OFF** — the Detection button reads "Start Detection" and the ON/OFF
+  indicator says OFF until the operator starts it.
+- 📱 **(v2.4) Video toggles:** Compositing overlays/removes the VR/HUD on the stream; Stream-to-Replit
+  mutes/unmutes outbound video (local preview stays); Show-remote hides/shows the expert feed. Each checkbox
+  always matches the actual behaviour.
 
 ## 4. Demo Mode
 - ✅ Demo Mode enters a Session (real detection path). *(PlayMode flow test)*
@@ -36,6 +44,19 @@ Legend: ✅ automated/verified · 🖐️ manual (Editor) · 📱 manual (on-dev
 - ✅ Every REST call has a 15s timeout (no infinite hang on a stalled server).
 - 📱 Socket.IO handshake completes (`0` → `40` → `40` ack) and `join-room` is emitted.
 - 📱 Server-driven heartbeat: server `2` → client `3`; `currentLatency` updates.
+- 📱 **(v2.4) Streaming handshake:** in-session chat shows `[Backend]` milestones `join-room → peer-joined →
+  offer → answer`. If it stalls at "waiting for the expert to send a video offer", the **admin/server** isn't
+  offering (headset is answer-only) — see `REPLIT_AI_INTEGRATION_GUIDE.md` §5.4.
+
+## 5a. QR Sync ⇄ Backend (v2.4)
+- ✅ Bulk-then-per-item push builders produce valid `CalibrationUpload` shapes. *(editor smoke)*
+- 📱 **Real-time registration:** with detection ON in a live session, each detected code appears on the Replit
+  dashboard live via `qr-detected` (RoomAnchor first, then items). Requires the Replit `qr-detected` handler.
+- 📱 **Anchor-after-item:** detect an item *before* the RoomAnchor → confirm it still registers once the anchor
+  is scanned (re-emit burst).
+- 📱 **Push fallback:** if the batch POST fails, the client retries per-item and reports `N/M registered`;
+  confirm the backend upserts every element (not just `qrCodes[0]`).
+- 📱 **Pull/merge:** Pull repopulates the dropdown; detected vs. listed colour classification is correct.
 
 ## 6. Resilience (Watchdog & Credential Expiry)
 - 📱 **Mid-session reconnect:** kill the WebSocket (drop server / network blip) → UI shows

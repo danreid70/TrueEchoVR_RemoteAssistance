@@ -10,6 +10,22 @@ the contract, the failure semantics, and a verification checklist.
 > This guide is the **narrative + responsibilities + checklist** that ties them together. If a schema here ever
 > disagrees with `BACKEND_CONTRACT.md`, the contract file wins — and please flag the drift.
 
+> ### 🔴 NEW in client v2.4 — ACTION REQUIRED on the backend
+> 1. **NEW Socket.IO event `qr-detected` (client → server).** The headset now registers each detected QR code
+>    in **real time** over the socket so the dashboard can show codes the instant they're seen — see **§5.1a**.
+>    **You must add a handler.** Without it, the dashboard won't update live (it would only learn of codes when
+>    the operator taps **Push**).
+> 2. **Push now sends a batch FIRST, then falls back to ONE code per request.** Your
+>    `POST /api/locations/{id}/qr-codes` must accept a `qrCodes` array of **any length (1..N)** and upsert each
+>    entry by `qrValue`. A backend that only reads `qrCodes[0]` is the #1 cause of "the RoomAnchor saved but the
+>    other codes didn't." See **§4 (Push)**.
+> 3. **"Waiting for headset to connect" is almost always a server/dashboard issue, not the headset.** The
+>    headset is **answer-only** — it never sends an offer. You must relay headset presence to the admin and the
+>    **admin must send the WebRTC `offer`**. See the new **§5.4 diagnostic**.
+> 4. *(Headset-side, FYI only — no backend change.)* The streamed video now aligns to the **left** passthrough
+>    camera and **defaults to clean passthrough** (VR/HUD overlay off until the operator enables it). Display the
+>    incoming video at its **native aspect** (Quest 3 passthrough is 4:3) — do not force 16:9.
+
 ---
 
 ## 1. What the client is (1-paragraph mental model)
@@ -62,12 +78,19 @@ This is the single most important section — implement your endpoints/events to
    **not** wait for a Room Anchor scan — calibration is non-blocking.
 6. **Join the live room.** When the operator joins, the headset opens the **Socket.IO** connection and (after
    the handshake) emits `join-room` with `role: "headset"`, the `roomCode`, and `locationId`.
-7. **Expert connects.** The dashboard joins the same room; you relay `peer-joined` to the headset, then the
-   WebRTC **offer → answer → ice-candidate** exchange (you relay these verbatim between the two peers).
-8. **Assist.** You relay `chat-message` both ways and `point-to` (expert → headset). Headset emits
+7. **Expert connects.** The dashboard joins the same room. **You must tell the headset an admin is present**
+   (relay `peer-joined`). **The admin/dashboard then sends the WebRTC `offer`** — the headset is *answer-only*
+   and will never offer. You relay **offer → answer → ice-candidate** verbatim between the two peers. ⚠️ If this
+   relay/offer step is missing, the dashboard sits on "Waiting for headset to connect" forever even though the
+   headset is connected and waiting (§5.4).
+8. **Real-time QR registration (NEW).** While session detection is on, the headset emits **`qr-detected`** for
+   each code the instant it sees it (RoomAnchor first, then items; throttled position updates as codes move).
+   Upsert these so the dashboard updates live (§5.1a).
+9. **Assist.** You relay `chat-message` both ways and `point-to` (expert → headset). Headset emits
    `health-update` every 60 s.
-9. **Calibration sync (optional, REST).** The operator can **Push** local QR calibration
-   (`POST /api/locations/{id}/qr-codes`) or **Pull** the latest (`GET /api/locations/{id}/qr-codes`).
+10. **Calibration sync (REST).** The operator can **Push** local QR calibration
+   (`POST /api/locations/{id}/qr-codes`, batch-then-per-item) or **Pull** the latest
+   (`GET /api/locations/{id}/qr-codes`). Push is the authoritative *persistence*; `qr-detected` is the live feed.
 
 ---
 
@@ -86,8 +109,15 @@ This is the single most important section — implement your endpoints/events to
 | `GET` | `/api/setup/{setupCode}` | — | `{ "customerId","locationId","roomCode"?,"token" }` — **`token` is mandatory.** |
 | `POST` | `/api/headsets/register` | `{ "serialNumber","customerId","firmwareVersion","label" }` | `{ "id","serialNumber","label","customerId","customerName" }` — `id` becomes `headsetId`. |
 | `GET` | `/api/headsets/{id}/startup-data?locationId={locationId}` | — | `StartupData` (§4.1). |
-| `POST` | `/api/locations/{id}/qr-codes` | `CalibrationUpload` (§4.2) | any `2xx` (persist per location; overwrite is fine). |
+| `POST` | `/api/locations/{id}/qr-codes` | `CalibrationUpload` (§4.2) — `qrCodes` array of **ANY length (1..N)** | any `2xx`. **Upsert each entry by `qrValue`** (don't just read `qrCodes[0]`). See note below. |
 | `GET` | `/api/locations/{id}/qr-codes` | — | `CalibrationUpload` (same shape). |
+
+> **Push is batch-first, then per-item (NEW in v2.4).** The client first POSTs the **whole list** in one
+> `CalibrationUpload`. **If that POST fails**, it automatically retries by POSTing **each code on its own** — one
+> request per code, each body a `CalibrationUpload` with a **single-element `qrCodes` array** (identical shape,
+> length 1), continuing past individual failures and reporting an `N/M registered` tally. **Therefore your
+> endpoint must accept a `qrCodes` array of any length and upsert every element by `qrValue`.** Reading only the
+> first element is the most common cause of "the RoomAnchor registered but the other codes didn't."
 
 ### 4.1 `StartupData` (response)
 ```jsonc
@@ -146,6 +176,34 @@ dropdown (listed = recognized, unlisted = detected-but-not-in-list).
 | `answer` | `{ "roomCode":"STR","answer":{ "sdp":"STR","type":"answer" },"targetSocketId":"STR" }` |
 | `ice-candidate` | `{ "roomCode":"STR","candidate":{ "candidate":"STR","sdpMid":"STR","sdpMLineIndex":INT },"targetSocketId":"STR" }` |
 | `health-update` | `{ "roomCode":"STR","batteryLevel":INT,"calibrated":BOOL,"headsetId":"STR","locationId":"STR","timestamp":"ISO-8601" }` (every 60 s) |
+| `qr-detected` **(NEW)** | see §5.1a — one event **per code** (not a list) |
+
+### 5.1a `qr-detected` (NEW — real-time QR registration)
+Emitted while session QR detection is ON and the socket is connected. **One event per code** (multiple codes
+arrive as a sequence). Add a handler that **upserts by `(locationId, qrValue)`** into the live room view.
+```jsonc
+{
+  "roomCode":    "STR",
+  "locationId":  "STR",
+  "headsetId":   "STR",
+  "qrValue":     "STR",          // the code's identity — use as the upsert key
+  "name":        "STR",          // friendly name if known, else ""
+  "listed":      true,            // true = this payload is in the location's "legit" list
+  "isRoomAnchor": false,          // true  => position/rotation are WORLD (this code IS the reference frame)
+                                  // false => position/rotation are RELATIVE to the RoomAnchor (an item)
+  "position":    { "x":0, "y":0, "z":0 },
+  "rotation":    { "x":0, "y":0, "z":0, "w":1 },
+  "timestamp":   "ISO-8601"
+}
+```
+Notes for your handler:
+- **RoomAnchor first, then items.** Use `isRoomAnchor` to interpret the frame (same convention as the REST
+  `CalibrationUpload`). If items were detected before the anchor existed, the headset **re-emits** the whole set
+  right after the anchor appears — so expect a second burst, and just upsert idempotently.
+- **`listed=false`** = the headset saw a code not in the location's legit list (surface as "unrecognised" if you
+  like; you don't have to persist it).
+- **Fire-and-forget**, no ack expected. This is the *live overlay feed*; the authoritative save is still **Push**
+  (REST §4). It's fine to also persist these upserts.
 
 ### 5.2 Server → Client (you emit / relay; the client ignores anything else)
 | Event | Payload | Notes |
@@ -166,6 +224,24 @@ The headset resolves a point-to command in this order:
 
 > Recommendation: always include `qrCode`. A zero/omitted position means "clear" — never send `(0,0,0)` to
 > mean a real location.
+
+### 5.4 "Waiting for headset to connect" — diagnostic (READ if video never starts)
+The headset is **answer-only**: it builds its WebRTC PeerConnection and streams **only after it receives an
+`offer`**. After `join-room` it logs *"Joined room … waiting for the expert to send a video offer."* and waits.
+If the dashboard still shows "waiting", the gap is on the server/dashboard side. Check, in order:
+1. **Same room:** are the `headset` and `admin` joined to the **same `roomCode`**? (It's upper-cased on the
+   headset — compare exact strings.)
+2. **Presence relay:** when the headset emits `join-room`, do you notify the admin (so it knows to call)? The
+   headset will **never** offer; if the admin never learns a headset joined, no offer is ever created.
+3. **Offer direction:** is the **admin/dashboard** creating + sending the `offer` (with a recvonly video
+   transceiver)? A frequent bug is both sides waiting for the other to offer.
+4. **Answer/ICE routing:** is the headset's `answer` (and its `ice-candidate`s) routed back to the admin's
+   `socketId` (the `targetSocketId` the headset echoes from `peer-joined`/`offer`)?
+5. **Payload nesting:** SDP must be under the `offer`/`answer` key; ICE under `candidate` (see §5.1/§5.2).
+6. **Media but no pixels:** if the answer is sent but no video appears, it's ICE/NAT — add a TURN server.
+
+> The headset surfaces each milestone (`join-room → peer-joined → offer → answer`) in its in-session chat log
+> as `[Backend] …` lines, so you can confirm exactly how far the handshake got from the operator's side.
 
 ---
 
@@ -218,8 +294,16 @@ Socket.IO
 - [ ] You send server-side pings (`2`); you receive client pongs (`3`).
 - [ ] You relay `chat-message`, `offer`/`answer`/`ice-candidate`, and `point-to` with **one** JSON-object arg.
 - [ ] `point-to` uses `qrCode` (exact payload) and/or `name`; a zero/absent position = "clear".
+- [ ] **(NEW) You handle `qr-detected` (§5.1a): upsert by `(locationId, qrValue)`; idempotent on the re-emit
+      burst after the RoomAnchor appears; dashboard updates live.**
+- [ ] **(NEW) On `join-room`, you notify the admin so the ADMIN sends the WebRTC `offer`** (headset is
+      answer-only). The dashboard must not wait for the headset to offer.
 - [ ] After a headset auto-reconnect (same `roomCode`), you re-send `peer-joined` + a fresh `offer` so WebRTC
       media renegotiates (this is the client's known follow-up test — see `TESTING_CHECKLIST.md`).
+
+REST (NEW)
+- [ ] `POST /api/locations/{id}/qr-codes` accepts a `qrCodes` array of **any length (1..N)** and **upserts each
+      element by `qrValue`** (handles both the batch and the per-item fallback).
 
 ---
 
@@ -231,6 +315,10 @@ Socket.IO
 - ❌ Forgetting the `40` namespace ack — the client waits forever and never emits `join-room`.
 - ❌ Returning `404/403` on `startup-data` for transient errors — the client treats it as credential expiry.
 - ❌ Hosting Socket.IO under `/api` — it must be at the host root.
+- ❌ **(NEW) Ignoring `qr-detected`** — the dashboard then won't show codes live (only after a manual Push).
+- ❌ **(NEW) Reading only `qrCodes[0]`** on the calibration POST — the per-item fallback sends single-element
+  arrays, and the batch sends many; upsert **every** element by `qrValue`.
+- ❌ **(NEW) Waiting for the headset to send the WebRTC offer** — it never will; the admin must offer.
 
 ---
 
