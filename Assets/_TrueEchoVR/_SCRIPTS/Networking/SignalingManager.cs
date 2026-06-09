@@ -97,6 +97,14 @@ namespace TEVR
         [Tooltip("How long (seconds) to wait for Camera permission + the passthrough camera to start before falling back to the rendered view.")]
         public float passthroughStartTimeout = 8f;
 
+        [Header("Composite Alignment (Quest passthrough camera)")]
+        [Tooltip("Horizontal field of view (degrees) of the Quest passthrough camera. The VR overlay in the " +
+                 "streamed/preview composite is rendered at THIS fov (not the eye fov) so virtual content lines " +
+                 "up with the real-world passthrough background as you turn your head. Quest 3 default ~82°. " +
+                 "Tune on-device if the overlay drifts from the real world. Only affects the composite stream.")]
+        [Range(40f, 140f)]
+        public float passthroughHorizontalFovDeg = 82f;
+
         private WebCamTexture _webcamTexture;
         private RenderTexture _captureRT;
         private Camera _internalCaptureCamera;
@@ -1066,6 +1074,11 @@ LastError = err;
             _compositeCamera.transform.localPosition = Vector3.zero;
             _compositeCamera.transform.localRotation = Quaternion.identity;
 
+            // CopyFrom(eye) inherits the EYE's FOV/aspect (and possibly an XR projection matrix). Override
+            // with the PASSTHROUGH camera's projection so the VR overlay matches the real-world background's
+            // angular scale — otherwise the two diverge as the head turns (the reported misalignment).
+            ApplyCompositeProjection();
+
             // Keep the background quad out of the user's own eyes.
             _compositeRestoreMask = eye.cullingMask;
             eye.cullingMask &= ~(1 << mrLayer);
@@ -1122,15 +1135,35 @@ LastError = err;
 
         private bool IsWebcamLive() => _webcamTexture != null && _webcamTexture.isPlaying && _webcamTexture.width > 16;
 
-        /// <summary>Sizes/orients the passthrough background quad to fill the mirrored eye frustum,
-        /// compensating for the WebCamTexture's rotation and vertical mirroring (both can change after start).</summary>
+        /// <summary>
+        /// Sets the composite camera's projection to the PASSTHROUGH camera's field of view (converted to the
+        /// render-texture aspect), so the rendered VR overlay shares the same angular scale as the real-world
+        /// passthrough image on the background quad. This is what makes the overlay track the room correctly
+        /// as the head turns. FOV is tunable (Quest 3 default ~82° horizontal).
+        /// </summary>
+        private void ApplyCompositeProjection()
+        {
+            if (_compositeCamera == null) return;
+            float aspect = (float)captureResolution.x / Mathf.Max(1, captureResolution.y);
+            float hFov = Mathf.Clamp(passthroughHorizontalFovDeg, 40f, 140f);
+            // Unity's Camera.fieldOfView is VERTICAL; convert from horizontal at our RT aspect.
+            float vFov = 2f * Mathf.Atan(Mathf.Tan(hFov * 0.5f * Mathf.Deg2Rad) / Mathf.Max(0.1f, aspect)) * Mathf.Rad2Deg;
+            _compositeCamera.usePhysicalProperties = false;
+            _compositeCamera.ResetProjectionMatrix(); // discard any XR projection inherited via CopyFrom
+            _compositeCamera.aspect = aspect;
+            _compositeCamera.fieldOfView = vFov;
+        }
+
+        /// <summary>Sizes/orients the passthrough background quad to exactly fill the COMPOSITE camera's
+        /// frustum (which now uses the passthrough FOV), compensating for the WebCamTexture's rotation and
+        /// vertical mirroring (both can change after start).</summary>
         private void UpdateCompositeQuadTransform()
         {
-            if (_compositeQuad == null || _compositeEye == null) return;
-            Camera eye = _compositeEye;
-            float dist = Mathf.Clamp(eye.farClipPlane * 0.5f, 5f, 100f);
-            float h = 2f * dist * Mathf.Tan(eye.fieldOfView * 0.5f * Mathf.Deg2Rad);
-            float w = h * Mathf.Max(0.1f, eye.aspect);
+            if (_compositeQuad == null || _compositeCamera == null) return;
+            Camera cam = _compositeCamera;
+            float dist = Mathf.Clamp(cam.farClipPlane * 0.5f, 5f, 100f);
+            float h = 2f * dist * Mathf.Tan(cam.fieldOfView * 0.5f * Mathf.Deg2Rad);
+            float w = h * Mathf.Max(0.1f, cam.aspect);
             _compositeQuad.transform.localPosition = new Vector3(0f, 0f, dist);
             float rot = _webcamTexture != null ? -_webcamTexture.videoRotationAngle : 0f;
             _compositeQuad.transform.localRotation = Quaternion.Euler(0f, 0f, rot);
@@ -1279,21 +1312,36 @@ LastError = err;
                 });
             };
 
+            // Prepare local media BEFORE negotiation so the tracks are ready to attach.
             if (_videoTrack == null) yield return StartCoroutine(SetupLocalMedia());
             _audioTrack = new AudioStreamTrack();
             _localStream = new MediaStream();
             if (_videoTrack != null) _localStream.AddTrack(_videoTrack);
             _localStream.AddTrack(_audioTrack);
 
-            foreach (var track in _localStream.GetTracks()) _pc.AddTrack(track, _localStream);
+            // CORRECT ANSWERER ORDER (this is why the web app saw no video):
+            // 1) SetRemoteDescription(offer) FIRST — this creates the transceivers described by the offer
+            //    (the web app offers to RECEIVE our video, i.e. a recvonly m-line on its side).
+            // 2) AddTrack AFTER — our outgoing track reuses that negotiated transceiver and flips it to
+            //    sending, instead of creating an extra, unnegotiated m-line that the answer wouldn't carry.
+            // 3) CreateAnswer LAST — the answer now advertises our video/audio as sendable.
             yield return _pc.SetRemoteDescription(ref offer);
             _remoteDescriptionSet = true;
             FlushPendingRemoteCandidates();
+
+            foreach (var track in _localStream.GetTracks()) _pc.AddTrack(track, _localStream);
+
             var createAnswerOp = _pc.CreateAnswer();
             yield return createAnswerOp;
+            if (createAnswerOp.IsError)
+            {
+                Debug.LogError("[Signaling] CreateAnswer failed: " + createAnswerOp.Error.message);
+                yield break;
+            }
             var answerDesc = createAnswerOp.Desc;
             yield return _pc.SetLocalDescription(ref answerDesc);
 
+            Debug.Log("[Signaling] Sending answer (video track " + (_videoTrack != null ? "present" : "MISSING") + ") to " + _remoteSocketId);
             SendSocketEvent("answer", new AnswerPayload { roomCode = currentRoomCode, answer = answerDesc, targetSocketId = _remoteSocketId });
         }
 

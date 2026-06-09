@@ -123,8 +123,9 @@ Persistence is handled via HTTP requests to `{apiHost}{apiPath}` (default `https
 > Poses are stored **relative to the RoomAnchor** zero-point (except the RoomAnchor entry itself). This relative frame is what makes the data portable to the web dashboard and is preserved unchanged by the on-device Meta Spatial Anchor upgrade.
 
 ## 4. WebRTC Requirements
-- **Capture:** Quest 3 hardware prevents direct raw camera access; Unity sends a **Capture RenderTexture** (B8G8R8A8_SRGB format).
+- **Capture:** the headset streams a **composite RenderTexture** (B8G8R8A8_SRGB) = real-world passthrough (PCA `WebCamTexture` background) + the Unity-rendered overlay. The overlay is rendered at the **passthrough camera FOV** (`SignalingManager.passthroughHorizontalFovDeg`, Quest 3 default 82°) so virtual content aligns with the real world as the head turns — tune this field on-device if the overlay drifts.
 - **Audio:** Bi-directional audio is supported via `AudioStreamTrack`.
+- **Answerer negotiation order (headset side):** the headset is answer-only and MUST negotiate in this order, or the web app receives no video: **(1)** `SetRemoteDescription(offer)` → **(2)** `AddTrack` (reuses the offer's negotiated transceivers) → **(3)** `CreateAnswer`. Remote `ice-candidate` events are applied (queued until the remote description is set). STUN-only by default — add a TURN server if media fails to connect across restrictive networks.
 
 ## 5. Identification
 - **LocationID:** Critical for spatial calibration routing.

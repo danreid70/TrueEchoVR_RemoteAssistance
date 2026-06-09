@@ -80,3 +80,28 @@
 ## NOTES
 - Keep the Replit coordinate contract byte-for-byte (relative-to-RoomAnchor). Meta anchors/world pose improve the LOCAL layer beneath it.
 - Run work-streams sequentially (V then Q) to avoid the documented parallel-reimport revert gotcha.
+
+---
+
+# ROUND 2 (post on-device test) — Status: IN PROGRESS
+
+On-device results: local preview now works (permissions prompted OK). Remaining issues:
+
+## R2 EVALUATION
+- **R1 Permission default-check:** Android/Horizon runtime permission dialogs CANNOT be programmatically pre-checked (OS security). Best we can do: request CAMERA + HEADSET_CAMERA prominently/individually and ensure they are declared so they appear in app permission settings. `unityplayer.SkipPermissionsDialog=false` keeps Unity's auto-request. → explain + make request prominent.
+- **R2 Composite alignment:** composite camera does `CopyFrom(eye)` → VR renders at the EYE FOV/aspect, but the passthrough WebCamTexture has the PHYSICAL camera's FOV/aspect. Drawing the webcam stretched to the eye frustum makes real world and VR scale differently → angles diverge as the head turns. Fix: drive the composite camera projection from the passthrough camera FOV + webcam aspect (Quest 3 specs, tunable), size the quad to THIS frustum. Do NOT touch the working capture path otherwise.
+- **R3 Not streaming to website:** answerer flow order is wrong. Tracks are added BEFORE SetRemoteDescription; correct WebRTC answerer order is SetRemoteDescription(offer) → AddTrack (reuses negotiated transceivers) → CreateAnswer. Reorder so the answer advertises the sending video m-line correctly.
+- **R4 QR detection unreliable + no update on move:** MRUKTrackable has IsTracked but NO TrackableUpdated event; TrackableAdded fires once. Our pending-payload entries are DROPPED after 5s (lost forever if decoded late); missed adds never recovered; nothing re-reads a moved code. Fix = self-healing periodic reconciliation sweep over all live QRCode MRUKTrackables: pick up missed/late ones, (re)link instance.trackable by payload, follow IsTracked poses each frame, prune dead. Fix rotation-threshold compare (stores flipped vs raw). Keep push/pull intact.
+
+## R2 TASKS — ALL CODE COMPLETE (compiles clean; editor smoke 4/4 + 12/12 pass)
+- [x] **R2-V1** WebRTC answerer reorder: `SetRemoteDescription(offer)` → `AddTrack` → `CreateAnswer` (+ CreateAnswer error check + answer log). `SignalingManager.HandleRemoteOffer`.
+- [x] **R2-V2** Composite projection now uses the passthrough camera FOV (tunable `passthroughHorizontalFovDeg`, default 82°) at the RT aspect, via `ApplyCompositeProjection`; quad sized to the COMPOSITE frustum (`UpdateCompositeQuadTransform`). Capture path otherwise untouched. `SignalingManager`.
+- [x] **R2-Q1** Self-healing `ReconcileTrackables` sweep (Full mode, every `qrReconcileInterval`=0.5s): re-arms empty payloads (never permanently dropped — also bumped `PendingPayloadTimeoutSeconds` 5→30s), re-links moved/new trackables, processes missed/late codes. Follow loop now compares RAW rotation (`lastTrackableRotation`) and only follows while `IsTracked`. `QrCodeManager`.
+- [x] **R2-P1** Camera perms requested FIRST (before scene/mic). Documented that OS dialogs cannot be pre-checked. `PermissionsBootstrapper`.
+- [x] **R2-Z** Compile clean (0 errors); editor smoke passed; docs updated (this file + `WebAppManager_Communication_Doc.md`).
+
+### R2 DEVICE CHECKLIST (cannot be verified in Editor)
+1. **Camera permission prompt appears first** at launch; granting it = local preview shows passthrough (already working).
+2. **Overlay alignment:** VR markers/UI now track the real room as the head turns. If they still drift, tune `SignalingManager.passthroughHorizontalFovDeg` on the component (try 78–90) until aligned.
+3. **Web app receives video:** watch logcat for `Sending answer (video track present)`. If the web app still shows nothing, capture whether ICE connects (it should now apply remote candidates) — may indicate a TURN requirement or a web-side m-line/codec issue.
+4. **QR detection consistency:** codes should now detect reliably (sweep recovers misses), update when physically moved, and not vanish. Push/Pull round-trips the merged set (relative-to-RoomAnchor).

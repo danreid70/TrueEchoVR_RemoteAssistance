@@ -163,6 +163,10 @@ public class QRPayloadAction
             public string identifierKey;
             public Vector3 lastPosition;
             public Quaternion lastRotation;
+            // RAW trackable rotation last applied (UNflipped). Used for the movement threshold compare —
+            // lastRotation stores the 180°-flipped DISPLAY rotation, so comparing it against the raw live
+            // rotation always read ~180° and defeated the threshold.
+            public Quaternion lastTrackableRotation;
             public QRStatus status = QRStatus.Unknown;
         }
 
@@ -240,7 +244,7 @@ public class QRPayloadAction
         // once, then never again": detection only succeeded when the payload happened to be ready on
         // the very first frame, and a tracked code never re-fires TrackableAdded.)
         private readonly Dictionary<MRUKTrackable, float> _pendingPayloadTrackables = new Dictionary<MRUKTrackable, float>();
-        private const float PendingPayloadTimeoutSeconds = 5f;
+        private const float PendingPayloadTimeoutSeconds = 30f;
 
         // PERF: SaveToDisk() pretty-prints JSON and does a synchronous File.WriteAllText on the main thread.
         // Calling it on every QR add/update caused O(n^2) blocking writes as codes appeared (a cause of the
@@ -463,6 +467,7 @@ public class QRPayloadAction
 
             RetryPendingPayloadTrackables();
             EnsureTrackingPeriodically();
+            ReconcileTrackables();
             UpdateDetectionMarkers();
 
             foreach (var inst in _trackedQRCodes.Values)
@@ -473,14 +478,21 @@ public class QRPayloadAction
 
                 if (inst.trackable != null && inst.visualObject != null)
                 {
+                    // Only follow while the code is actually being tracked; an untracked trackable can hold
+                    // a stale/invalid pose, and snapping the marker to it makes codes appear to "jump".
+                    if (!inst.trackable.IsTracked) continue;
+
                     Vector3 tPos = inst.trackable.transform.position;
                     Quaternion tRot = inst.trackable.transform.rotation;
-                    if (Vector3.Distance(inst.lastPosition, tPos) > positionThreshold || Quaternion.Angle(inst.lastRotation, tRot) > rotationThreshold)
+                    // Compare against the RAW last rotation (not the flipped display rotation).
+                    if (Vector3.Distance(inst.lastPosition, tPos) > positionThreshold ||
+                        Quaternion.Angle(inst.lastTrackableRotation, tRot) > rotationThreshold)
                     {
                         Quaternion cRot = tRot * Quaternion.Euler(0, 180, 0);
                         inst.visualObject.transform.SetPositionAndRotation(tPos, cRot);
                         inst.lastPosition = tPos;
                         inst.lastRotation = cRot;
+                        inst.lastTrackableRotation = tRot;
                         OnQRCodeUpdated?.Invoke(inst);
                     }
                 }
@@ -787,6 +799,7 @@ public class QRPayloadAction
                     existing.visualObject.transform.SetPositionAndRotation(trackable.transform.position, cRot);
                     existing.lastPosition = trackable.transform.position;
                     existing.lastRotation = cRot;
+                    existing.lastTrackableRotation = trackable.transform.rotation;
                     UpdateTextOnObject(existing.visualObject, fullPayload);
                 }
                 if (isAnchor)
@@ -870,6 +883,7 @@ public class QRPayloadAction
                 identifierKey = key,
                 lastPosition = pos,
                 lastRotation = rot,
+                lastTrackableRotation = rot,
                 status = status
             };
             _trackedQRCodes.Add(key, instance);
@@ -1478,6 +1492,57 @@ public class QRPayloadAction
         }
 
         /// <summary>Low-frequency safeguard: re-assert QR tracking if the runtime dropped it.</summary>
+        private float _nextReconcileTime;
+        [Tooltip("Seconds between QR reconciliation sweeps. The sweep re-scans every live MRUK QR trackable to " +
+                 "recover detections that were missed or whose payload decoded late, re-link codes that were " +
+                 "physically moved (which can produce a new trackable), and keep the tracked set in sync. " +
+                 "Lower = more responsive, slightly more CPU.")]
+        public float qrReconcileInterval = 0.5f;
+
+        /// <summary>
+        /// SELF-HEALING reconciliation: MRUK fires TrackableAdded only ONCE per trackable and has no
+        /// "updated" event, so a missed add, a payload that decodes after our retry window, or a code that
+        /// is physically moved (which can surface as a NEW trackable) would otherwise be lost. This sweep
+        /// periodically reconciles our tracked set against every live QR trackable in the scene:
+        ///   • empty-payload trackables are (re)armed for payload retry (never permanently dropped),
+        ///   • already-tracked codes get their live trackable re-linked (handles moves / new trackables),
+        ///   • not-yet-tracked codes with a ready payload are processed via the normal add path.
+        /// Runs in Full (Session) mode only; SignIn detection is event-driven + the pip path already.
+        /// </summary>
+        private void ReconcileTrackables()
+        {
+            if (Mode != ScanMode.Full) return;
+            if (Time.time < _nextReconcileTime) return;
+            _nextReconcileTime = Time.time + Mathf.Max(0.1f, qrReconcileInterval);
+
+            var all = UnityEngine.Object.FindObjectsByType<MRUKTrackable>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
+            foreach (var t in all)
+            {
+                if (t == null || t.TrackableType != OVRAnchor.TrackableType.QRCode) continue;
+
+                string payload = t.MarkerPayloadString ?? "";
+                if (string.IsNullOrEmpty(payload))
+                {
+                    // Keep retrying the payload as long as the trackable exists (never drop it for good).
+                    if (!_pendingPayloadTrackables.ContainsKey(t)) _pendingPayloadTrackables[t] = Time.time;
+                    continue;
+                }
+
+                string key = GetIdentifierKey(payload);
+                if (_trackedQRCodes.TryGetValue(key, out var inst))
+                {
+                    // Re-link the live trackable if it changed (a moved code can yield a new trackable),
+                    // so the per-frame follow tracks the correct, current pose.
+                    if (inst.trackable != t) inst.trackable = t;
+                }
+                else
+                {
+                    // Missed or late detection — run the normal add path (handles anchor/item/system-code rules).
+                    OnTrackableAdded(t);
+                }
+            }
+        }
+
         private void EnsureTrackingPeriodically()
         {
             if (Time.time < _nextTrackingAssertTime) return;

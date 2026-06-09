@@ -81,10 +81,14 @@ namespace TEVR.Core
         public void RequestAll()
         {
 #if UNITY_ANDROID && !UNITY_EDITOR
+            // NOTE: Android / Horizon OS runtime permission dialogs CANNOT be programmatically pre-checked
+            // or auto-granted — the OS owns the Allow/Deny default for "dangerous"/special permissions
+            // (security requirement). The best we can do so the camera grant is not missed is to prompt for
+            // the camera permissions FIRST (they appear before the scene/mic prompts), and re-prompt on deny.
             var toRequest = new List<string>();
-            if (requestScenePermission && !Permission.HasUserAuthorizedPermission(ScenePermission)) toRequest.Add(ScenePermission);
             if (requestCameraPermission && !Permission.HasUserAuthorizedPermission(CameraPermission)) toRequest.Add(CameraPermission);
             if (requestHeadsetCameraPermission && !Permission.HasUserAuthorizedPermission(HeadsetCameraPermission)) toRequest.Add(HeadsetCameraPermission);
+            if (requestScenePermission && !Permission.HasUserAuthorizedPermission(ScenePermission)) toRequest.Add(ScenePermission);
             if (requestMicrophonePermission && !Permission.HasUserAuthorizedPermission(RecordAudioPermission)) toRequest.Add(RecordAudioPermission);
 
             if (toRequest.Count == 0)
