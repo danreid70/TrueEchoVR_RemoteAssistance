@@ -1,6 +1,13 @@
-# TrueEchoVR SignalingManager Synchronization Protocol (v2.2 - RemoteAssistance)
+# TrueEchoVR SignalingManager Synchronization Protocol (v2.3 - RemoteAssistance)
 
 This document outlines the communication protocol between the Unity application (TrueEchoVR) and the Replit backend. This is used by the **SignalingManager** to coordinate WebRTC, chat, and spatial data. Payload shapes below were verified directly against `SignalingManager.cs` / `SessionUiController.cs` / `QrCodeManager.cs`.
+
+> **What changed in v2.3 (READ THIS — REPLIT ACTION REQUIRED):**
+> 1. **NEW real-time QR registration:** the headset now emits a **`qr-detected`** Socket.IO event the instant it sees a code (and a throttled update when a code moves). **Replit must add a handler for this event** to make detected codes appear live on the dashboard — see §2 "Outgoing" and the dedicated **§2a**. Previously the dashboard only learned of codes via the manual REST **Push**; that path still exists and is still authoritative for persistence.
+> 2. **WebRTC answerer order fixed** (headset→web video now negotiates correctly) — §4.
+> 3. **Composite alignment + aspect** corrected (4:3 passthrough) — §4.
+> 4. **Clear** now also clears the local "legit"/name lists and the focus glow (still no server-side delete) — §7.
+> 5. New **video toggles** (compositing on/off, stream-to-Replit on/off, show-remote) — §4.
 
 > **Note on the Meta Spatial Anchor upgrade:** the RoomAnchor is now persisted on-device as a Meta `OVRSpatialAnchor` (drift-free, auto-relocalizing). This is a **device-local** change only — QR poses are still expressed relative to the RoomAnchor and synced exactly as documented here. **This protocol/contract is unchanged by that upgrade.** For a backend-implementer-focused spec, see `BACKEND_CONTRACT.md`.
 
@@ -45,6 +52,33 @@ Every application event is framed `42["event-name", { ...singleJsonObject }]`. E
 | `answer` | `{ "roomCode": "STR", "answer": { "sdp": "STR", "type": "answer" }, "targetSocketId": "STR" }` | WebRTC SDP answer targeting the expert. (Key is `answer`.) |
 | `ice-candidate`| `{ "roomCode": "STR", "candidate": { "candidate": "STR", "sdpMid": "STR", "sdpMLineIndex": INT }, "targetSocketId": "STR" }` | ICE candidate (nested under `candidate`). |
 | `health-update` | `{ "roomCode": "STR", "batteryLevel": INT, "calibrated": BOOL, "headsetId": "STR", "locationId": "STR", "timestamp": "ISO-8601" }` | Periodic telemetry, every **60 s** while connected. |
+| `qr-detected` | see **§2a** | **NEW.** Real-time registration of a physically-detected QR code. Emitted on first detection / RoomAnchor discovery (immediately) and on movement (throttled ~1/s per code). |
+
+### 2a. `qr-detected` (NEW — real-time QR registration)
+Emitted by `SignalingManager.SendQrDetected(...)`, called from `SessionUiController.EmitQrToServer(...)` on the `OnQRCodeAdded`, `OnRoomAnchorDiscovered`, and (throttled) `OnQRCodeUpdated` events. **Only sent while the socket is connected** (i.e. in a live session — Demo Mode is offline and emits nothing).
+
+```jsonc
+{
+  "roomCode":    "STR",
+  "locationId":  "STR",
+  "headsetId":   "STR",
+  "qrValue":     "STR",          // the QR payload string = the code's identity (use as the upsert key)
+  "name":        "STR",          // friendly name if known (from the legit list), else ""
+  "listed":      true,            // true = this payload is in the server's legit list for this location
+  "isRoomAnchor": false,          // true  => position/rotation are WORLD (this code IS the reference frame)
+                                  // false => position/rotation are RELATIVE to the RoomAnchor (an item)
+  "position":    { "x":0, "y":0, "z":0 },
+  "rotation":    { "x":0, "y":0, "z":0, "w":1 },
+  "timestamp":   "ISO-8601"
+}
+```
+
+**What Replit must do with it (recommended):**
+- **Upsert by `(locationId, qrValue)`** into a live, per-room view so the dashboard shows the code immediately. Treat repeated events as position updates (the headset throttles to ~1/sec per code).
+- Use **`isRoomAnchor`** to interpret the coordinate frame: the RoomAnchor's pose is the world reference; every item pose is relative to it. (This matches the REST `CalibrationUpload` frame in §3b, so the same placement math applies.)
+- `listed=false` means the headset saw a code that is **not** in the server's legit list (e.g. an extra/unknown code, or Demo Mode would be offline so this only happens in live sessions). You may surface these as "unrecognised" rather than auto-persisting them.
+- **Persistence vs. live view:** `qr-detected` is the *live overlay feed*. The authoritative save still happens when the operator taps **Push** (`POST /api/locations/{id}/qr-codes`, §3b). It is fine for Replit to also persist `qr-detected` upserts, but the headset does not assume it does.
+- **No ack is required.** The headset does not wait for a response; it is fire-and-forget over the socket.
 
 ### Incoming (Replit to Unity)
 Unity's parser (`ProcessIncomingMessage`) reads `42["event-name", { singleObject }]` and only handles the four events below. Any other event name is ignored. Each event must carry **exactly one** JSON object as its argument.
@@ -173,5 +207,5 @@ Flow when scanned (`HandleLoginQRScan` → `AcceptSetupCode`):
 | **Push QR** | `OnPushQRPressed` | `POST /api/locations/{id}/qr-codes` (uploads local calibration). |
 | **Pull QR** | `OnPullQRPressed` | `GET /api/locations/{id}/qr-codes` (downloads + applies calibration). |
 | **Start/Stop Detection** | `OnToggleDetectQR` | Toggles MRUK QR detection. |
-| **Clear QR** | `OnClearQRPressed` | Clears tracked QR codes locally. |
+| **Clear QR** | `OnClearQRPressed` → `QrCodeManager.ClearAllUserData()` | **Full local reset:** removes tracked codes + visuals, known/dormant poses, the server-provided *legit*/name lists (empties the dropdown), all detection pips, and the focus glow. **No server-side delete is sent** — a subsequent **Pull** (or startup-data) repopulates from the server. |
 | **Room Code (submit)** | `OnJoinPressed` | Emits `join-room` to connect to the remote expert. |

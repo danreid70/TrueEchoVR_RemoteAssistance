@@ -117,6 +117,34 @@ namespace TEVR
         private Camera _compositeEye;        // the user's eye camera we mirror
         private int _compositeRestoreMask;   // eye cullingMask to restore on teardown
         private bool _compositeMaskModified;
+        private int _compositeMrLayer = 31;  // layer of the passthrough background quad
+        private int _compositeVrMask;        // VR-content layers (everything except the passthrough bg)
+
+        /// <summary>When true, the streamed/preview image is passthrough + VR overlay; when false it is
+        /// passthrough ONLY (the VR content layers are culled from the composite camera).</summary>
+        public bool CompositingEnabled { get; private set; } = true;
+
+        /// <summary>When true, the local video track is sent to the remote (Replit). When false the outbound
+        /// stream is muted but the local preview keeps rendering.</summary>
+        public bool StreamingEnabled { get; private set; } = true;
+
+        /// <summary>Toggle passthrough-only vs passthrough+VR-overlay in the composite stream/preview.</summary>
+        public void SetCompositingEnabled(bool on)
+        {
+            CompositingEnabled = on;
+            if (_compositeCamera == null) return;
+            // ON  = VR layers + passthrough bg layer.  OFF = passthrough bg layer only.
+            _compositeCamera.cullingMask = on
+                ? (_compositeVrMask | (1 << _compositeMrLayer))
+                : (1 << _compositeMrLayer);
+        }
+
+        /// <summary>Start/stop sending the local video to the remote without tearing down capture or preview.</summary>
+        public void SetStreamingEnabled(bool on)
+        {
+            StreamingEnabled = on;
+            if (_videoTrack != null) _videoTrack.Enabled = on;
+        }
         private Coroutine _compositeMaintainCo; // keeps the passthrough background bound/oriented + recovers it
 
         public Action OnConnected;
@@ -801,6 +829,45 @@ LastError = err;
             });
         }
 
+        [Serializable] private class QrDetectedPayload
+        {
+            public string roomCode;
+            public string locationId;
+            public string headsetId;
+            public string qrValue;
+            public string name;
+            public bool listed;        // true if this payload is in the server's "legit" list for this location
+            public bool isRoomAnchor;  // true => 'position'/'rotation' are WORLD; false => RoomAnchor-RELATIVE
+            public Vector3 position;
+            public Quaternion rotation;
+            public string timestamp;
+        }
+
+        /// <summary>
+        /// REAL-TIME QR registration. Emits a <c>qr-detected</c> Socket.IO event so the web dashboard can show
+        /// a code the instant the headset sees it — without waiting for a manual REST Push. For the RoomAnchor,
+        /// pass its WORLD pose with <paramref name="isRoomAnchor"/>=true; for every other item pass its
+        /// RoomAnchor-RELATIVE pose. No-op if the socket isn't connected. (The bulk REST Push remains the
+        /// authoritative persistence path; this is the live overlay feed.)
+        /// </summary>
+        public void SendQrDetected(string qrValue, string name, bool listed, bool isRoomAnchor, Vector3 position, Quaternion rotation)
+        {
+            if (!IsSocketConnected || string.IsNullOrEmpty(qrValue)) return;
+            SendSocketEvent("qr-detected", new QrDetectedPayload
+            {
+                roomCode = currentRoomCode,
+                locationId = tevrLocationId,
+                headsetId = tevrHeadsetId,
+                qrValue = qrValue,
+                name = name ?? "",
+                listed = listed,
+                isRoomAnchor = isRoomAnchor,
+                position = position,
+                rotation = rotation,
+                timestamp = DateTime.UtcNow.ToString("O")
+            });
+        }
+
         #endregion
 
         #region REST Implementation
@@ -1057,6 +1124,8 @@ LastError = err;
 
             int mrLayer = LayerMask.NameToLayer(CompositeLayerName);
             if (mrLayer < 0) mrLayer = 31; // last-resort fallback
+            _compositeMrLayer = mrLayer;
+            _compositeVrMask = eye.cullingMask;  // the VR-content layers (passthrough bg layer added separately)
 
             // 3. Composite camera that mirrors the eye.
             if (_compositeCamera == null)
@@ -1084,14 +1153,18 @@ LastError = err;
             eye.cullingMask &= ~(1 << mrLayer);
             _compositeMaskModified = true;
 
-            // 4. Output RenderTexture.
+            // 4. Output RenderTexture, sized to the live passthrough aspect (4:3 fallback) so the streamed
+            //    image is not stretched relative to the real world.
             if (_compositeRT == null)
             {
-                _compositeRT = new RenderTexture(captureResolution.x, captureResolution.y, 24,
+                Vector2Int rtSize = ComputeCaptureSize();
+                _compositeRT = new RenderTexture(rtSize.x, rtSize.y, 24,
                     UnityEngine.Experimental.Rendering.GraphicsFormat.B8G8R8A8_SRGB);
                 _compositeRT.Create();
             }
             _compositeCamera.targetTexture = _compositeRT;
+            // Now that the RT exists, set the camera projection to match its (passthrough) aspect.
+            ApplyCompositeProjection();
 
             // 5. Full-screen background quad showing the live passthrough.
             if (_compositeQuad == null)
@@ -1120,6 +1193,9 @@ LastError = err;
 
             // 6. Stream the composite.
             _videoTrack = new VideoStreamTrack(_compositeRT);
+            // Honour the current user toggles (passthrough-only vs +overlay, and stream on/off).
+            SetCompositingEnabled(CompositingEnabled);
+            SetStreamingEnabled(StreamingEnabled);
             OnLocalStreamStarted?.Invoke(_compositeRT);
             Status(camOk
                 ? "Streaming composite view (passthrough + UI)."
@@ -1144,14 +1220,43 @@ LastError = err;
         private void ApplyCompositeProjection()
         {
             if (_compositeCamera == null) return;
-            float aspect = (float)captureResolution.x / Mathf.Max(1, captureResolution.y);
+            // Use the ACTUAL render-texture aspect so the camera frustum exactly fills the RT (no stretch).
+            // The RT is sized to the live passthrough feed (see ComputeCaptureSize), so this equals the real
+            // passthrough aspect on-device.
+            float aspect = _compositeRT != null
+                ? (float)_compositeRT.width / Mathf.Max(1, _compositeRT.height)
+                : (float)captureResolution.x / Mathf.Max(1, captureResolution.y);
             float hFov = Mathf.Clamp(passthroughHorizontalFovDeg, 40f, 140f);
-            // Unity's Camera.fieldOfView is VERTICAL; convert from horizontal at our RT aspect.
+            // Unity's Camera.fieldOfView is VERTICAL; convert from the passthrough HORIZONTAL fov at our aspect.
             float vFov = 2f * Mathf.Atan(Mathf.Tan(hFov * 0.5f * Mathf.Deg2Rad) / Mathf.Max(0.1f, aspect)) * Mathf.Rad2Deg;
             _compositeCamera.usePhysicalProperties = false;
             _compositeCamera.ResetProjectionMatrix(); // discard any XR projection inherited via CopyFrom
             _compositeCamera.aspect = aspect;
             _compositeCamera.fieldOfView = vFov;
+        }
+
+        /// <summary>
+        /// Chooses the composite RenderTexture dimensions. When the passthrough WebCamTexture is already live
+        /// we match ITS aspect exactly (height fixed to captureResolution.y, width derived), accounting for a
+        /// 90/270° sensor rotation that swaps width/height. This guarantees the streamed/preview image is not
+        /// stretched relative to the real world. Falls back to captureResolution (4:3) before the feed starts.
+        /// </summary>
+        private Vector2Int ComputeCaptureSize()
+        {
+            if (IsWebcamLive())
+            {
+                int w = _webcamTexture.width;
+                int h = _webcamTexture.height;
+                int rot = Mathf.Abs(_webcamTexture.videoRotationAngle) % 180;
+                float aspect = (rot == 90) ? (float)h / Mathf.Max(1, w) : (float)w / Mathf.Max(1, h);
+                int outH = Mathf.Clamp(captureResolution.y, 64, 2048);
+                int outW = Mathf.Clamp(Mathf.RoundToInt(outH * aspect), 64, 2048);
+                // keep even dimensions (some encoders require it)
+                if ((outW & 1) == 1) outW++;
+                if ((outH & 1) == 1) outH++;
+                return new Vector2Int(outW, outH);
+            }
+            return captureResolution;
         }
 
         /// <summary>Sizes/orients the passthrough background quad to exactly fill the COMPOSITE camera's

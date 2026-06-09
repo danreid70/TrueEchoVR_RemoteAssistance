@@ -83,6 +83,45 @@
 
 ---
 
+# ROUND 3 (UI readability pass + sync) — Status: CODE COMPLETE (compiles clean; editor smoke 18/18)
+
+## R3 ROOT CAUSES FOUND
+- **Chat scroll:** the ScrollView `Content` had a FIXED height with NO `VerticalLayoutGroup` and NO `ContentSizeFitter`, so it never grew with text — newest lines overflowed the masked viewport invisibly. (Matches the user's "I changed a property" hunch.)
+- **Composite misalignment:** RT was 16:9 (1280×720) but Quest 3 passthrough is natively 4:3 → the passthrough was stretched relative to the VR overlay, and the overlay rendered at the eye FOV instead of the passthrough FOV.
+- **QR never registers on web:** physical detection had NO server notification path at all — the dashboard only learned of codes via the manual REST Push. Plus a Push pose-frame edge case (items uploaded in world space when no RoomAnchor) and codes detected before socket-connect were never sent.
+- **Focus glow won't clear:** `ClearQRCodes` (Clear button), leaving a session, and UI-state transitions never called `ClearFocus`; the glow only self-cleared when its followed transform was destroyed.
+
+## R3 WHAT WAS DONE
+- **R3-A** Chat: added `VerticalLayoutGroup`+`ContentSizeFitter` to Content (scene); `ScrollChatToBottom()` force-rebuilds layout before setting `verticalNormalizedPosition=0`. Verified content grows (582 vs 177 viewport) and pins to newest.
+- **R3-B** Composite: RT sized to live passthrough aspect via `ComputeCaptureSize` (4:3 fallback 1280×960); `ApplyCompositeProjection` renders at passthrough FOV (`passthroughHorizontalFovDeg`=82, tunable) at the RT aspect. Scene SignalingManager set to 1280×960.
+- **R3-C** Toggles: `CompositingToggle` (above local), `StreamToReplitToggle` (under local, reuses "Local Preview" label), `ShowRemoteToggle` (under remote, reuses "Remote Video" label). New `SetCompositingEnabled` (culls VR layers) + `SetStreamingEnabled` (`VideoStreamTrack.Enabled`). Local preview gets a 4:3 `AspectRatioFitter`.
+- **R3-D** QR sync: full `ClearAllUserData` (codes+visuals+known/dormant+legit/name lists+pips+glow); Push pose frame fixed via `TryGetAnchorRelativePose` (skips items when no anchor instead of wrong-frame upload); NEW real-time `qr-detected` socket emit (`SendQrDetected` / `EmitQrToServer`, throttled on move, forced on add/anchor).
+- **R3-E** Focus glow cleared on Clear, on leave-session, and on any non-Session UI state.
+- **R3-F** `WebAppManager_Communication_Doc.md` → v2.3: documented `qr-detected` (§2a, REPLIT ACTION REQUIRED), composite aspect/FOV, toggles, full Clear semantics.
+- **R3-G** Flush all currently-tracked codes to server on connect (codes seen during sign-in now register).
+- **R3-H** Clear emit-throttle on Clear/leave; remote `AspectRatioFitter`; previews auto-match live texture aspect (`ApplyPreviewAspect`).
+
+## PROCESS NOTE (gotcha hit + fixed)
+- Two `CodeEdit` calls issued in PARALLEL on the SAME file caused a read-modify-write race that silently lost the `OnClearQRPressed` edit. Detected during verification and re-applied sequentially. **Rule: never edit the same file with parallel tool calls.**
+
+## R3 DEVICE CHECKLIST (verify on Quest)
+1. **Chat** scrolls so the newest message is always visible as logs stream in.
+2. **Local preview** is not stretched (4:3) and the VR overlay lines up with the real world as you turn — tune `SignalingManager.passthroughHorizontalFovDeg` (78–90) if needed.
+3. **Compositing toggle** OFF = passthrough only; ON = passthrough + overlay. **Stream-to-Replit toggle** OFF mutes the outbound feed (preview still live).
+4. **Web app shows QR codes live** as they're detected (requires Replit to add the `qr-detected` handler — see comm doc §2a). Matched codes appear; moving a code updates it.
+5. **Clear** empties the list + dropdown AND removes the pulsing glow; the glow never appears outside a live session.
+6. **Push/Pull** still round-trip the calibration (RoomAnchor-relative).
+
+## REPLIT-SIDE TODO (web app / backend — outside Unity)
+- Add a Socket.IO handler for **`qr-detected`** (upsert by `locationId`+`qrValue`, honour `isRoomAnchor` for the coordinate frame). Without it, real-time registration won't show even though the headset is emitting correctly.
+
+## OPTIONAL FOLLOW-UPS (not blocking the demo)
+- Replace deprecated `FindObjectsByType(..., FindObjectsSortMode)` calls (warnings only; match existing codebase style).
+- Consider a server-side DELETE for Clear if the dashboard should also empty (today Clear is local-only by design).
+- Add the new toggle fields to the `TrueEchoVR/Validate Scene Wiring` editor check.
+
+---
+
 # ROUND 2 (post on-device test) — Status: IN PROGRESS
 
 On-device results: local preview now works (permissions prompted OK). Remaining issues:

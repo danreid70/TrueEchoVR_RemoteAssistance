@@ -19,7 +19,15 @@ namespace TEVR
         public TMP_Text connectionStatusText;
         public TMP_Text latencyText;
         public RawImage localVideoImage;
-public RawImage remoteVideoImage;
+        public RawImage remoteVideoImage;
+
+        [Header("Video Toggles (assign in Inspector)")]
+        [Tooltip("Above local video: ON = stream passthrough + VR overlay; OFF = stream passthrough only.")]
+        public Toggle compositingToggle;
+        [Tooltip("Under local video: ON = send the local video to Replit; OFF = mute outbound stream (preview stays).")]
+        public Toggle streamToReplitToggle;
+        [Tooltip("Under remote video: ON = show the incoming remote video; OFF = hide it.")]
+        public Toggle showRemoteToggle;
         public Button toggleDetectionButton;
         public TMP_Text toggleDetectionButtonText;
         public Button pushQRButton;
@@ -85,6 +93,14 @@ public RawImage remoteVideoImage;
         {
             // The sessionUIPanel (SessionGroup) should be active for all states except None.
             if (sessionUIPanel != null) sessionUIPanel.SetActive(newState != UIManager.UIState.None);
+
+            // The "point-to" pulsing focus glow only belongs in a live Session. Whenever we leave Session
+            // (Login / Calibration / None), kill it so it never lingers outside a session.
+            if (newState != UIManager.UIState.Session)
+            {
+                qrManager?.ClearFocus();
+                statusUI?.ClearHighlight();
+            }
 
             switch (newState)
             {
@@ -170,6 +186,23 @@ public RawImage remoteVideoImage;
             if (pushQRButton != null) pushQRButton.onClick.AddListener(OnPushQRPressed);
             if (pullQRButton != null) pullQRButton.onClick.AddListener(OnPullQRPressed);
 
+            // Video toggles. Initialise visuals from the manager's current state, then subscribe.
+            if (compositingToggle != null)
+            {
+                if (webAppManager != null) compositingToggle.SetIsOnWithoutNotify(webAppManager.CompositingEnabled);
+                compositingToggle.onValueChanged.AddListener(OnCompositingToggled);
+            }
+            if (streamToReplitToggle != null)
+            {
+                if (webAppManager != null) streamToReplitToggle.SetIsOnWithoutNotify(webAppManager.StreamingEnabled);
+                streamToReplitToggle.onValueChanged.AddListener(OnStreamToReplitToggled);
+            }
+            if (showRemoteToggle != null)
+            {
+                showRemoteToggle.SetIsOnWithoutNotify(true);
+                showRemoteToggle.onValueChanged.AddListener(OnShowRemoteToggled);
+            }
+
             // Room code: confirming the field (keyboard "done"/enter) connects to the remote session.
             if (roomCodeInput != null) roomCodeInput.onSubmit.AddListener((_) => OnJoinPressed());
 
@@ -202,12 +235,14 @@ public RawImage remoteVideoImage;
                     if (remoteVideoImage == null) return;
                     remoteVideoImage.texture = tex;
                     remoteVideoImage.color = Color.white;
+                    ApplyPreviewAspect(remoteVideoImage, tex);
                     SetVideoImageVisible(remoteVideoImage, tex != null);
                 };
                 webAppManager.OnLocalStreamStarted += (tex) => {
                     if (localVideoImage == null) return;
                     localVideoImage.texture = tex;
                     localVideoImage.color = Color.white;
+                    ApplyPreviewAspect(localVideoImage, tex);
                     SetVideoImageVisible(localVideoImage, tex != null);
                 };
                 webAppManager.OnStartupDataReceived += OnStartupDataReceived;
@@ -229,14 +264,18 @@ public RawImage remoteVideoImage;
                     AppendChatMessage($"[QR Added] {GetColoredPayload(qr)}");
                     RefreshQRCodeDropdown();
                     UpdateDetectionIndicator();
+                    EmitQrToServer(qr, force: true);   // real-time: register the instant it's seen
                 };
                 // PERF: do NOT log on OnQRCodeUpdated — it fires every frame from tracking jitter, and
                 // AppendChatMessage re-assigns the whole chat string AND calls Canvas.ForceUpdateCanvases()
                 // each time. That per-frame canvas rebuild (per visible code) was a primary cause of the
-                // jitter/hitching. Add/remove events still log below.
+                // jitter/hitching. Add/remove events still log below. We DO emit a throttled real-time
+                // position update so the web dashboard tracks moved codes.
+                qrManager.OnQRCodeUpdated += (qr) => EmitQrToServer(qr, force: false);
                 qrManager.OnQRCodeRemoved += (key) => { AppendChatMessage($"[QR Removed] {key}"); RefreshQRCodeDropdown(); UpdateDetectionIndicator(); };
                 qrManager.OnRoomAnchorDiscovered += (qr) => {
                     AppendChatMessage($"[Anchor Discovered] <color=green>{qr.fullPayload}</color>");
+                    EmitQrToServer(qr, force: true);   // anchor world pose anchors everything else
                 };
             }
 
@@ -287,6 +326,17 @@ public RawImage remoteVideoImage;
                 qrManager.EnsureQrTrackingEnabled();
             }
             UpdateDetectionIndicator();
+        }
+
+        /// <summary>Keeps a preview RawImage's AspectRatioFitter in sync with the live texture's real aspect,
+        /// so neither the local composite (4:3 passthrough) nor the remote feed (often 16:9) is stretched.</summary>
+        private void ApplyPreviewAspect(RawImage img, Texture tex)
+        {
+            if (img == null || tex == null || tex.width <= 0 || tex.height <= 0) return;
+            var arf = img.GetComponent<AspectRatioFitter>();
+            if (arf == null) arf = img.gameObject.AddComponent<AspectRatioFitter>();
+            arf.aspectMode = AspectRatioFitter.AspectMode.FitInParent;
+            arf.aspectRatio = (float)tex.width / tex.height;
         }
 
         /// <summary>Shows/hides a video RawImage (used to make empty streams disappear instead of going black).</summary>
@@ -792,11 +842,23 @@ public RawImage remoteVideoImage;
         {
             chatHistory += $"{msg}\n";
             if (chatDisplayText != null) chatDisplayText.text = chatHistory;
-            if (chatScrollRect != null)
-            {
-                Canvas.ForceUpdateCanvases();
-                chatScrollRect.verticalNormalizedPosition = 0f;
-            }
+            ScrollChatToBottom();
+        }
+
+        /// <summary>
+        /// Scrolls the chat to the newest (bottom) line. The Content uses a ContentSizeFitter, so its height
+        /// only updates after a layout rebuild — we force that rebuild BEFORE moving the scroll position,
+        /// otherwise verticalNormalizedPosition is computed against the old (stale) content size and the view
+        /// never reaches the latest message.
+        /// </summary>
+        private void ScrollChatToBottom()
+        {
+            if (chatScrollRect == null) return;
+            Canvas.ForceUpdateCanvases();
+            if (chatScrollRect.content != null)
+                LayoutRebuilder.ForceRebuildLayoutImmediate(chatScrollRect.content);
+            Canvas.ForceUpdateCanvases();
+            chatScrollRect.verticalNormalizedPosition = 0f;
         }
 
         public void RefreshQRCodeDropdown()
@@ -881,6 +943,7 @@ public RawImage remoteVideoImage;
             // Tear down the live session (network + local capture) and return to the Sign In panel,
             // ready to sign in again with the SAME stored credentials (no re-scan required).
             webAppManager?.Disconnect();
+            _lastQrEmit.Clear();   // next session must re-flush detections from scratch
             AppendChatMessage("<color=orange>[Session] Left session — returning to Sign In.</color>");
 
             // Reset the flow latches so a subsequent Sign In re-enters the session cleanly.
@@ -898,6 +961,25 @@ public RawImage remoteVideoImage;
             // been resolved by the startup permission flow), it is safe to open the Passthrough Camera
             // and begin the local preview / outgoing video stream to the remote expert.
             if (webAppManager != null) webAppManager.StartLocalPreview();
+
+            // Real-time QR registration only emits while the socket is connected, so any codes detected
+            // BEFORE this point (e.g. during sign-in) were never sent. Flush the current set now so the
+            // dashboard reflects what the headset already sees the moment the session goes live.
+            FlushDetectedQrToServer();
+        }
+
+        /// <summary>Re-emits every currently-tracked, non-Sign-In QR code to the server (used on connect so
+        /// codes seen before the socket was up still register live). Throttle is bypassed via force.</summary>
+        private void FlushDetectedQrToServer()
+        {
+            if (qrManager == null || webAppManager == null || !webAppManager.IsSocketConnected) return;
+            // Anchor first so item relative-poses resolve against it on the server.
+            if (qrManager.RoomAnchorInstance != null) EmitQrToServer(qrManager.RoomAnchorInstance, force: true);
+            foreach (var inst in qrManager.TrackedQRCodes.Values)
+            {
+                if (inst == qrManager.RoomAnchorInstance) continue;
+                EmitQrToServer(inst, force: true);
+            }
         }
 
         private void OnDisconnected()
@@ -971,9 +1053,13 @@ public RawImage remoteVideoImage;
         {
             if (qrManager == null) return;
             int count = qrManager.TrackedQRCodes.Count;
-            qrManager.ClearQRCodes();
+            // Full reset: tracked codes, known/dormant poses, server "legit" + name lists, detection pips,
+            // and the focus glow. Empties the dropdown (a later Pull repopulates from the server).
+            qrManager.ClearAllUserData();
+            _lastQrEmit.Clear();   // re-detected codes should emit immediately, not be throttled by stale entries
+            statusUI?.ClearHighlight();
             RefreshQRCodeDropdown();
-            AppendChatMessage($"<color=green>[Clear]</color> Cleared {count} QR code(s) from the list.");
+            AppendChatMessage($"<color=green>[Clear]</color> Cleared {count} QR code(s) and the local list.");
         }
 
         /// <summary>
@@ -1016,6 +1102,70 @@ public RawImage remoteVideoImage;
             if (apiHostText != null) apiHostText.text = $"Host: {cfg.apiHost}";
             if (customerIdText != null) customerIdText.text = $"Customer: {(string.IsNullOrEmpty(cfg.customerId) ? "(scan or set)" : cfg.customerId)}";
             if (locationIdText != null) locationIdText.text = $"Location: {(string.IsNullOrEmpty(cfg.locationId) ? "(scan or set)" : cfg.locationId)}";
+        }
+
+        // Per-payload throttle so OnQRCodeUpdated (which fires on tracking movement) doesn't flood the socket.
+        private readonly Dictionary<string, float> _lastQrEmit = new Dictionary<string, float>();
+        private const float QrEmitThrottleSeconds = 1.0f;
+
+        /// <summary>
+        /// Real-time registration: pushes a single detected code to the server over the socket so the web
+        /// dashboard updates live. The RoomAnchor is sent with its WORLD pose; every other item is sent
+        /// RoomAnchor-RELATIVE (skipped if no RoomAnchor exists yet — the relative frame is undefined).
+        /// Throttled per payload; <paramref name="force"/> (add / anchor-discovered) bypasses the throttle.
+        /// </summary>
+        private void EmitQrToServer(QrCodeManager.QRCodeInstance qr, bool force)
+        {
+            if (qr == null || qrManager == null || webAppManager == null) return;
+            if (!webAppManager.IsSocketConnected) return;            // only meaningful in a live session
+            if (string.IsNullOrEmpty(qr.fullPayload)) return;
+            if (qrManager.IsSignInCode(qr.fullPayload)) return;      // setup/login code is never an item
+
+            if (!force)
+            {
+                if (_lastQrEmit.TryGetValue(qr.identifierKey, out float t) && Time.time - t < QrEmitThrottleSeconds)
+                    return;
+            }
+
+            bool isAnchor = qr == qrManager.RoomAnchorInstance || qrManager.IsRoomAnchorPayload(qr.fullPayload);
+            Vector3 pos; Quaternion rot;
+            if (isAnchor)
+            {
+                pos = qr.lastPosition; rot = qr.lastRotation;       // world pose: the reference frame
+            }
+            else if (!qrManager.TryGetAnchorRelativePose(qr, out pos, out rot))
+            {
+                return;                                            // no RoomAnchor yet → cannot place relatively
+            }
+
+            _lastQrEmit[qr.identifierKey] = Time.time;
+            webAppManager.SendQrDetected(
+                qr.fullPayload,
+                qrManager.GetPayloadName(qr.fullPayload),
+                qrManager.IsValidListed(qr.fullPayload),
+                isAnchor,
+                pos, rot);
+        }
+
+        private void OnCompositingToggled(bool on)
+        {
+            webAppManager?.SetCompositingEnabled(on);
+            AppendChatMessage(on
+                ? "<color=#22D3EE>[Video]</color> Compositing ON — streaming passthrough + VR overlay."
+                : "<color=#22D3EE>[Video]</color> Compositing OFF — streaming passthrough only.");
+        }
+
+        private void OnStreamToReplitToggled(bool on)
+        {
+            webAppManager?.SetStreamingEnabled(on);
+            AppendChatMessage(on
+                ? "<color=#22D3EE>[Video]</color> Streaming to Replit ON."
+                : "<color=#22D3EE>[Video]</color> Streaming to Replit OFF (local preview still active).");
+        }
+
+        private void OnShowRemoteToggled(bool on)
+        {
+            if (remoteVideoImage != null) remoteVideoImage.gameObject.SetActive(on);
         }
 
         /// <summary>Uploads the current local QR calibration to the backend for this location.</summary>

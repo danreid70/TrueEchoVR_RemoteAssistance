@@ -555,6 +555,10 @@ public class QRPayloadAction
 
         public void ClearQRCodes()
         {
+            // Any pulsing focus glow is following a code we are about to destroy — kill it first so it
+            // doesn't linger pointing at nothing.
+            ClearFocus();
+
             foreach (var inst in _trackedQRCodes.Values)
             {
                 if (inst.visualObject != null) Destroy(inst.visualObject);
@@ -565,6 +569,31 @@ public class QRPayloadAction
             // The RoomAnchor visual (with its OVRSpatialAnchor component) was destroyed above; drop the stale
             // runtime reference. The persisted UUID is intentionally left so it can relocalize next launch
             // (use ClearRoomSpatialAnchor() to erase persistence for re-calibration).
+            _roomSpatialAnchor = null;
+            _roomAnchorDrivenBySpatialAnchor = false;
+            RequestSave();
+        }
+
+        /// <summary>
+        /// FULL user-initiated reset (the "Clear" button). Removes the focus glow, every detection pip,
+        /// all tracked code visuals, known/dormant poses, AND the server-provided "legit" payload + name
+        /// lists so the dropdown/merged list empties completely. A subsequent Pull (or startup-data) will
+        /// repopulate the lists from the server. This does NOT delete anything server-side.
+        /// </summary>
+        public void ClearAllUserData()
+        {
+            ClearFocus();
+            ClearDetectionMarkers();   // pips + pending-payload retries (+ ClearFocus again, harmless)
+
+            foreach (var inst in _trackedQRCodes.Values)
+                if (inst.visualObject != null) Destroy(inst.visualObject);
+            _trackedQRCodes.Clear();
+            _knownPoses.Clear();
+            _dormantQRCodes.Clear();
+            _validPayloads.Clear();
+            _payloadNames.Clear();
+
+            RoomAnchorInstance = null;
             _roomSpatialAnchor = null;
             _roomAnchorDrivenBySpatialAnchor = false;
             RequestSave();
@@ -607,26 +636,54 @@ public class QRPayloadAction
             RequestSave();
         }
 
+        /// <summary>
+        /// Computes the RoomAnchor-RELATIVE pose of a detected code's current world pose. This is the
+        /// canonical coordinate frame for the backend contract (so any headset/the web dashboard can place
+        /// the code regardless of per-session tracking origin). Returns false when there is no RoomAnchor
+        /// (the relative frame is undefined) or the instance has no visual.
+        /// </summary>
+        public bool TryGetAnchorRelativePose(QRCodeInstance inst, out Vector3 localPos, out Quaternion localRot)
+        {
+            localPos = Vector3.zero; localRot = Quaternion.identity;
+            if (inst == null || inst.visualObject == null) return false;
+            if (RoomAnchorInstance == null || RoomAnchorInstance.visualObject == null) return false;
+            var a = RoomAnchorInstance.visualObject.transform;
+            localPos = a.InverseTransformPoint(inst.visualObject.transform.position);
+            localRot = Quaternion.Inverse(a.rotation) * inst.visualObject.transform.rotation;
+            return true;
+        }
+
         public string GetQRCodeDataAsJson(string headsetId)
         {
             var list = new List<CalibrationQRData>();
             var seen = new HashSet<string>();
+            int skippedNoAnchor = 0;
 
-            // Detected codes: the RoomAnchor uploads its WORLD pose; every item uploads its RoomAnchor-relative
-            // (local) pose, which is the contract the backend/web dashboard expects. Sign-In codes excluded.
+            // The RoomAnchor uploads its WORLD pose (it IS the reference frame). Every item uploads its
+            // RoomAnchor-RELATIVE pose — the contract the backend/web dashboard expects. Sign-In codes excluded.
             foreach (var inst in _trackedQRCodes.Values)
             {
                 if (string.IsNullOrEmpty(inst.fullPayload) || IsSignInCode(inst.fullPayload)) continue;
 
-                Vector3 pos = inst.lastPosition;
-                Quaternion rot = inst.lastRotation;
-                if (inst != RoomAnchorInstance && inst.visualObject != null && _isAnchorSet)
+                if (inst == RoomAnchorInstance)
                 {
-                    pos = inst.visualObject.transform.localPosition;
-                    rot = inst.visualObject.transform.localRotation;
+                    list.Add(new CalibrationQRData { qrValue = inst.fullPayload, position = inst.lastPosition, rotation = inst.lastRotation });
+                    seen.Add(inst.identifierKey);
+                    continue;
                 }
-                list.Add(new CalibrationQRData { qrValue = inst.fullPayload, position = pos, rotation = rot });
-                seen.Add(inst.identifierKey);
+
+                // Item: always express RELATIVE to the RoomAnchor (computed from the live world pose, so it is
+                // correct even if parenting hasn't been applied). Without a RoomAnchor the relative frame is
+                // undefined — skip rather than silently upload a world pose in the wrong frame.
+                if (TryGetAnchorRelativePose(inst, out var rp, out var rr))
+                {
+                    list.Add(new CalibrationQRData { qrValue = inst.fullPayload, position = rp, rotation = rr });
+                    seen.Add(inst.identifierKey);
+                }
+                else
+                {
+                    skippedNoAnchor++;
+                }
             }
 
             // Known-but-not-currently-detected items (already RoomAnchor-relative) so Push uploads the full set.
@@ -638,6 +695,10 @@ public class QRPayloadAction
                 list.Add(new CalibrationQRData { qrValue = kp.payload, position = kp.localPosition, rotation = kp.localRotation });
                 seen.Add(key);
             }
+
+            if (skippedNoAnchor > 0)
+                Debug.LogWarning($"[QrCodeManager] Push: skipped {skippedNoAnchor} detected item(s) because no RoomAnchor is set — scan the Room Anchor first so item poses can be expressed relative to it.");
+
             return JsonUtility.ToJson(new CalibrationWrapper { headsetId = headsetId, qrCodes = list });
         }
 
