@@ -167,10 +167,9 @@ namespace TEVR
             // An empty point-to (no name, no qrCode, no coordinates) means the admin cleared the selection.
             if (string.IsNullOrEmpty(name) && string.IsNullOrEmpty(qrCode) && !position.HasValue)
             {
-                qrManager?.ClearFocus();
-                statusUI?.ClearHighlight();
-                UIManager.Instance?.remoteHighlight?.ClearForce();
-                statusUI?.ShowMessage("", "");
+                var sc = UIManager.Instance != null ? UIManager.Instance.sessionController : null;
+                if (sc != null) { sc.ApplyPointTarget(null); }   // single driver: also resets the dropdown to item 0
+                else { qrManager?.ClearFocus(); statusUI?.ClearHighlight(); UIManager.Instance?.remoteHighlight?.ClearForce(); statusUI?.ShowMessage("", ""); }
                 return;
             }
 
@@ -334,11 +333,13 @@ namespace TEVR
         public void PointToQRCode(QrCodeManager.QRCodeInstance qr)
         {
             if (qr == null) return;
-            // Surround the pointed-at code with the pulsing focus glow until the selection is cleared.
-            qrManager?.FocusQRCode(qr);
+            // Single driver: route through the SessionUiController so the dropdown selection, focus glow,
+            // directional arrow + dashed line, HUD and chat all stay in sync (see ApplyPointTarget).
+            var sc = UIManager.Instance != null ? UIManager.Instance.sessionController : null;
+            if (sc != null) { sc.ApplyPointTarget(qr); return; }
 
-            // Point the directional arrow at the code's visual object if it has one, otherwise at its live
-            // trackable (a physically-tracked code that has not yet been given a placed visual).
+            // Fallback if the controller isn't available (should not happen in normal flow).
+            qrManager?.FocusQRCode(qr);
             Transform target = qr.visualObject != null ? qr.visualObject.transform
                              : (qr.trackable != null ? qr.trackable.transform : null);
             if (target != null)

@@ -5,9 +5,8 @@ Quest 3 client (`TrueEchoVR_RemoteAssistance`) is, how it talks to you, and exac
 the two systems stay in sync. It is written to be read top-to-bottom by an AI assistant — it states intent,
 the contract, the failure semantics, and a verification checklist.
 
-> **Source of truth.** The precise wire schemas live in [`BACKEND_CONTRACT.md`](./BACKEND_CONTRACT.md) and
-> [`Assets/_TrueEchoVR/_SCRIPTS/WebAppManager_Communication_Doc.md`](./Assets/_TrueEchoVR/_SCRIPTS/WebAppManager_Communication_Doc.md).
-> This guide is the **narrative + responsibilities + checklist** that ties them together. If a schema here ever
+> **Source of truth.** The precise wire schemas live in [`BACKEND_CONTRACT.md`](./BACKEND_CONTRACT.md).
+> This guide is the **narrative + responsibilities + checklist** that ties it together. If a schema here ever
 > disagrees with `BACKEND_CONTRACT.md`, the contract file wins — and please flag the drift.
 
 > ### 🔴 NEW in client v2.4 — ACTION REQUIRED on the backend
@@ -25,6 +24,16 @@ the contract, the failure semantics, and a verification checklist.
 > 4. *(Headset-side, FYI only — no backend change.)* The streamed video now aligns to the **left** passthrough
 >    camera and **defaults to clean passthrough** (VR/HUD overlay off until the operator enables it). Display the
 >    incoming video at its **native aspect** (Quest 3 passthrough is 4:3) — do not force 16:9.
+>
+> ### 🟢 client v2.5 — FYI only, NO backend action required
+> v2.5 is **UI / visual / robustness only**; the wire contract is unchanged. For awareness:
+> - `point-to`, the on-headset dropdown, and "stop pointing" now run through **one** unified code path on the
+>   headset. The `point-to` schema and the "clear" sentinel (no `name`/`qrCode`, zero/absent `position`) are
+>   exactly as in §5.3 — no change.
+> - **Push** is hardened client-side: the operator sees the true uploadable count and is prevented from pushing
+>   an empty set (e.g. before a RoomAnchor exists). Same POST shape (§4.2). **Pull** now also tolerates a
+>   top-level JSON array in addition to the documented `CalibrationUpload` object — returning the object is still
+>   preferred.
 
 ---
 
@@ -322,4 +331,5 @@ REST (NEW)
 
 ---
 
-*Keep this guide and `BACKEND_CONTRACT.md` updated together whenever the client schema changes.*
+*Keep this guide and `BACKEND_CONTRACT.md` (the single canonical wire contract) updated together whenever the
+client schema changes.*

@@ -9,7 +9,7 @@ Welcome to the **TrueEchoVR** project. This application is a professional-grade 
 
 - **MR Spatial Awareness**: Full passthrough integration with physical room awareness. **Pure AR Locomotion**: No virtual locomotion (teleport/snap-turn) is enabled; movement is 1:1 with the headset's physical movement in the real world.
 - **QR Calibration & Persistence**: Align the virtual coordinate system with the physical world using a dedicated "Room Anchor" QR code. Calibration is persistent and multi-tenant aware.
-- **QR Detection Markers & Point-At Focus**: Every detected QR code shows a small colour-coded pip (green/red/blue/orange) that fades away after a few seconds to avoid clutter, and a discernible pulsing glow surrounds whichever code is currently "pointed at" by the operator or remote expert. See _QR Detection Markers_ below.
+- **QR Detection Markers & Point-At Focus**: Every detected QR code shows a small colour-coded pip (green/red/blue/orange) that fades away after a few seconds to avoid clutter. Whichever code is currently "pointed at" (by the operator's dropdown or a remote expert's `point-to`) is wrapped in a **pulsing translucent green holographic box** and connected to the HUD direction arrow by a **faint green dashed line**, so the target is unmistakable. A single unified path (`SessionUiController.ApplyPointTarget`) drives the hologram, arrow, dashed line, dropdown selection, and HUD message together. See _QR Detection Markers_ below.
 - **Anchor-Relative Hierarchy**: Virtual objects are parented to physical anchors, ensuring they stay locked in place even if the headset re-localizes.
 - **Drift-Free RoomAnchor (Meta Spatial Anchor, hybrid)**: The "Room Anchor" zero-point is backed by a persisted **Meta `OVRSpatialAnchor`**, so it is drift-free and **relocalizes automatically on the next launch — no need to re-scan the RoomAnchor QR each session**. Item QR positions are still stored *relative to the RoomAnchor* and synced to the backend exactly as before, so the web-dashboard coordinate contract is unchanged. Single-headset persistence only (no Shared Spatial Anchors yet); falls back to the plain QR-scan path in the Editor and on devices without anchor support. See _Spatial Anchor Persistence_ below.
 - **Remote Expert Streaming**: Real-time video and audio via **WebRTC**. An expert can view the operator's perspective and "point" to physical objects. Video defaults to the **Meta Passthrough Camera** (real-world view) and automatically falls back to the Unity-rendered view if the passthrough camera is unavailable.
@@ -21,7 +21,7 @@ Welcome to the **TrueEchoVR** project. This application is a professional-grade 
 - **Intelligent UI System**: A world-space "lazy-follow" HUD and session manager that follow the user comfortably without jitter.
 - **Enterprise Health Reporting**: Automatic telemetry (Battery, Calibration State, Location ID) reported to the admin every 60 seconds.
 - **LMS Ready**: Built-in support for xAPI and SCORM tracking.
-- **Resilient Sign-In → Session Flow**: Sign-in is **non-blocking** — once credentials are valid the session opens immediately and the Room Anchor scan is optional/non-blocking (it only refines item placement). Every REST call has a **15s timeout** so the handshake can never hang. Leaving a session returns cleanly to Sign In with stored credentials (no re-scan needed).
+- **Resilient Sign-In → Session Flow**: Sign-in is **non-blocking** — once credentials are valid the session opens immediately and the Room Anchor scan is optional/non-blocking (it only refines item placement). Every REST call has a **15s timeout** so the handshake can never hang. Leaving a session returns cleanly to Sign In with stored credentials (no re-scan needed). _(v2.5)_ The app always starts on the **Login** panel; the **Sign In button is disabled until credentials are actually available** (a persisted/just-scanned setup code or a valid resolve), with the status line guiding the operator ("Please scan a Login Code" vs. "Ready to sign in to: {location}"). The raw **Customer ID / Location ID fields are now hidden** on both the Login and Session panels (they are provisioned by the setup code, not typed).
 - **Demo Mode (offline)**: A manual **Demo Mode** button on the Login panel (auto-revealed when a sign-in attempt fails) enters a normal offline session — **real** QR detection still runs and detected codes become pointable in the dropdown; without a downloaded "legit" list they classify as *detected-but-unlisted*.
 - **Connection Watchdog**: If the WebSocket drops mid-session the client shows live reconnect status and, when reconnection is abandoned, returns to Sign In and surfaces the Demo Mode fallback (`SignalingManager.OnReconnecting` / `OnReconnectFailed`, plus `Reconnect()`).
 - **Credential-Expiry Re-Scan**: A backend `401` (or `403/404` on `startup-data`) clears stored credentials and prompts the operator to **re-scan a Login Code** instead of silently dropping to Demo (`SignalingManager.OnCredentialsExpired`).
@@ -151,11 +151,16 @@ A detection pip appears at full opacity when a code is **detected/loaded**, hold
 
 Fading is driven per-renderer via a `MaterialPropertyBlock` (one shared transparent material per colour, no per-marker material allocation). A fully-faded marker disables its own renderer and `Update` until shown again.
 
-### Point-At focus glow
-When a code is "pointed at", a single reusable **pulsing glow halo** surrounds it (and its pip is held visible) until the selection is cleared:
-- **Triggered by**: the QR-code dropdown (`SessionUiController.OnQRCodeSelected` → `SessionFlowManager.PointToQRCode` → `QrCodeManager.FocusQRCode`), or a remote **`point-to`** command from the web app.
-- **Cleared by**: selecting "None" in the dropdown, a remote `point-to` with an empty name, a position-based highlight, or the focused code being removed. All call `QrCodeManager.ClearFocus()`.
-- The glow follows the live trackable when the code is physically tracked, or its placed visual object otherwise, so it works both during scanning and post-calibration.
+### Point-At focus (holographic box + dashed line) — _updated v2.5_
+When a code is "pointed at", three visuals are shown together until the selection is cleared:
+- A **pulsing translucent green holographic box** (a transparent fill with thick glowing green edge bars) scaled to wrap the target — built by `QrCodeManager.EnsureFocusGlow()` and animated by `ApplyFocusGlowPulse()`. It is **off by default** and only appears for a valid pointed-at target, so it never clutters the scene.
+- A **faint green dashed line** from the HUD direction arrow to the target (`VrHudController.UpdateDashLine()` / the `PointAtDashLine` `LineRenderer`). Both ends are trimmed by each object's half-extent so the line starts at the arrow's edge and ends at the target's edge — never buried inside either.
+- The **HUD direction arrow** (`VrHudController.pointerArrow`) rotating to face the target, and the code's pip held visible.
+
+**One unified driver.** Everything above — plus the dropdown selection and the on-HUD message — is set by **`SessionUiController.ApplyPointTarget(QRCodeInstance)`**. The on-headset dropdown, a remote **`point-to`** command, and "stop pointing" all route through this one method (the dropdown value is synced with `SetValueWithoutNotify` to avoid event recursion).
+- **Triggered by**: selecting a code in the dropdown, or a remote `point-to` (resolved to a local code by `QrCodeManager`, then `FocusQRCode`).
+- **Cleared by**: choosing the dropdown's first item (**"Click here to point at an object or stop pointing…"**), a remote `point-to` with no name/qrCode, a position-based highlight, **Clear QR**, or the focused code being removed. All converge on `ApplyPointTarget(null)` → `QrCodeManager.ClearFocus()`. (This fixed a prior bug where "stop pointing" silently no-op'd because the dropdown value was never synced.)
+- The hologram follows the live trackable when the code is physically tracked, or its placed visual object otherwise, so it works both during scanning and post-calibration.
 
 ### Robust / frequent scanning
 - `StartQRCodeDetection()` re-asserts the MRUK tracker config so scanning reliably (re)starts.
@@ -168,7 +173,7 @@ When a code is "pointed at", a single reusable **pulsing glow halo** surrounds i
 
 ### QR Code Dropdown (Session panel) — color-coded list
 
-The Session panel's **QR-code dropdown** lists the *union* of the server's "legit" list and the codes seen locally, so the operator can see at a glance what is present, missing, or unexpected. It is rebuilt by `SessionUiController.RefreshQRCodeDropdown()` whenever codes are added/removed or a Pull/StartupData arrives. Each entry's **text colour** means:
+The Session panel's **QR-code dropdown** lists the *union* of the server's "legit" list and the codes seen locally, so the operator can see at a glance what is present, missing, or unexpected. It is rebuilt by `SessionUiController.RefreshQRCodeDropdown()` whenever codes are added/removed or a Pull/StartupData arrives. _(v2.5)_ The **first item is always the prompt "Click here to point at an object or stop pointing…"** — selecting it stops pointing (see _Point-At focus_ above), and entry colours are applied as inline rich-text `<color>` tags so they render reliably across TextMeshPro versions. Each entry's **text colour** means:
 
 | Colour | State | Pointable? | Meaning |
 | --- | --- | --- | --- |
@@ -189,6 +194,7 @@ The RoomAnchor zero-point is backed by a persisted Meta spatial anchor so calibr
 - **Toggle:** `QrCodeManager.useSpatialAnchor` (default **true**). When off / unsupported / in the Editor, the original plain-GameObject QR path is used unchanged.
 - **First scan (create + save):** when the RoomAnchor QR is detected, `TryPersistRoomAnchorAsSpatialAnchor()` adds an `OVRSpatialAnchor` to the RoomAnchor visual, waits for localization, `SaveAnchorAsync`, and stores the UUID + payload in PlayerPrefs (`tevr_roomAnchorUuid`, `tevr_roomAnchorPayload`).
 - **Next launch (relocalize):** `TryRelocalizeRoomSpatialAnchorOnStart()` runs in `Start()` — `LoadUnboundAnchorsAsync` → `LocalizeAsync` → `BindTo` re-establishes the RoomAnchor at its physical pose and activates dormant item codes. The disk RoomAnchor is *deferred* and only restored if relocalization fails. No QR re-scan required.
+- **Live re-sync while the RoomAnchor is in view (NEW v2.5):** once persisted, the anchor normally holds the zero-point drift-free even when the code is out of sight. But while the operator is **actively looking at the RoomAnchor QR**, the anchor visual (and the prefab parented to it) now **snaps to the live QR pose** so it visibly tracks the real code; when the code leaves view the spatial anchor takes over again. Controlled by `QrCodeManager.roomAnchorVisualFollowsLiveQr` (default **true**; set false to keep the spatial anchor fully authoritative). The RoomAnchor also uses **tighter update thresholds** than ordinary items (`roomAnchorPositionThreshold` ≈ 4 mm, `roomAnchorRotationThreshold` ≈ 0.1°) so it tracks responsively as the zero-point for everything else.
 - **Coordinate-frame parity:** items are still parented to the RoomAnchor visual and stored as `localPosition`/`localRotation`, so **the backend coordinate sync (REST + StartupData) is byte-for-byte unchanged**. The saved anchor pose already encodes the scan-time visual orientation, so relocalized items land where they were calibrated.
 - **Re-calibration:** `ClearRoomSpatialAnchor()` erases the anchor (`EraseAnchorAsync`) and clears the stored UUID; the next RoomAnchor scan creates a fresh anchor. _(Not yet wired to a UI button — see Next Steps.)_
 - **Scope:** single-headset persistence only. No Shared Spatial Anchors; the create/load/erase logic is the single boundary where SSA would be added later.
@@ -216,6 +222,11 @@ The system connects to a **Socket.io** signaling server for WebRTC handshakes an
 - **Health**: `42["health-update", { ... }]` sent every minute.
 
 > **Backend integration docs:** the authoritative wire schemas are in [`BACKEND_CONTRACT.md`](./BACKEND_CONTRACT.md); a narrative, responsibilities-and-checklist guide written for the **Replit backend AI** is in [`REPLIT_AI_INTEGRATION_GUIDE.md`](./REPLIT_AI_INTEGRATION_GUIDE.md). The QA/verification checklist (including deferred on-device tests) is in [`TESTING_CHECKLIST.md`](./TESTING_CHECKLIST.md).
+
+### Calibration Push / Pull (Session panel) — _hardened v2.5_
+- **Push** (`POST /api/locations/{id}/qr-codes`) now reports the **true number of codes that will upload** (the count excludes the sign-in code and any items that have no RoomAnchor-relative frame yet) instead of a raw tracked count. Pushing an empty set is **blocked with a clear message** — e.g. "scan the Room Anchor first" when items exist but no anchor does. The on-the-wire shape is unchanged (bulk-first, per-item fallback).
+- **Pull** (`GET /api/locations/{id}/qr-codes`) parsing is more tolerant — it now also accepts a **top-level JSON array** in addition to the documented `CalibrationUpload` object, with clearer "nothing returned" messaging.
+- **Button state follows context** (`SessionUiController.UpdateSessionButtonsState`): **Pull** enables only when a Location is known; **Push** enables only when a Location is known *and* there is at least one uploadable code. State refreshes on every QR add/remove, anchor discovery, clear, and detection toggle, so the UI never offers an action that would silently no-op.
 
 ### Resilience & failure handling
 - **REST timeout**: Every `UnityWebRequest` uses a **15-second timeout** (`SignalingManager`), so a stalled server can never hang the sign-in handshake. On timeout/failure the boot sequence resolves and either enters Demo Mode (network/parse failure) or reports failure to the caller.
@@ -267,6 +278,16 @@ A dependency-driven audit confirmed the two shipping scenes (`Bootstrap`, `Troub
 > **Tip:** Keep one config source of truth — edit backend settings on `BackendConfig.asset`, not the script defaults, to avoid drift (the asset had gone stale against the script schema and was repaired during this work).
 
 > **Note:** If an editor Undo (Ctrl+Z) is pressed after these folders are deleted, Unity restores them (some, e.g. `MRUKSamples` and `Simple Garage`, contain corrupt `.png` files that then log `Could not create asset … File could not be read`). They were re-deleted; the build-scene dependency set is unaffected either way (verified at 282 assets). If they reappear, simply delete them again.
+
+### Documentation layout (one source of truth) — _v2.5_
+All project docs now live at the **repo root** and each has a single purpose — no duplicates:
+- **`README.md`** (this file) — the project overview & how-to.
+- **`BACKEND_CONTRACT.md`** — the single canonical client⇄backend **wire contract** (schemas).
+- **`REPLIT_AI_INTEGRATION_GUIDE.md`** — the narrative backend integration guide + checklist.
+- **`TESTING_CHECKLIST.md`** — the QA/verification checklist.
+- **`Assets/Project_Overview.md`** — in-editor architecture index; **`Assets/Plans/`** — historical worklogs.
+
+> The redundant `Assets/_TrueEchoVR/_SCRIPTS/WebAppManager_Communication_Doc.md` (a stale-named duplicate of `BACKEND_CONTRACT.md`) and the stale root copy of `EVALUATION_AND_FIX_PLAN.md` (canonical lives in `Assets/Plans/`) were **removed** in v2.5. Keep `BACKEND_CONTRACT.md` and `REPLIT_AI_INTEGRATION_GUIDE.md` in sync when the client schema changes.
 
 ## 📈 Suggested Next Steps
 1. **Item Search**: Implement a search filter for the QR-code dropdown as location databases grow (the list is already color-coded — see _QR Code Dropdown_).

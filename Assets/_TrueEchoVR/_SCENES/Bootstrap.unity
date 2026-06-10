@@ -67775,6 +67775,9 @@ MonoBehaviour:
   qrRoomAnchorLabel: RoomAnchor
   positionThreshold: 0.05
   rotationThreshold: 0.05
+  roomAnchorVisualFollowsLiveQr: 1
+  roomAnchorPositionThreshold: 0.004
+  roomAnchorRotationThreshold: 0.1
   setupCodeMinLength: 6
   setupCodeMaxLength: 16
   payloadActions:

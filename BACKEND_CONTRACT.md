@@ -273,5 +273,20 @@ This is how the admin/dashboard tells the headset to point at a QR code. The hea
       each element by `qrValue` (batch + per-item fallback; §3.4).
 
 ---
-*Generated from the verified Unity client. If the client schema changes, update this file and
-`Assets/_TrueEchoVR/_SCRIPTS/WebAppManager_Communication_Doc.md` together.*
+*Generated from the verified Unity client. This is the **single canonical wire contract** — if the client
+schema changes, update this file (and the narrative `REPLIT_AI_INTEGRATION_GUIDE.md`). The older
+`Assets/_TrueEchoVR/_SCRIPTS/WebAppManager_Communication_Doc.md` duplicate has been removed.*
+
+---
+
+## 8. Client v2.5 changelog (no backend changes)
+Client release **v2.5** is **UI / visual / robustness only — the wire contract above is unchanged.** No backend
+action is required. For backend awareness only:
+- **`point-to` handling is unchanged**, but the headset now routes remote `point-to`, the on-headset dropdown,
+  and "stop pointing" through **one** code path. The "clear" sentinel (no `name`/`qrCode`, zero/absent
+  `position`) behaves exactly as documented in §4.3.
+- **Push reporting hardened (client-side):** the operator now sees the true number of codes that will upload and
+  is blocked from pushing an empty set (e.g. before a RoomAnchor exists). The POST shape is identical to §3.4.
+- **Pull parsing hardened (client-side):** the client now also tolerates a top-level JSON **array** response in
+  addition to the documented `CalibrationUpload` object. Returning the documented object shape (§3.5) is still
+  preferred.

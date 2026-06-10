@@ -269,6 +269,7 @@ namespace TEVR
                     AppendChatMessage($"[QR Added] {GetColoredPayload(qr)}");
                     RefreshQRCodeDropdown();
                     UpdateDetectionIndicator();
+                    UpdateSessionButtonsState();
                     EmitQrToServer(qr, force: true);   // real-time: register the instant it's seen
                 };
                 // PERF: do NOT log on OnQRCodeUpdated — it fires every frame from tracking jitter, and
@@ -277,9 +278,10 @@ namespace TEVR
                 // jitter/hitching. Add/remove events still log below. We DO emit a throttled real-time
                 // position update so the web dashboard tracks moved codes.
                 qrManager.OnQRCodeUpdated += (qr) => EmitQrToServer(qr, force: false);
-                qrManager.OnQRCodeRemoved += (key) => { AppendChatMessage($"[QR Removed] {key}"); RefreshQRCodeDropdown(); UpdateDetectionIndicator(); };
+                qrManager.OnQRCodeRemoved += (key) => { AppendChatMessage($"[QR Removed] {key}"); RefreshQRCodeDropdown(); UpdateDetectionIndicator(); UpdateSessionButtonsState(); };
                 qrManager.OnRoomAnchorDiscovered += (qr) => {
                     AppendChatMessage($"[Anchor Discovered] <color=green>{qr.fullPayload}</color>");
+                    UpdateSessionButtonsState();   // items become uploadable once the anchor frame exists
                     // The anchor world pose anchors everything else. Items detected BEFORE the anchor existed
                     // were skipped by the real-time emit (no relative frame yet) and their one-shot
                     // OnQRCodeAdded won't fire again — so re-flush the whole set now that the anchor is known.
@@ -288,6 +290,7 @@ namespace TEVR
             }
 
             AppendChatMessage("<color=green>[System]</color> Session UI Initialized.");
+            HideUnneededIdFields();
             UpdateDetectionIndicator();
             SetupInputFieldKeyboard(roomCodeInput);
             SetupInputFieldKeyboard(chatInputField);
@@ -309,6 +312,45 @@ namespace TEVR
                 HandleUIStateChanged(UIManager.Instance.GetCurrentState());
         }
 
+        /// <summary>True when the device has been provisioned before (a setup code is stored), so the user can
+        /// sign in WITHOUT scanning again. A stored setup code is the authoritative provisioning signal
+        /// (BackendConfig has hardcoded default IDs, so non-empty IDs alone do not prove provisioning).</summary>
+        private bool HasValidStoredCredentials()
+            => webAppManager != null && !string.IsNullOrEmpty(webAppManager.SetupCode);
+
+        /// <summary>Enables/disables the Sign In button and sets the login status message so the visible state
+        /// always matches reality: ready (with the target location) vs. must-scan.</summary>
+        private void UpdateSignInAvailability()
+        {
+            bool stored = HasValidStoredCredentials();
+            if (signInButton != null) signInButton.interactable = stored;
+            if (loginStatusText != null)
+            {
+                if (stored)
+                {
+                    string loc = webAppManager != null && webAppManager.config != null && !string.IsNullOrEmpty(webAppManager.config.locationId)
+                        ? webAppManager.config.locationId : "(stored location)";
+                    loginStatusText.text =
+                        $"<color=#22D3EE>Ready to sign in to:</color> {Truncate(loc, 40)}\n" +
+                        "<color=white>Press Sign In, or Scan Login Code to use a different location.</color>";
+                }
+                else
+                {
+                    loginStatusText.text = "<color=#FFD700>Please Scan Login Code to sign in.</color>";
+                }
+            }
+        }
+
+        /// <summary>Hides the Customer ID / Location ID input fields (login + session). They are manual-entry
+        /// fallbacks that are not needed in the normal scan/stored flow; push/pull resolves the location from
+        /// stored config, so hiding the session Location field does not affect it.</summary>
+        private void HideUnneededIdFields()
+        {
+            if (loginCustomerIdInput != null) loginCustomerIdInput.gameObject.SetActive(false);
+            if (loginLocationIdInput != null) loginLocationIdInput.gameObject.SetActive(false);
+            if (locationIdInput != null) locationIdInput.gameObject.SetActive(false);
+        }
+
         public void ShowLoginPanel()
         {
             if (sessionUIPanel != null) sessionUIPanel.SetActive(true);
@@ -319,9 +361,13 @@ namespace TEVR
             SetVideoImageVisible(localVideoImage, false);
             SetVideoImageVisible(remoteVideoImage, false);
 
-            // Make the panel ready to sign in again.
-            if (signInButton != null) signInButton.interactable = true;
-            if (loginStatusText != null) loginStatusText.text = "Ready to Sign In.";
+            // Hide the Customer/Location ID fields — they are not needed in the normal flow.
+            HideUnneededIdFields();
+
+            // The Sign In button is only enabled when there is something to sign in with: either valid
+            // stored credentials from a previous setup, or a freshly scanned/resolved code. The status
+            // message tells the user which case they are in (and which location).
+            UpdateSignInAvailability();
 
             // The headset is ALWAYS looking for the setup code while the login panel is shown — detection
             // runs continuously here (regardless of the autoStartDetection flag) so detected codes always
@@ -530,10 +576,10 @@ namespace TEVR
                 return;
             }
 
-            // Session/calibration phase: surface every detection in the log so the user can confirm the
-            // camera is actually seeing/tracking codes.
-            AppendChatMessage($"<color=#22D3EE>[Detected]</color> {Truncate(payload, 60)}");
-            RefreshQRCodeDropdown();
+            // Session/calibration phase: do NOT log every raw detection here. OnRawQRDetected fires on every
+            // detection (and via the reconcile sweep), which spammed the chat and duplicated the one-time
+            // [QR Added] line. New codes are announced once by OnQRCodeAdded; the live indicator (updated
+            // above) reflects ongoing detection. The dropdown is refreshed on add/remove, not per detection.
         }
 
         private void OnDetectionStateChanged(QrCodeManager.DetectionState state)
@@ -838,8 +884,10 @@ namespace TEVR
                 qrManager.StopQRCodeDetection();
                 RefreshQRCodeDropdown();
             }
+            HideUnneededIdFields();
             UpdateDetectionButtonLabel();
             UpdateDetectionIndicator();
+            UpdateSessionButtonsState();
         }
 
         private void UpdateDetectionButtonLabel()
@@ -880,7 +928,7 @@ namespace TEVR
             qrCodeDropdown.ClearOptions();
             
             List<TMP_Dropdown.OptionData> options = new List<TMP_Dropdown.OptionData>();
-            options.Add(NewColoredOption("Stop Pointing", Color.white));
+            options.Add(NewColoredOption("Click here to point at an object or stop pointing...", Color.white));
 
             qrCodeList.Clear();
             qrCodePayloads.Clear();
@@ -914,11 +962,14 @@ namespace TEVR
             if (qrCodeDropdown.captionText != null) qrCodeDropdown.captionText.color = Color.white;
         }
 
-        // TMP_Dropdown.OptionData.color defaults to white and overrides the item label color, which
-        // would make the text invisible on the light dropdown background. Always set an explicit colour.
+        // Colour each dropdown entry. Some TMP_Dropdown versions ignore OptionData.color for the item label,
+        // so we ALSO embed the colour as a rich-text <color> tag in the text itself — that renders reliably
+        // for both the item list and the selected caption. (OptionData.color is still set for versions that
+        // honour it.) Item text is assumed to contain no other rich-text/markup.
         private static TMP_Dropdown.OptionData NewColoredOption(string text, Color color)
         {
-            return new TMP_Dropdown.OptionData(text) { color = color };
+            string hex = ColorUtility.ToHtmlStringRGB(color);
+            return new TMP_Dropdown.OptionData($"<color=#{hex}>{text}</color>") { color = color };
         }
 
         private static string ShortenLabel(string s)
@@ -1062,6 +1113,7 @@ namespace TEVR
             }
             UpdateDetectionButtonLabel();
             UpdateDetectionIndicator();
+            UpdateSessionButtonsState();
         }
 
         private void OnClearQRPressed()
@@ -1073,8 +1125,10 @@ namespace TEVR
             qrManager.ClearAllUserData();
             _lastQrEmit.Clear();   // re-detected codes should emit immediately, not be throttled by stale entries
             statusUI?.ClearHighlight();
+            ApplyPointTarget(null);   // stop pointing + reset dropdown selection
             RefreshQRCodeDropdown();
             AppendChatMessage($"<color=green>[Clear]</color> Cleared {count} QR code(s) and the local list.");
+            UpdateSessionButtonsState();
         }
 
         /// <summary>
@@ -1193,6 +1247,27 @@ namespace TEVR
             SetVideoImageVisible(remoteVideoImage, show);
         }
 
+        /// <summary>
+        /// Enables/disables the session action buttons to match the current flow state, so the UI never
+        /// offers an action that would silently no-op:
+        ///   • Push  — enabled only when a Location is known AND there is at least one uploadable code.
+        ///   • Pull  — enabled only when a Location is known.
+        ///   • Detection toggle — always available; its label reflects on/off (UpdateToggleDetectionLabel).
+        /// Safe to call frequently; cheap.
+        /// </summary>
+        public void UpdateSessionButtonsState()
+        {
+            bool hasLocation = !string.IsNullOrEmpty(GetActiveLocationId());
+
+            if (pullQRButton != null) pullQRButton.interactable = hasLocation;
+
+            if (pushQRButton != null)
+            {
+                int uploadable = qrManager != null ? qrManager.GetUploadableCount(out _) : 0;
+                pushQRButton.interactable = hasLocation && uploadable > 0;
+            }
+        }
+
         /// <summary>Uploads the current local QR calibration to the backend for this location.</summary>
         private void OnPushQRPressed()
         {
@@ -1200,7 +1275,20 @@ namespace TEVR
             string locId = GetActiveLocationId();
             if (string.IsNullOrEmpty(locId)) { AppendChatMessage("<color=red>[Push] No Location ID set.</color>"); return; }
 
-            int count = qrManager.TrackedQRCodes.Count;
+            // Report the TRUE number of codes that will actually be uploaded (BuildUploadList excludes the
+            // sign-in code and skips items when no RoomAnchor exists) — not TrackedQRCodes.Count.
+            int count = qrManager.GetUploadableCount(out int skippedNoAnchor);
+            if (count == 0)
+            {
+                if (skippedNoAnchor > 0)
+                    AppendChatMessage($"<color=orange>[Push] Nothing uploaded: {skippedNoAnchor} item(s) detected but no Room Anchor is set. Scan the Room Anchor first so item poses can be stored relative to it.</color>");
+                else
+                    AppendChatMessage("<color=orange>[Push] Nothing to upload — no QR codes detected yet.</color>");
+                return;
+            }
+            if (skippedNoAnchor > 0)
+                AppendChatMessage($"<color=#D97200>[Push] Note: {skippedNoAnchor} item(s) skipped (no Room Anchor frame).</color>");
+
             string endpoint = $"locations/{locId}/qr-codes";
             string bulkJson = qrManager.GetQRCodeDataAsJson(webAppManager.tevrHeadsetId);
             AppendChatMessage($"[Push] Uploading {count} QR Code(s) as a batch...");
@@ -1213,6 +1301,7 @@ namespace TEVR
                 (res) => {
                     AppendChatMessage($"<color=green>[Push] Pushed {count} QR Code(s) as a batch.</color>");
                     if (pushQRButton != null) pushQRButton.interactable = true;
+                    UpdateSessionButtonsState();
                 },
                 (err) => {
                     AppendChatMessage($"<color=orange>[Push] Batch failed ({err}). Retrying one code at a time…</color>");
@@ -1261,10 +1350,12 @@ namespace TEVR
                 (res) => {
                     int count = ApplyPulledCalibration(res);
                     RefreshQRCodeDropdown();
-                    AppendChatMessage($"<color=green>[Pull] Pulled/downloaded {count} QR code(s) from the server.</color>");
+                    if (count > 0)
+                        AppendChatMessage($"<color=green>[Pull] Downloaded {count} QR code(s). They appear in the list as “not currently visible” until physically scanned.</color>");
                     if (pullQRButton != null) pullQRButton.interactable = true;
+                    UpdateSessionButtonsState();
                 },
-                (err) => { AppendChatMessage($"<color=red>[Pull] Failed: {err}</color>"); if (pullQRButton != null) pullQRButton.interactable = true; });
+                (err) => { AppendChatMessage($"<color=red>[Pull] Failed: {err}</color>"); if (pullQRButton != null) pullQRButton.interactable = true; UpdateSessionButtonsState(); });
         }
 
         private string GetActiveLocationId()
@@ -1283,16 +1374,30 @@ namespace TEVR
             if (string.IsNullOrEmpty(json) || qrManager == null) return 0;
             try
             {
-                var data = JsonUtility.FromJson<PulledCalibration>(json);
-                if (data == null || data.qrCodes == null) return 0;
+                string trimmed = json.TrimStart();
+                // JsonUtility cannot parse a top-level JSON array. If the backend returns a bare array
+                // (e.g. "[ {qrValue..}, .. ]"), wrap it so it binds to the qrCodes field.
+                string toParse = trimmed.StartsWith("[") ? "{\"qrCodes\":" + json + "}" : json;
+
+                var data = JsonUtility.FromJson<PulledCalibration>(toParse);
+                if (data == null || data.qrCodes == null || data.qrCodes.Count == 0)
+                {
+                    // Either the server has no calibration for this location, or the response shape didn't
+                    // match. (PulledQR ignores extra fields like name/metadata, so startup-data-shaped items
+                    // still bind via qrValue/position/rotation; a null result means a genuinely different
+                    // shape or an empty list.)
+                    AppendChatMessage("<color=#D97200>[Pull] No QR calibration returned for this location (empty or unrecognised response).</color>");
+                    return 0;
+                }
                 var valid = new List<string>();
                 foreach (var q in data.qrCodes)
                 {
+                    if (string.IsNullOrEmpty(q.qrValue)) continue;
                     qrManager.UpdateQRCodeFromRemote(q.qrValue, q.position, q.rotation);
-                    if (!string.IsNullOrEmpty(q.qrValue)) valid.Add(q.qrValue);
+                    valid.Add(q.qrValue);
                 }
                 qrManager.AddValidPayloads(valid);
-                return data.qrCodes.Count;
+                return valid.Count;
             }
             catch (Exception e)
             {
@@ -1321,43 +1426,84 @@ namespace TEVR
             RefreshQRCodeDropdown();
         }
 
+        // Dropdown index 0 is the "stop pointing" entry; entries 1.. map to qrCodeList[index-1].
         private void OnQRCodeSelected(int index)
         {
-            if (index == 0)
+            if (index <= 0) { ApplyPointTarget(null); return; }
+            int qrIndex = index - 1;
+            if (qrIndex >= qrCodeList.Count) { ApplyPointTarget(null); return; }
+
+            var inst = qrCodeList[qrIndex];
+            if (inst != null) { ApplyPointTarget(inst); return; }
+
+            // Listed in the server "legit" set but not currently detected. If we know its RoomAnchor-relative
+            // pose (and the RoomAnchor is established), point at those coordinates; otherwise tell the user.
+            string payload = qrIndex < qrCodePayloads.Count ? qrCodePayloads[qrIndex] : null;
+            if (!string.IsNullOrEmpty(payload) && qrManager != null &&
+                qrManager.TryGetKnownWorldPose(payload, out var worldPos, out var worldRot))
             {
-                qrManager?.ClearFocus();
+                qrManager.ClearFocus();
                 statusUI?.ClearHighlight();
-                statusUI?.ShowMessage("", "");
+                string label = qrManager.GetPayloadName(payload) ?? payload;
+                UIManager.Instance?.remoteHighlight?.HighlightPosition(label, worldPos, worldRot);
+                statusUI?.ShowMessage($"Pointing to: {label}", "Listed (not currently visible).");
+                // Keep the dropdown showing this selection (don't snap back to 0).
+                SetDropdownIndexSilent(index);
+                AppendChatMessage($"<color=#22D3EE>[Point]</color> Pointing at {label} (not currently visible).");
                 return;
             }
-            int qrIndex = index - 1;
-            if (qrIndex >= 0 && qrIndex < qrCodeList.Count)
+
+            AppendChatMessage("<color=#D97200>[Point] That QR code is in the list but not currently visible — scan it to point.</color>");
+            ApplyPointTarget(null);
+        }
+
+        /// <summary>
+        /// THE single authoritative entry point for changing what we point at — call this from the dropdown,
+        /// a remote point-to command, or anywhere else. It keeps EVERYTHING in sync:
+        ///   • inst != null → pulsing focus glow + directional arrow + dashed line on the code, dropdown set to
+        ///     that item, HUD + chat updated.
+        ///   • inst == null → stop pointing: glow off, arrow/line off, position-highlight cleared, dropdown
+        ///     reset to item 0, HUD cleared.
+        /// Updates the dropdown WITHOUT firing onValueChanged (no recursion), which also fixes "Stop Pointing
+        /// does nothing" — previously the dropdown value was never synced, so selecting item 0 while it already
+        /// showed 0 raised no event.
+        /// </summary>
+        public void ApplyPointTarget(QrCodeManager.QRCodeInstance inst)
+        {
+            if (inst == null)
             {
-                var inst = qrCodeList[qrIndex];
-                if (inst != null)
-                {
-                    sessionInit?.PointToQRCode(inst);
-                    return;
-                }
-
-                // Listed in the server "legit" set but not currently detected. If we know its
-                // RoomAnchor-relative pose (and the RoomAnchor is established), point at those coordinates;
-                // otherwise tell the user to scan it.
-                string payload = qrIndex < qrCodePayloads.Count ? qrCodePayloads[qrIndex] : null;
-                if (!string.IsNullOrEmpty(payload) && qrManager != null &&
-                    qrManager.TryGetKnownWorldPose(payload, out var worldPos, out var worldRot))
-                {
-                    qrManager.ClearFocus();
-                    string label = qrManager.GetPayloadName(payload) ?? payload;
-                    UIManager.Instance?.remoteHighlight?.HighlightPosition(label, worldPos, worldRot);
-                    statusUI?.ShowMessage($"Pointing to: {label}", "Listed (not currently visible).");
-                    return;
-                }
-
                 qrManager?.ClearFocus();
-                statusUI?.ClearHighlight();
-                AppendChatMessage("<color=#D97200>[Point] That QR code is in the list but not currently visible — scan it to point.</color>");
+                statusUI?.ClearHighlight();                       // arrow + dashed line off (VrHudController)
+                UIManager.Instance?.remoteHighlight?.ClearForce();
+                statusUI?.ShowMessage("", "");
+                SetDropdownIndexSilent(0);
+                AppendChatMessage("<color=#9AA0A6>[Point]</color> Stopped pointing.");
+                return;
             }
+
+            qrManager?.FocusQRCode(inst);                         // pulsing hologram on the code
+            UIManager.Instance?.remoteHighlight?.ClearForce();    // avoid a duplicate position highlight
+
+            Transform target = inst.visualObject != null ? inst.visualObject.transform
+                             : (inst.trackable != null ? inst.trackable.transform : null);
+            if (target != null) statusUI?.HighlightTarget(target); // arrow + dashed line on (VrHudController)
+
+            string label = qrManager != null && !string.IsNullOrEmpty(qrManager.GetPayloadName(inst.fullPayload))
+                ? qrManager.GetPayloadName(inst.fullPayload) : inst.identifierKey;
+            statusUI?.ShowMessage($"Pointing to: {label}", inst.fullPayload);
+
+            int idx = qrCodeList.IndexOf(inst);
+            SetDropdownIndexSilent(idx >= 0 ? idx + 1 : 0);
+            AppendChatMessage($"<color=#22D3EE>[Point]</color> Pointing at {label}");
+        }
+
+        /// <summary>Sets the QR dropdown value WITHOUT raising onValueChanged (prevents pointing recursion).</summary>
+        private void SetDropdownIndexSilent(int index)
+        {
+            if (qrCodeDropdown == null) return;
+            index = Mathf.Clamp(index, 0, Mathf.Max(0, qrCodeDropdown.options.Count - 1));
+            qrCodeDropdown.SetValueWithoutNotify(index);
+            qrCodeDropdown.RefreshShownValue();
         }
 
         private void OnDestroy()

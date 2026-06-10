@@ -58,6 +58,18 @@ Legend: ✅ automated/verified · 🖐️ manual (Editor) · 📱 manual (on-dev
   confirm the backend upserts every element (not just `qrCodes[0]`).
 - 📱 **Pull/merge:** Pull repopulates the dropdown; detected vs. listed colour classification is correct.
 
+## 5b. Point-At, Sign-In Gating & Calibration UI (v2.5)
+- ✅ Boot smoke test: `ApplyPointTarget(null)`, `RefreshQRCodeDropdown()`, and `UpdateSessionButtonsState()` run with **no exceptions**; dropdown item 0 is the point/stop prompt. *(PlayMode test)*
+- 🖐️ Select a code in the dropdown → green **holographic box** wraps it, a **faint green dashed line** links the HUD arrow to it, and the arrow points at it.
+- 🖐️ **Stop Pointing:** selecting the first dropdown item ("Click here to point at an object or stop pointing…") clears the hologram, dashed line, and arrow. (Regression: previously a silent no-op.)
+- 🖐️ Remote **`point-to`** (or `TrueEchoVR/Debug` simulation) drives the *same* unified visuals as the dropdown; a `point-to` clear removes them.
+- 🖐️ **Sign In gating:** app opens on Login; **Sign In is disabled** until a setup code is stored/scanned; status text guides the operator. Customer/Location ID fields are **hidden**.
+- 🖐️ **Chat de-dup:** repeated identical lines collapse to `… (xN)`; during Login the setup QR does **not** spam the chat on every detection sweep.
+- 🖐️ **Push guard:** with no RoomAnchor (but items detected), **Push** is blocked with a "scan the Room Anchor first" message; the reported count equals the true uploadable count.
+- 🖐️ **Button state:** **Pull** disabled without a Location; **Push** disabled with no uploadable codes; both re-enable appropriately after detection/anchor/clear.
+- 🖐️ **Pull tolerance:** a top-level JSON array response is parsed (in addition to the `CalibrationUpload` object).
+- 📱 **RoomAnchor live re-sync:** while looking at the RoomAnchor QR, its visual (and parented prefab) snaps to the live code; out of view, the spatial anchor holds it steady (`roomAnchorVisualFollowsLiveQr`).
+
 ## 6. Resilience (Watchdog & Credential Expiry)
 - 📱 **Mid-session reconnect:** kill the WebSocket (drop server / network blip) → UI shows
   `RECONNECTING (n/max)`; on recovery the session resumes; on exhaustion it returns to Login + Demo.

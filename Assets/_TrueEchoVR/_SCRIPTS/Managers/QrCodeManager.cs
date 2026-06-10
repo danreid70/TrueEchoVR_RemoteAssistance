@@ -26,6 +26,17 @@ public class QRPayloadAction
         public float positionThreshold = 0.01f;
         public float rotationThreshold = 0.2f;
 
+        [Tooltip("When ON, the RoomAnchor visual (and its spawned prefab) snaps to the live QR pose WHILE the " +
+                 "RoomAnchor code is actually being tracked, so it visibly syncs to the real code. When the " +
+                 "code is out of view, the persisted Meta spatial anchor holds it drift-free. Turn OFF to keep " +
+                 "the spatial anchor fully authoritative (never overridden by the live QR pose).")]
+        public bool roomAnchorVisualFollowsLiveQr = true;
+
+        [Tooltip("Tighter position/rotation thresholds applied to the RoomAnchor only, so it updates more " +
+                 "responsively than ordinary item codes (the RoomAnchor is the zero-point for everything else).")]
+        public float roomAnchorPositionThreshold = 0.004f;
+        public float roomAnchorRotationThreshold = 0.1f;
+
         [Header("Setup Code (smallest Sign In QR payload)")]
         [Tooltip("A bare (non-JSON) alphanumeric QR payload whose length is within this range is treated " +
                  "as a Sign In setup code (Target/green) during the SignIn phase. This lets the web app " +
@@ -245,6 +256,12 @@ public class QRPayloadAction
         // the very first frame, and a tracked code never re-fires TrackableAdded.)
         private readonly Dictionary<MRUKTrackable, float> _pendingPayloadTrackables = new Dictionary<MRUKTrackable, float>();
         private const float PendingPayloadTimeoutSeconds = 30f;
+
+        // Trackables we have deliberately decided to ignore for the rest of this session (the Sign-In/setup
+        // code is not a room item). Without this, ReconcileTrackables re-runs OnTrackableAdded for them every
+        // interval (because they never enter _trackedQRCodes), re-raising OnRawQRDetected -> chat spam + wasted
+        // detection. Cleared on scan-mode change / clear so the code is findable again when signed out.
+        private readonly HashSet<MRUKTrackable> _ignoredSessionTrackables = new HashSet<MRUKTrackable>();
 
         // PERF: SaveToDisk() pretty-prints JSON and does a synchronous File.WriteAllText on the main thread.
         // Calling it on every QR add/update caused O(n^2) blocking writes as codes appeared (a cause of the
@@ -472,9 +489,17 @@ public class QRPayloadAction
 
             foreach (var inst in _trackedQRCodes.Values)
             {
-                // The spatial-anchored RoomAnchor is driven by the OVRSpatialAnchor (drift-free); never
-                // override its transform with the live QR pose.
-                if (inst == RoomAnchorInstance && _roomAnchorDrivenBySpatialAnchor) continue;
+                bool isAnchor = inst == RoomAnchorInstance;
+
+                // The spatial-anchored RoomAnchor is normally held drift-free by the OVRSpatialAnchor. We
+                // still let its visual snap to the live QR pose WHILE the RoomAnchor code is actively being
+                // tracked (so the user sees it sync to the real code); when the code is out of view, the
+                // spatial anchor keeps it stable. Set roomAnchorVisualFollowsLiveQr = false to keep the
+                // spatial anchor fully authoritative.
+                bool anchorTrackedNow = isAnchor && inst.trackable != null && inst.trackable.IsTracked;
+                if (isAnchor && _roomAnchorDrivenBySpatialAnchor &&
+                    !(roomAnchorVisualFollowsLiveQr && anchorTrackedNow))
+                    continue;
 
                 if (inst.trackable != null && inst.visualObject != null)
                 {
@@ -484,9 +509,12 @@ public class QRPayloadAction
 
                     Vector3 tPos = inst.trackable.transform.position;
                     Quaternion tRot = inst.trackable.transform.rotation;
+                    // The RoomAnchor uses tighter thresholds so it tracks more responsively than items.
+                    float posThresh = isAnchor ? roomAnchorPositionThreshold : positionThreshold;
+                    float rotThresh = isAnchor ? roomAnchorRotationThreshold : rotationThreshold;
                     // Compare against the RAW last rotation (not the flipped display rotation).
-                    if (Vector3.Distance(inst.lastPosition, tPos) > positionThreshold ||
-                        Quaternion.Angle(inst.lastTrackableRotation, tRot) > rotationThreshold)
+                    if (Vector3.Distance(inst.lastPosition, tPos) > posThresh ||
+                        Quaternion.Angle(inst.lastTrackableRotation, tRot) > rotThresh)
                     {
                         Quaternion cRot = tRot * Quaternion.Euler(0, 180, 0);
                         inst.visualObject.transform.SetPositionAndRotation(tPos, cRot);
@@ -698,6 +726,14 @@ public class QRPayloadAction
             return list;
         }
 
+        /// <summary>Reports how many codes would actually be uploaded (and how many detected items were
+        /// skipped because no RoomAnchor is set), so the UI can report the TRUTH instead of TrackedQRCodes.Count
+        /// (which includes the anchor/sign-in code and ignores the relative-frame requirement).</summary>
+        public int GetUploadableCount(out int skippedNoAnchor)
+        {
+            return BuildUploadList(out skippedNoAnchor).Count;
+        }
+
         /// <summary>Bulk upload JSON: a single CalibrationWrapper with ALL codes in one qrCodes array.</summary>
         public string GetQRCodeDataAsJson(string headsetId)
         {
@@ -839,19 +875,20 @@ public class QRPayloadAction
             }
             _pendingPayloadTrackables.Remove(trackable);
 
-            // Always announce the raw detection (even for codes that will go dormant before calibration).
-            // This is what drives the login/setup-code scan + on-screen detection feedback.
-            OnRawQRDetected?.Invoke(fullPayload, trackable.transform.position, trackable.transform.rotation);
-
-            // In a SESSION, the Sign-In/setup code is NOT a room item and must not appear at all —
-            // no pip, no instance. (During the SignIn phase below it still shows its green pip and drives
-            // the login flow.) When signed out the scan mode returns to LoginOnly, so it is findable again.
+            // In a SESSION, the Sign-In/setup code is NOT a room item and must not appear at all — no pip,
+            // no instance, and crucially NO raw-detection event (that would spam the session chat and waste
+            // detection every reconcile interval). Remember it so ReconcileTrackables skips it from now on.
+            // (During the SignIn phase it still shows its green pip and drives the login flow below.)
             if (Mode == ScanMode.Full && IsSignInCode(fullPayload))
             {
                 RemoveDetectionMarker(trackable);
-                Debug.Log($"[QrCodeManager] Sign-in code ignored during session (not an item): {fullPayload}");
+                _ignoredSessionTrackables.Add(trackable);
                 return;
             }
+
+            // Always announce the raw detection (even for codes that will go dormant before calibration).
+            // This is what drives the login/setup-code scan + on-screen detection feedback.
+            OnRawQRDetected?.Invoke(fullPayload, trackable.transform.position, trackable.transform.rotation);
 
             // Testing aid: drop/refresh the colored 4-category pip over this code.
             // Sized correctly to the physical QR code bounds.
@@ -873,10 +910,11 @@ public class QRPayloadAction
             if (_trackedQRCodes.TryGetValue(key, out QRCodeInstance existing))
             {
                 existing.trackable = trackable;
-                // When the RoomAnchor is backed by a Meta spatial anchor, the anchor is authoritative —
-                // do NOT snap its visual to the live QR pose (that would reintroduce drift).
-                bool anchorDriven = isAnchor && _roomAnchorDrivenBySpatialAnchor;
-                if (existing.visualObject != null && !anchorDriven)
+                // When the RoomAnchor is backed by a Meta spatial anchor, the anchor is normally
+                // authoritative. But if roomAnchorVisualFollowsLiveQr is on, a fresh re-detection should snap
+                // the visual to the real code (the user is looking right at it) so it visibly syncs.
+                bool anchorPinned = isAnchor && _roomAnchorDrivenBySpatialAnchor && !roomAnchorVisualFollowsLiveQr;
+                if (existing.visualObject != null && !anchorPinned)
                 {
                     Quaternion cRot = trackable.transform.rotation * Quaternion.Euler(0, 180, 0);
                     existing.visualObject.transform.SetPositionAndRotation(trackable.transform.position, cRot);
@@ -1126,9 +1164,11 @@ public class QRPayloadAction
         private readonly Dictionary<QrMarkerCategory, Material> _markerMaterials = new Dictionary<QrMarkerCategory, Material>();
         private float _nextTrackingAssertTime;
 
-        // ---- Focus glow (single, reusable pulsing halo for the "pointed-at" code) ----
-        private GameObject _focusGlow;            // the pulsing halo object
-        private Renderer _focusGlowRenderer;
+        // ---- Focus glow: a holographic GREEN edge-box that wraps the "pointed-at" code ----
+        private GameObject _focusGlow;            // parent; positioned/rotated to the code
+        private GameObject _focusGlowBox;         // child; scaled to the code (holds edges + fill)
+        private readonly List<Renderer> _focusEdgeRenderers = new List<Renderer>(12);
+        private Renderer _focusFillRenderer;
         private MaterialPropertyBlock _focusGlowMpb;
         private Transform _focusFollow;           // transform the glow tracks (trackable or visualObject)
         private MRUKTrackable _focusTrackable;    // pip to keep force-visible while focused (may be null)
@@ -1602,6 +1642,9 @@ public class QRPayloadAction
             foreach (var t in all)
             {
                 if (t == null || t.TrackableType != OVRAnchor.TrackableType.QRCode) continue;
+                // Already decided to ignore this one (e.g. the sign-in code during a session) — do not
+                // reprocess it, or we'd re-raise raw detection every interval.
+                if (_ignoredSessionTrackables.Contains(t)) continue;
 
                 string payload = t.MarkerPayloadString ?? "";
                 if (string.IsNullOrEmpty(payload))
@@ -1697,7 +1740,7 @@ public class QRPayloadAction
                 cur.fade?.SetForceVisible(true);
 
             EnsureFocusGlow();
-            ApplyFocusGlowColor(GetCategoryColor(category));
+            ApplyFocusGlowPulse(1f);   // green hologram; UpdateFocusGlow drives the breathing pulse
             _focusGlow.SetActive(true);
         }
 
@@ -1711,39 +1754,100 @@ public class QRPayloadAction
             if (_focusGlow != null) _focusGlow.SetActive(false);
         }
 
+        // Holographic point-at color (bright green so it reads as a glowing hologram, especially under the
+        // URP bloom volume). Edges are near-opaque; the fill is faint and transparent.
+        private static readonly Color FocusEdgeColor = new Color(0.10f, 1f, 0.35f, 1f);
+        private static readonly Color FocusFillColor = new Color(0.10f, 1f, 0.35f, 0.12f);
+
         private void EnsureFocusGlow()
         {
             if (_focusGlow != null) return;
             _focusGlow = new GameObject("QRFocusGlow");
             _focusGlowMpb = new MaterialPropertyBlock();
 
-            var halo = GameObject.CreatePrimitive(PrimitiveType.Quad);
-            halo.name = "Halo";
-            halo.transform.SetParent(_focusGlow.transform, false);
-            if (halo.TryGetComponent<Collider>(out var col)) Destroy(col);
-            halo.transform.localScale = Vector3.one * (markerSize * 3f);
-            _focusGlowRenderer = halo.GetComponent<Renderer>();
-            _focusGlowRenderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-            _focusGlowRenderer.receiveShadows = false;
+            _focusGlowBox = new GameObject("Box");
+            _focusGlowBox.transform.SetParent(_focusGlow.transform, false);
 
             var sh = Shader.Find("Universal Render Pipeline/Unlit");
             if (sh == null) sh = Shader.Find("Unlit/Color");
             if (sh == null) sh = Shader.Find("Sprites/Default");
-            var m = new Material(sh) { name = "QRFocusGlow_Mat" };
-            ConfigureTransparent(m, GetCategoryColor(QrMarkerCategory.Target));
-            m.enableInstancing = true;
-            _focusGlowRenderer.sharedMaterial = m;
+
+            // Shared transparent materials (one per role). Per-frame alpha pulse is via MaterialPropertyBlock.
+            var edgeMat = new Material(sh) { name = "QRFocusEdge_Mat" };
+            ConfigureTransparent(edgeMat, FocusEdgeColor);
+            edgeMat.enableInstancing = true;
+            var fillMat = new Material(sh) { name = "QRFocusFill_Mat" };
+            ConfigureTransparent(fillMat, FocusFillColor);
+            fillMat.enableInstancing = true;
+
+            // Faint transparent fill (a cube just inside the edges) -> the "semi-transparent hologram" body.
+            var fill = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            fill.name = "Fill";
+            if (fill.TryGetComponent<Collider>(out var fc)) Destroy(fc);
+            fill.transform.SetParent(_focusGlowBox.transform, false);
+            fill.transform.localScale = Vector3.one * 0.98f;
+            _focusFillRenderer = fill.GetComponent<Renderer>();
+            _focusFillRenderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            _focusFillRenderer.receiveShadows = false;
+            _focusFillRenderer.sharedMaterial = fillMat;
+
+            // 12 thick edge bars forming a unit-cube wireframe centered at origin (corners at ±0.5) -> the
+            // "thick glowing green edges". The whole box is scaled to the code each frame in UpdateFocusGlow.
+            const float t = 0.07f; // edge thickness in unit-box space
+            _focusEdgeRenderers.Clear();
+            AddFocusEdge(new Vector3(0, +0.5f, +0.5f), new Vector3(1, t, t), edgeMat);
+            AddFocusEdge(new Vector3(0, +0.5f, -0.5f), new Vector3(1, t, t), edgeMat);
+            AddFocusEdge(new Vector3(0, -0.5f, +0.5f), new Vector3(1, t, t), edgeMat);
+            AddFocusEdge(new Vector3(0, -0.5f, -0.5f), new Vector3(1, t, t), edgeMat);
+            AddFocusEdge(new Vector3(+0.5f, 0, +0.5f), new Vector3(t, 1, t), edgeMat);
+            AddFocusEdge(new Vector3(+0.5f, 0, -0.5f), new Vector3(t, 1, t), edgeMat);
+            AddFocusEdge(new Vector3(-0.5f, 0, +0.5f), new Vector3(t, 1, t), edgeMat);
+            AddFocusEdge(new Vector3(-0.5f, 0, -0.5f), new Vector3(t, 1, t), edgeMat);
+            AddFocusEdge(new Vector3(+0.5f, +0.5f, 0), new Vector3(t, t, 1), edgeMat);
+            AddFocusEdge(new Vector3(+0.5f, -0.5f, 0), new Vector3(t, t, 1), edgeMat);
+            AddFocusEdge(new Vector3(-0.5f, +0.5f, 0), new Vector3(t, t, 1), edgeMat);
+            AddFocusEdge(new Vector3(-0.5f, -0.5f, 0), new Vector3(t, t, 1), edgeMat);
 
             _focusGlow.SetActive(false);
         }
 
-        private void ApplyFocusGlowColor(Color c)
+        private void AddFocusEdge(Vector3 localPos, Vector3 localScale, Material mat)
         {
-            if (_focusGlowRenderer == null) return;
-            _focusGlowRenderer.GetPropertyBlock(_focusGlowMpb);
-            _focusGlowMpb.SetColor("_BaseColor", c);
-            _focusGlowMpb.SetColor("_Color", c);
-            _focusGlowRenderer.SetPropertyBlock(_focusGlowMpb);
+            var bar = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            bar.name = "Edge";
+            if (bar.TryGetComponent<Collider>(out var c)) Destroy(c);
+            bar.transform.SetParent(_focusGlowBox.transform, false);
+            bar.transform.localPosition = localPos;
+            bar.transform.localScale = localScale;
+            var r = bar.GetComponent<Renderer>();
+            r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            r.receiveShadows = false;
+            r.sharedMaterial = mat;
+            _focusEdgeRenderers.Add(r);
+        }
+
+        /// <summary>Applies the breathing alpha pulse (0..1) to the edge bars and the faint fill.</summary>
+        private void ApplyFocusGlowPulse(float pulse01)
+        {
+            if (_focusGlowMpb == null) return;
+            Color edge = FocusEdgeColor; edge.a = Mathf.Lerp(0.6f, 1f, pulse01);
+            for (int i = 0; i < _focusEdgeRenderers.Count; i++)
+            {
+                var r = _focusEdgeRenderers[i];
+                if (r == null) continue;
+                r.GetPropertyBlock(_focusGlowMpb);
+                _focusGlowMpb.SetColor("_BaseColor", edge);
+                _focusGlowMpb.SetColor("_Color", edge);
+                r.SetPropertyBlock(_focusGlowMpb);
+            }
+            if (_focusFillRenderer != null)
+            {
+                Color fill = FocusFillColor; fill.a = Mathf.Lerp(0.06f, 0.18f, pulse01);
+                _focusFillRenderer.GetPropertyBlock(_focusGlowMpb);
+                _focusGlowMpb.SetColor("_BaseColor", fill);
+                _focusGlowMpb.SetColor("_Color", fill);
+                _focusFillRenderer.SetPropertyBlock(_focusGlowMpb);
+            }
         }
 
         /// <summary>Positions and animates the focus glow; auto-clears if its target disappears.</summary>
@@ -1761,22 +1865,15 @@ public class QRPayloadAction
             }
             if (_focusGlow == null) return;
 
-            // Sit slightly in front of the code so the glow reads clearly.
-            _focusGlow.transform.SetPositionAndRotation(
-                _focusFollow.position - _focusFollow.forward * 0.01f, _focusFollow.rotation);
-
-            // Pulse: scale + alpha driven by a sine wave -> a discernible "breathing" glow that
-            // wraps the focused code (sized to the code, with a margin that breathes).
-            float p = (Mathf.Sin(Time.time * 6f) + 1f) * 0.5f;          // 0..1
-            float scale = _focusBaseSize * (1.4f + p * 0.6f);           // grows/shrinks around the code
+            // Center the hologram box on the code, matching its orientation so the box wraps it.
+            _focusGlow.transform.SetPositionAndRotation(_focusFollow.position, _focusFollow.rotation);
             _focusGlow.transform.localScale = Vector3.one;
-            if (_focusGlowRenderer != null)
-            {
-                _focusGlowRenderer.transform.localScale = Vector3.one * scale;
-                Color baseC = GetCategoryColor(_focusCategory);
-                baseC.a = 0.25f + p * 0.45f;                            // 0.25..0.70
-                ApplyFocusGlowColor(baseC);
-            }
+
+            // Pulse: gentle breathing on both scale and alpha so it reads as a live "pointed-at" hologram.
+            float p = (Mathf.Sin(Time.time * 5f) + 1f) * 0.5f;          // 0..1
+            float scale = _focusBaseSize * (1.2f + p * 0.25f);          // wraps the code with a breathing margin
+            if (_focusGlowBox != null) _focusGlowBox.transform.localScale = Vector3.one * scale;
+            ApplyFocusGlowPulse(p);
         }
 
         #endregion

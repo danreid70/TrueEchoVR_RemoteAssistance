@@ -34,6 +34,13 @@ namespace TEVR
         private bool _isPersistent = false;
         private Transform _currentTarget;
 
+        // ---- Faint green dashed line: arrow -> target (R5-G) ----
+        private LineRenderer _dashLine;
+        private Material _dashMaterial;
+        private Texture2D _dashTexture;
+        private const float DashTilesPerUnit = 18f;   // higher = shorter dashes
+        private static readonly Color DashColor = new Color(0.10f, 1f, 0.35f, 0.35f); // faint green
+
         private void Start()
         {
             // Auto-discovery for Bootstrap/Prefab pattern
@@ -115,11 +122,106 @@ namespace TEVR
                     pointerArrow.transform.rotation = Quaternion.LookRotation(toTarget, Vector3.up);
                 }
                 if (!pointerArrow.activeSelf) pointerArrow.SetActive(true);
+                UpdateDashLine();
             }
-            else if (pointerArrow.activeSelf)
+            else
             {
-                pointerArrow.SetActive(false);
+                if (pointerArrow.activeSelf) pointerArrow.SetActive(false);
+                if (_dashLine != null && _dashLine.enabled) _dashLine.enabled = false;
             }
+        }
+
+        /// <summary>
+        /// Draws a faint green dashed line from the OUTER EDGE of the arrow to the OUTER EDGE of the target,
+        /// so it is obvious what is being pointed at without the line burying into either object's center.
+        /// Endpoints are trimmed by each object's half-extent measured along the connecting direction.
+        /// </summary>
+        private void UpdateDashLine()
+        {
+            EnsureDashLine();
+            if (_dashLine == null) return;
+
+            Vector3 a = pointerArrow.transform.position;
+            Vector3 b = _currentTarget.position;
+            Vector3 delta = b - a;
+            float dist = delta.magnitude;
+            if (dist < 0.0005f) { _dashLine.enabled = false; return; }
+            Vector3 dir = delta / dist;
+
+            // Start at the arrow's outer edge, end at the target's outer edge (half-bounds along dir).
+            float aRadius = RadiusAlong(pointerArrow.transform, dir);
+            float bRadius = RadiusAlong(_currentTarget, dir);
+            Vector3 start = a + dir * aRadius;
+            Vector3 end = b - dir * bRadius;
+
+            // If the two objects overlap (trim consumed the whole span), hide the line.
+            if (Vector3.Dot(end - start, dir) <= 0f) { _dashLine.enabled = false; return; }
+
+            _dashLine.enabled = true;
+            _dashLine.SetPosition(0, start);
+            _dashLine.SetPosition(1, end);
+
+            // Keep dash length roughly constant in world space regardless of distance (Tile texture mode
+            // repeats per unit length, multiplied by the material tiling).
+            float span = (end - start).magnitude;
+            if (_dashMaterial != null)
+                _dashMaterial.mainTextureScale = new Vector2(span * DashTilesPerUnit, 1f);
+        }
+
+        private void EnsureDashLine()
+        {
+            if (_dashLine != null) return;
+
+            var go = new GameObject("PointAtDashLine");
+            go.transform.SetParent(transform, false);
+            _dashLine = go.AddComponent<LineRenderer>();
+            _dashLine.useWorldSpace = true;
+            _dashLine.positionCount = 2;
+            _dashLine.numCapVertices = 0;
+            _dashLine.alignment = LineAlignment.View;
+            _dashLine.textureMode = LineTextureMode.Tile;
+            _dashLine.widthMultiplier = 0.004f;   // thin, faint
+            _dashLine.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            _dashLine.receiveShadows = false;
+
+            // Dash texture: half opaque, half transparent (repeats along the line via Tile mode).
+            _dashTexture = new Texture2D(8, 1, TextureFormat.RGBA32, false)
+            { wrapMode = TextureWrapMode.Repeat, filterMode = FilterMode.Point };
+            var px = new Color[8];
+            for (int i = 0; i < 8; i++) px[i] = i < 4 ? Color.white : new Color(1, 1, 1, 0);
+            _dashTexture.SetPixels(px);
+            _dashTexture.Apply();
+
+            var sh = Shader.Find("Universal Render Pipeline/Unlit");
+            if (sh == null) sh = Shader.Find("Unlit/Transparent");
+            if (sh == null) sh = Shader.Find("Sprites/Default");
+            _dashMaterial = new Material(sh) { name = "PointAtDash_Mat" };
+            if (_dashMaterial.HasProperty("_BaseMap")) _dashMaterial.SetTexture("_BaseMap", _dashTexture);
+            _dashMaterial.mainTexture = _dashTexture;
+            if (_dashMaterial.HasProperty("_BaseColor")) _dashMaterial.SetColor("_BaseColor", DashColor);
+            _dashMaterial.color = DashColor;
+            // Transparent surface setup (URP/Lit-style props are harmless if absent).
+            if (_dashMaterial.HasProperty("_Surface")) _dashMaterial.SetFloat("_Surface", 1f);
+            if (_dashMaterial.HasProperty("_SrcBlend")) _dashMaterial.SetFloat("_SrcBlend", (float)UnityEngine.Rendering.BlendMode.SrcAlpha);
+            if (_dashMaterial.HasProperty("_DstBlend")) _dashMaterial.SetFloat("_DstBlend", (float)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+            if (_dashMaterial.HasProperty("_ZWrite")) _dashMaterial.SetFloat("_ZWrite", 0f);
+            _dashMaterial.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;
+            _dashLine.material = _dashMaterial;
+            _dashLine.enabled = false;
+        }
+
+        /// <summary>Distance from a transform's combined renderer-bounds center to its surface along a world
+        /// direction (i.e. the half-extent along that axis). Falls back to a small default if no renderers.</summary>
+        private static float RadiusAlong(Transform t, Vector3 worldDir)
+        {
+            if (t == null) return 0.02f;
+            var renderers = t.GetComponentsInChildren<Renderer>();
+            if (renderers == null || renderers.Length == 0) return 0.02f;
+            Bounds bounds = renderers[0].bounds;
+            for (int i = 1; i < renderers.Length; i++) bounds.Encapsulate(renderers[i].bounds);
+            Vector3 e = bounds.extents;
+            // Distance to AABB surface along the (normalized) direction.
+            return Mathf.Abs(e.x * worldDir.x) + Mathf.Abs(e.y * worldDir.y) + Mathf.Abs(e.z * worldDir.z);
         }
 
         /// <summary>
