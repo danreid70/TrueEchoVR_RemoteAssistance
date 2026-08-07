@@ -43,6 +43,8 @@ TagManager:
   - Part_Object394_7105
   - Part_Box361_172
   - Part_Object415_5226
+  - QDSUILineDrawing
+  - QDSUIToggleThumbnail
   layers:
   - Default
   - TransparentFX

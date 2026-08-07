@@ -31,7 +31,7 @@ namespace TEVR.Core
         private void Enforce()
         {
             // 1. Suppression of Meta & Interacting SDKs
-            var allMbs = Object.FindObjectsByType<MonoBehaviour>(FindObjectsSortMode.None);
+            var allMbs = Object.FindObjectsByType<MonoBehaviour>(FindObjectsInactive.Exclude);
             foreach (var mb in allMbs)
             {
                 if (mb == null) continue;
@@ -61,7 +61,7 @@ namespace TEVR.Core
             }
 
             // 3. Simulator Logic
-            var simulator = Object.FindAnyObjectByType<XRDeviceSimulator>();
+            var simulator = Object.FindAnyObjectByType<XRInteractionSimulator>();
             var centerCam = GetCenterEyeCamera();
             
             if (simulator != null)

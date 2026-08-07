@@ -20,7 +20,6 @@ namespace TEVR
         public bool bypassInitialization = false;
 
         public bool InitializationComplete { get; private set; } = false;
-        private bool isInitializing = true;
 
         private void Start()
         {
@@ -211,7 +210,6 @@ namespace TEVR
 
         private IEnumerator InitializationPhase()
         {
-            isInitializing = true;
             InitializationComplete = false;
             _sessionEntered = false;
 
@@ -231,7 +229,6 @@ namespace TEVR
         {
             if (_sessionEntered) return;
             _sessionEntered = true;
-            isInitializing = false;
             InitializationComplete = true;
 
             if (qrManager != null)
@@ -269,7 +266,6 @@ namespace TEVR
         public void ResetForNewSession()
         {
             _sessionEntered = false;
-            isInitializing = true;
             InitializationComplete = false;
 
             if (qrManager != null)

@@ -1638,7 +1638,7 @@ public class QRPayloadAction
             if (Time.time < _nextReconcileTime) return;
             _nextReconcileTime = Time.time + Mathf.Max(0.1f, qrReconcileInterval);
 
-            var all = UnityEngine.Object.FindObjectsByType<MRUKTrackable>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
+            var all = UnityEngine.Object.FindObjectsByType<MRUKTrackable>(FindObjectsInactive.Exclude);
             foreach (var t in all)
             {
                 if (t == null || t.TrackableType != OVRAnchor.TrackableType.QRCode) continue;
@@ -2287,7 +2287,7 @@ public class QRPayloadAction
             // When detection is (re)started, explicitly check for any QR codes that were already 
             // discovered while we were not detecting. This ensures "Cancel Scan" followed by "Scan" 
             // works instantly if the QR is still in view.
-            var allTrackables = UnityEngine.Object.FindObjectsByType<MRUKTrackable>(FindObjectsSortMode.None);
+            var allTrackables = UnityEngine.Object.FindObjectsByType<MRUKTrackable>(FindObjectsInactive.Exclude);
             foreach (var trackable in allTrackables)
             {
                 if (trackable.TrackableType == OVRAnchor.TrackableType.QRCode)

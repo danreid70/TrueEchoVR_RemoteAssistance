@@ -788,7 +788,7 @@ LastError = err;
                     var offer = JsonUtility.FromJson<OfferPayload>(payload);
                     _remoteSocketId = offer.fromSocketId;
                     Status("Offer received from the expert — negotiating video/audio…");
-                    StartCoroutine(HandleRemoteOffer(offer.offer));
+                    StartCoroutine(HandleRemoteOffer(offer.offer.ToRTCSessionDescription()));
                     break;
                 case "chat-message":
                     var chat = JsonUtility.FromJson<ChatPayload>(payload);
@@ -1149,7 +1149,8 @@ LastError = err;
                 _compositeCamera = camObj.AddComponent<Camera>();
             }
             _compositeCamera.CopyFrom(eye);
-            _compositeCamera.stereoTargetEye = StereoTargetEyeMask.None;
+            // In URP/SRP, stereoTargetEye causes a warning and isn't supported for individual cameras in this way.
+            // _compositeCamera.stereoTargetEye = StereoTargetEyeMask.None;
             _compositeCamera.clearFlags = CameraClearFlags.SolidColor;
             _compositeCamera.backgroundColor = Color.black;
             _compositeCamera.cullingMask = eye.cullingMask | (1 << mrLayer);
@@ -1494,7 +1495,7 @@ LastError = err;
             Status(_videoTrack != null
                 ? "Answer sent — streaming video/audio to the expert."
                 : "Answer sent, but NO local video track — passthrough capture may have failed (check camera permission).");
-            SendSocketEvent("answer", new AnswerPayload { roomCode = currentRoomCode, answer = answerDesc, targetSocketId = _remoteSocketId });
+            SendSocketEvent("answer", new AnswerPayload { roomCode = currentRoomCode, answer = new SerializableRTCSessionDescription(answerDesc), targetSocketId = _remoteSocketId });
         }
 
         #endregion
@@ -1521,16 +1522,60 @@ LastError = err;
             public Quaternion rotation; 
             public string metadata; // Flexible field for future expansion
         }
-[Serializable] public class PoseData { public Vector3 position; public Quaternion rotation; }
+
+        #region Signaling Payloads
+        [Serializable]
+        public struct SerializableRTCSessionDescription
+        {
+            public string type;
+            public string sdp;
+
+            public SerializableRTCSessionDescription(RTCSessionDescription desc)
+            {
+                type = desc.type.ToString().ToLower();
+                sdp = desc.sdp;
+            }
+
+            public RTCSessionDescription ToRTCSessionDescription()
+            {
+                RTCSdpType sdpType = RTCSdpType.Offer;
+                if (Enum.TryParse<RTCSdpType>(type, true, out var result))
+                {
+                    sdpType = result;
+                }
+                return new RTCSessionDescription
+                {
+                    type = sdpType,
+                    sdp = sdp
+                };
+            }
+        }
+
+        [Serializable] public class PoseData { public Vector3 position; public Quaternion rotation; }
         [Serializable] public class NameMapping { public string qrValue; public string name; }
         [Serializable] public class JoinRoomPayload { public string role; public string roomCode; public string locationId; }
         [Serializable] public class ChatPayload { public string roomCode; public string message; public string senderRole; }
-        [Serializable] public class OfferPayload { public RTCSessionDescription offer; public string fromSocketId; public string targetSocketId; }
-        [Serializable] public class AnswerPayload { public string roomCode; public RTCSessionDescription answer; public string targetSocketId; }
+        [Serializable]
+        public class OfferPayload
+        {
+            public SerializableRTCSessionDescription offer;
+            public string fromSocketId;
+            public string targetSocketId;
+        }
+
+        [Serializable]
+        public class AnswerPayload
+        {
+            public string roomCode;
+            public SerializableRTCSessionDescription answer;
+            public string targetSocketId;
+        }
+
         [Serializable] public class IceCandidatePayload { public string roomCode; public IceCandidateData candidate; public string targetSocketId; }
         [Serializable] public class IceCandidateData { public string candidate; public string sdpMid; public int sdpMLineIndex; }
         [Serializable] public class PeerJoinedPayload { public string role; public string socketId; }
         [Serializable] public class PointToPayload { public string name; public string qrCode; public PoseData pose; }
+        #endregion
         #endregion
     }
 }

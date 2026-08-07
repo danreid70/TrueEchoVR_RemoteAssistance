@@ -7,13 +7,10 @@ EditorBuildSettings:
   m_Scenes:
   - enabled: 1
     path: Assets/_TrueEchoVR/_SCENES/Bootstrap.unity
-    guid: 9fc5971779211f8419fe2dd3a4e23e91
+    guid: 628db8b2dc3790b46b1521ca0b96d016
   - enabled: 1
     path: Assets/_TrueEchoVR/_SCENES/TroubleshootingWebIntegration.unity
     guid: 39aad2e4ccb192e4582bc10fa1e539c8
-  - enabled: 0
-    path: Assets/_TrueEchoVR/_SCENES/_TrueEchoVR_StartScene_Demo-XRIT-Rig.unity
-    guid: 9e077683b92226e4f88f96ecdc66ff39
   m_configObjects:
     Unity.XR.Oculus.Settings: {fileID: 11400000, guid: bfa1182bd221b4ca89619141f66f1260, type: 2}
     Unity.XR.WindowsMR.Settings: {fileID: 11400000, guid: dc5a169419fa04987b057f65238cf3ba, type: 2}

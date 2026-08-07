@@ -84,6 +84,10 @@ namespace TEVR
                  "locally and pre-populated on every launch.")]
         public TMP_InputField loginApiUrlInput;
 
+        [Header("New Dynamic Menu System")]
+        public TEVR.UI.DynamicMenuGenerator menuGenerator;
+        private Dictionary<string, Button> _dynamicButtonRegistry = new Dictionary<string, Button>();
+
         private bool _isScanningLoginCode = false;
         // Once a setup/login code is accepted, suppress repeated auto-accept of the same code while it sits
         // in view (detection keeps running so the marker stays visible, but we don't re-resolve every frame).
@@ -310,6 +314,44 @@ namespace TEVR
             SubscribeToUIManager();
             if (UIManager.Instance != null)
                 HandleUIStateChanged(UIManager.Instance.GetCurrentState());
+
+            // Dynamic Menu Initialization
+            if (menuGenerator != null)
+            {
+                menuGenerator.RefreshMenu();
+                UpdateDynamicButtonRegistry();
+            }
+        }
+
+        private void UpdateDynamicButtonRegistry()
+        {
+            _dynamicButtonRegistry.Clear();
+            if (menuGenerator == null) return;
+
+            if (menuGenerator.mainContentRoot != null)
+            {
+                foreach (Transform child in menuGenerator.mainContentRoot)
+                {
+                    var btn = child.GetComponent<Button>();
+                    if (btn != null) _dynamicButtonRegistry[child.name] = btn;
+                }
+            }
+            if (menuGenerator.subContentRoot != null)
+            {
+                foreach (Transform child in menuGenerator.subContentRoot)
+                {
+                    var btn = child.GetComponent<Button>();
+                    if (btn != null) _dynamicButtonRegistry[child.name] = btn;
+                }
+            }
+        }
+
+        private void SetDynamicButtonInteractable(string itemName, bool interactable)
+        {
+            if (_dynamicButtonRegistry.TryGetValue(itemName, out var btn))
+            {
+                if (btn != null) btn.interactable = interactable;
+            }
         }
 
         /// <summary>True when the device has been provisioned before (a setup code is stored), so the user can
@@ -1258,14 +1300,14 @@ namespace TEVR
         public void UpdateSessionButtonsState()
         {
             bool hasLocation = !string.IsNullOrEmpty(GetActiveLocationId());
+            int uploadable = qrManager != null ? qrManager.GetUploadableCount(out _) : 0;
 
             if (pullQRButton != null) pullQRButton.interactable = hasLocation;
+            if (pushQRButton != null) pushQRButton.interactable = hasLocation && uploadable > 0;
 
-            if (pushQRButton != null)
-            {
-                int uploadable = qrManager != null ? qrManager.GetUploadableCount(out _) : 0;
-                pushQRButton.interactable = hasLocation && uploadable > 0;
-            }
+            // Update dynamic menu buttons if registry is populated
+            SetDynamicButtonInteractable("Item_Pull QR", hasLocation);
+            SetDynamicButtonInteractable("Item_Push QR", hasLocation && uploadable > 0);
         }
 
         /// <summary>Uploads the current local QR calibration to the backend for this location.</summary>
