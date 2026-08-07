@@ -37,6 +37,7 @@
   <Project Path="Unity.Services.QoS.csproj" />
   <Project Path="Meta.XR.ImmersiveDebugger.csproj" />
   <Project Path="Unity.InferenceEngine.csproj" />
+  <Project Path="Vuplex.WebView.csproj" />
   <Project Path="Unity.AI.Mesh.csproj" />
   <Project Path="UnityEngine.UI.csproj" />
   <Project Path="Unity.Services.Authentication.Editor.csproj" />
@@ -150,6 +151,7 @@
   <Project Path="Unity.XR.Management.Editor.csproj" />
   <Project Path="Unity.Services.Deployment.csproj" />
   <Project Path="Unity.2D.Sprite.Editor.csproj" />
+  <Project Path="Vuplex.WebViewDemos.csproj" />
   <Project Path="meta.xr.ai.mcpbridge.telemetry.csproj" />
   <Project Path="Meta.XR.MultiplayerBlocks.Shared.Editor.csproj" />
   <Project Path="MetaXRSimulatorCore.Editor.csproj" />
